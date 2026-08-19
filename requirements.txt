@@ -1,0 +1,26 @@
+# Backend & Frameworks
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.6.0
+python-multipart>=0.0.9
+
+# Vector DB & Embeddings
+chromadb>=0.4.24
+sentence-transformers>=2.5.1
+
+# LLM Providers & Tooling
+groq>=0.5.0
+requests>=2.31.0
+
+# Observability & Tracing
+arize-phoenix>=3.0.0
+arize-phoenix-otel>=0.2.0
+openinference-instrumentation-openai>=0.1.0
+openinference-instrumentation-langchain>=0.1.0
+
+# Evaluation
+ragas>=0.1.0
+
+# Frontend
+streamlit>=1.32.0
+pandas>=2.2.0

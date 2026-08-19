@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix_observability
+    ports:
+      - "6006:6006"
+    environment:
+      - PHOENIX_PORT=6006
+      - PHOENIX_SQL_DATABASE_URL=sqlite:////tmp/phoenix.db
+    volumes:
+      - phoenix_data:/tmp
+
+  fastapi_backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: screening_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    depends_on:
+      - phoenix
+    volumes:
+      - ./chroma_db:/app/chroma_db
+
+  streamlit_ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: screening_dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_API_URL=http://fastapi_backend:8000
+    depends_on:
+      - fastapi_backend
+
+volumes:
+  phoenix_data:

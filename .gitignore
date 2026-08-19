@@ -1,0 +1,36 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# ChromaDB & Vector Stores
+chroma_db/
+*.parquet
+*.sqlite3
+
+# Arize Phoenix & Logs
+phoenix_data/
+*.log
+.system_generated/
+
+# Environment variables & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
