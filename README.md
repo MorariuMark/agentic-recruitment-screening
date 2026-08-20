@@ -294,7 +294,7 @@ Pentru o calibrare statistică riguroasă, corpusul de test este structurat pe 5
 * **Interogare**: Fiecare experiență $E_j$ din `AnonymizedCandidate` este vectorizată și interogată împotriva colecției ChromaDB folosind distanța cosinus:
 
 $$
-	ext{Similarity}(E_j, R_i) = rac{v(E_j) \cdot v(R_i)}{\|v(E_j)\| \|v(R_i)\|}
+\text{Similarity}(E_j, R_i) = \frac{v(E_j) \cdot v(R_i)}{\|v(E_j)\| \cdot \|v(R_i)\|}
 $$
 
 * **Grounding Constrâns**: Cele mai relevante potriviri sunt transmise LLM-ului cu o constrângere strictă de citare (*verbatim citation rule*): orice cerință validată trebuie însoțită de fragmentul textual exact extras din CV.
@@ -304,7 +304,7 @@ Pentru auditarea automată a componentei RAG, se utilizează metricele din bibli
 1. **Faithfulness (Fidelitate)**:
 
 $$
-	ext{Faithfulness} = rac{|	ext{Afirmații susținute direct de contextul CV}|}{|	ext{Total afirmații generate în evaluare}|}
+\text{Faithfulness} = \frac{|\text{Afirmații susținute direct de contextul CV}|}{|\text{Total afirmații generate în evaluare}|}
 $$
 
 2. **Answer Relevance**: Evaluează dacă raportul de sinteză și întrebările răspund strict cerințelor postului.
@@ -346,7 +346,7 @@ flowchart LR
 | Categorie Scor & Condiții Tehnice | Recomandare Algoritmică | Vizualizare în UI Dashboard | Decizie Operator Uman (HITL) | Acțiune Post-Decizie |
 | :--- | :--- | :--- | :--- | :--- |
 | **Scor $\ge 70.0\%$** și **0 gaps must-have** | **Recomandare Favorabilă** | Shortlist propus; afișare dovezi verbatim și sinteză calitativă. | `APPROVE` sau `REJECT` | Aprobarea declanșează automat generarea ghidului de interviu. |
-| **$50.0\% \le 	ext{Scor} < 70.0\%$** sau **max. 1 gap must-have** | **Zonă de Atenție (Borderline)** | Flag galben; evidențiere discrepanțe tehnice și competențe lipsă. | `APPROVE` (cu justificare) sau `REJECT` | Permite recrutorului să valideze competențe compensatorii. |
+| **$50.0\% \le \text{Scor} < 70.0\%$** sau **max. 1 gap must-have** | **Zonă de Atenție (Borderline)** | Flag galben; evidențiere discrepanțe tehnice și competențe lipsă. | `APPROVE` (cu justificare) sau `REJECT` | Permite recrutorului să valideze competențe compensatorii. |
 | **Scor $< 50.0\%$** sau **$\ge 2$ gaps must-have** | **Recomandare Negativă** | Profil clasificat ca sub-calificat; motivare automată. | `APPROVE` (override) sau `REJECT` | Respingerea arhivează raportul; datele sunt stocate pentru audit. |
 
 ---
@@ -359,7 +359,7 @@ Pentru evaluarea cantitativă a performanței soluției în raport cu procesul t
 Măsoară procentul de candidaturi recomandate de sistem care sunt validate afirmativ de recrutor în nodul HITL:
 
 $$
-	ext{RAR} = \left( rac{N_{	ext{aprobate}}}{N_{	ext{propuse}}} ight) 	imes 100
+\text{RAR} = \left( \frac{N_{\text{aprobate}}}{N_{\text{propuse}}} \right) \times 100
 $$
 
 * **Criteriu de succes**: $\mathbf{RAR \ge 80\%}$, indicând calibrarea raționamentului semantic pe standardele reale ale companiei.
@@ -368,7 +368,7 @@ $$
 Măsoară integritatea dovezilor textuale prin verificarea existenței exacte a fiecărui fragment din `grounding_citations` în textul sursă al CV-ului:
 
 $$
-	ext{CVS} = \left( rac{N_{	ext{citari valide}}}{N_{	ext{total citari}}} ight) 	imes 100
+\text{CVS} = \left( \frac{N_{\text{citari valide}}}{N_{\text{total citari}}} \right) \times 100
 $$
 
 * **Criteriu de succes**: $\mathbf{CVS = 100\%}$, garantând eliminarea completă a halucinațiilor factuale.
@@ -377,7 +377,7 @@ $$
 Măsoară procentul de cazuri ambigue (*borderline*) care necesită analiză manuală extinsă:
 
 $$
-	ext{HIR} = \left( rac{N_{	ext{cazuri borderline}}}{N_{	ext{total candidaturi}}} ight) 	imes 100
+\text{HIR} = \left( \frac{N_{\text{cazuri borderline}}}{N_{\text{total candidaturi}}} \right) \times 100
 $$
 
 * **Criteriu de succes**: $\mathbf{HIR \le 20\%}$, demonstrând decizii algoritmice cu certitudine ridicată pentru majoritatea profilurilor.
@@ -385,7 +385,7 @@ $$
 ### 7.4 Reducerea Timpului de Îndeplinire (Time-to-Fulfillment Reduction - TFR)
 
 $$
-	ext{TFR} = \left( rac{T_{	ext{manual}} - T_{	ext{agentic}}}{T_{	ext{manual}}} ight) 	imes 100
+\text{TFR} = \left( \frac{T_{\text{manual}} - T_{\text{agentic}}}{T_{\text{manual}}} \right) \times 100
 $$
 
 * **Criteriu de succes**: $\mathbf{TFR \ge 75\%}$, reducând timpul mediu de la ~30 min la sub 2.5 min per candidat.
