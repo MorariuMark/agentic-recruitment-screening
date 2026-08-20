@@ -73,17 +73,18 @@ Dezvoltarea unui sistem software agentic integrat (*end-to-end*) care:
 Noul proces introduce o colaborare simbiotică om-AI bazată pe transparență algoritmică și verificabilitate:
 
 ```mermaid
-graph TD
-    subgraph "PROCESUL TO-BE (Agentic & HITL)"
-        A[Ingestie CV & JD] --> B[Extragere & Validare Pydantic]
-        B --> C[Strat Anonimizare PII & De-Biasing]
-        C --> D[Indexare & Regasire RAG ChromaDB]
-        D --> E[Scoring Augmentat + Citate Verbatim]
-        E --> F{POARTA HITL - Validare Umana}
-        F -- Respins --> G[Arhivare Raport Audit Phoenix]
-        F -- Aprobat --> H[Sinteza Ghid Interviu Tehnic Calibrat]
-        H --> I[Shortlist Finalizat & Audit Trail Complet]
-    end
+flowchart TD
+    A["Recepție CV & Job Description"] --> B["Parsare Deterministă (Pydantic)"]
+    B --> C["Anonimizare PII & De-Biasing"]
+    C --> D["Regăsire Semantică RAG (ChromaDB)"]
+    D --> E["Scoring Augmentat & Citate Verbatim"]
+    E --> F{"POARTĂ HITL<br/>Validare Recrutor"}
+    
+    F -->|"Aprobat"| G["Generare Ghid Interviu Tehnic"]
+    F -->|"Respins"| H["Arhivare Raport & Motivare"]
+    
+    G --> I["Audit Trail & Tracing (Arize Phoenix)"]
+    H --> I
 ```
 
 ### 2.3 Matrice Comparativă AS-IS vs. TO-BE
@@ -106,37 +107,39 @@ graph TD
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Recruiter as Recrutor (Operator Uman)
-    participant UI as Streamlit Dashboard
+    actor HR as Recrutor (HR)
+    participant UI as Streamlit UI
     participant API as FastAPI Backend
-    participant Guard as Guardrails & PII Scrubbing
-    participant VDB as ChromaDB (Vector Store)
-    participant LLM as Inference Engine (Ollama/Groq)
-    participant Tracing as Arize Phoenix (OTEL)
+    participant VDB as ChromaDB (RAG)
+    participant LLM as LLM (Groq/Ollama)
+    participant Phoenix as Arize Phoenix (Audit)
 
-    Recruiter->>UI: Încarcă CV-uri mock & Fișa Postului (JD)
-    UI->>API: POST /api/v1/cv/ingest & POST /api/v1/jd/index
-    API->>VDB: Indexează cerințele atomice JD (Embedding all-MiniLM-L6-v2)
-    API->>Guard: Filtrare PII & Mapare Instituțională
-    Guard-->>API: Profil AnonymizedCandidate
-    API->>VDB: Interogare semantică pe blocuri de experiență
-    VDB-->>API: Cerințe relevante regăsite (top-k)
-    API->>LLM: Reasoning Prompt (Scoring, Gap Analysis, Grounding Citations)
-    LLM-->>API: Răspuns JSON validat Pydantic
-    API->>Tracing: Înregistrează Span-uri LLM, Retriever & Atribute Audit
-    API-->>UI: Afișează Scor, Dovezi Verbatim și Recomandare
-    
-    Note over Recruiter,UI: PUNCTUL DE CONTROL HITL
-    Recruiter->>UI: Emite Decizia: [APPROVE] sau [REJECT]
-    UI->>API: POST /api/v1/hitl/submit-decision
-    API->>Tracing: Înregistrează decizia HITL, reviewer_id și review_duration
+    Note over HR,Phoenix: Etapa 1: Ingestie, Validare & De-Biasing
+    HR->>UI: Încarcă CV & Fișa Postului (JD)
+    UI->>API: Trimitere documente
+    API->>API: Parsare Pydantic & Filtrare PII
+    API->>VDB: Indexare cerințe atomice JD
 
-    alt Decizie = APPROVE
-        API->>LLM: Generează Ghid Personalizat de Interviu Tehnic
+    Note over HR,Phoenix: Etapa 2: Regăsire RAG & Raționament Semantic
+    API->>VDB: Interogare semantică vectori
+    VDB-->>API: Returnează cerințe relevante
+    API->>LLM: Prompt evaluare + constrângere citare
+    LLM-->>API: MatchEvaluationResult (Scor, Gaps, Citate)
+    API->>Phoenix: Logare Traces & Spans
+    API-->>UI: Afișare raport screening & dovezi
+
+    Note over HR,Phoenix: Etapa 3: Poarta Decizională HITL
+    HR->>UI: Inspectare dovezi & Decizie (APPROVE / REJECT)
+    UI->>API: Înregistrare decizie
+    API->>Phoenix: Salvare metadata decizie & durată
+
+    Note over HR,Phoenix: Etapa 4: Finalizare & Generare Ghid
+    alt Candidat Aprobat
+        API->>LLM: Generare întrebări interviu
         LLM-->>API: InterviewPlan structurat
-        API-->>UI: Afișează Ghidul de Interviu (Întrebări tehnice + Gaps)
-    else Decizie = REJECT
-        API-->>UI: Confirmă arhivarea profilului în registrul de audit
+        API-->>UI: Afișare Ghid Interviu Tehnic
+    else Candidat Respins
+        API-->>UI: Confirmare arhivare profil
     end
 ```
 
@@ -147,62 +150,67 @@ sequenceDiagram
 ### 4.1 Arhitectura pe 5 Straturi Funcționale
 
 ```mermaid
-graph TB
-    subgraph "1. INPUT LAYER"
-        In1["Mock CVs (JSON / Raw Text)"]
-        In2["Job Descriptions (Markdown)"]
+flowchart TD
+    subgraph Presentation ["1. PREZENTARE & INTERACȚIUNE (Streamlit UI)"]
+        UI_Upload["Panou Ingestie & Configurare"]
+        UI_Review["Inspector Profil Anonimizat & Dovezi"]
+        UI_HITL["Consolă Decizie HITL (Aprobare / Respingere)"]
+        UI_Guide["Vizualizator Ghid Interviu Tehnic"]
     end
 
-    subgraph "2. APPLICATION & ORCHESTRATION LAYER (FastAPI)"
-        PydParser["Pydantic Ingestion & Parsing"]
-        PIIScrub["Deterministic & NER PII Guardrails"]
-        ScoreEngine["Evaluation & Reasoning Engine"]
-        DecisionGate["Human-in-the-Loop Enforcement Gate"]
-        InterviewGen["Technical Interview Synthesizer"]
+    subgraph Backend ["2. ORCHESTRARE & LOGICĂ (FastAPI Backend)"]
+        API_Gateway["REST API Router"]
+        Pydantic_Parser["Parser & Validator Pydantic"]
+        PII_Guard["Guardrails Anonimizare & De-Biasing"]
+        Match_Engine["Motor de Matching & RAG Orchestrator"]
+        HITL_Manager["Manager Poartă HITL"]
+        Interview_Builder["Generator Ghid Interviu"]
     end
 
-    subgraph "3. DATA & RETRIEVAL LAYER"
-        ChromaStore[("ChromaDB Vector Store")]
-        Embeddings["all-MiniLM-L6-v2 Embeddings"]
-        StateStore[("Evaluation Session State")]
+    subgraph DataLayer ["3. DATE & REGĂSIRE VECTORIALĂ"]
+        Chroma_DB[("ChromaDB Vector Store")]
+        Embed_Model["Model Embeddings (all-MiniLM-L6-v2)"]
+        Local_Cache[("Sesiune & Stare Evaluare")]
     end
 
-    subgraph "4. MODEL & INFERENCE LAYER"
-        OllamaLocal["Ollama Local Engine: Llama-3.1-8B"]
-        GroqCloud["Groq Cloud API: Llama-3-70B / Mixtral-8x7B"]
+    subgraph ModelLayer ["4. MODELE & INFERENȚĂ AI"]
+        Groq_API["Groq Cloud API (Llama-3-70B)"]
+        Ollama_Local["Ollama Local (Llama-3.1-8B)"]
     end
 
-    subgraph "5. OBSERVABILITY & AUDIT LAYER"
-        PhoenixCol["Arize Phoenix OTEL Collector"]
-        PhoenixUI["Phoenix Tracing & Evaluation UI"]
+    subgraph Observability ["5. AUDIT & OBSERVABILITATE"]
+        Phoenix_Server["Arize Phoenix OTEL Collector"]
+        Phoenix_Dashboard["Phoenix Tracing UI & Registru Audit"]
     end
 
-    subgraph "6. DELIVERY LAYER (Streamlit)"
-        DashConfig["Configuration & Model Selector"]
-        DashAnon["Anonymized Profile Viewer"]
-        DashMatrix["Semantic Score & Evidence Inspector"]
-        DashHITL["HITL Action Console & Interview Guide"]
-    end
+    %% Flux UI -> Backend
+    UI_Upload --> API_Gateway
+    UI_Review <--> API_Gateway
+    UI_HITL --> API_Gateway
+    API_Gateway --> UI_Guide
 
-    In1 & In2 --> PydParser
-    PydParser --> PIIScrub
-    PIIScrub --> ScoreEngine
-    ScoreEngine <--> ChromaStore
-    ChromaStore <--> Embeddings
-    ScoreEngine <--> OllamaLocal
-    ScoreEngine <--> GroqCloud
-    ScoreEngine --> DecisionGate
-    DecisionGate --> InterviewGen
-    InterviewGen <--> OllamaLocal & GroqCloud
-    
-    ScoreEngine -. Traces & Spans .-> PhoenixCol
-    DecisionGate -. HITL Metadata .-> PhoenixCol
-    PhoenixCol --> PhoenixUI
+    %% Flux Backend intern
+    API_Gateway --> Pydantic_Parser
+    Pydantic_Parser --> PII_Guard
+    PII_Guard --> Match_Engine
+    Match_Engine --> HITL_Manager
+    HITL_Manager --> Interview_Builder
 
-    DecisionGate <--> DashHITL
-    ScoreEngine --> DashMatrix
-    PIIScrub --> DashAnon
-    DashConfig --> PydParser
+    %% Backend <-> Date
+    Match_Engine <--> Chroma_DB
+    Chroma_DB <--> Embed_Model
+    HITL_Manager <--> Local_Cache
+
+    %% Backend <-> Modele
+    Match_Engine <--> Groq_API
+    Match_Engine <--> Ollama_Local
+    Interview_Builder <--> Groq_API
+    Interview_Builder <--> Ollama_Local
+
+    %% Backend -> Observabilitate
+    Match_Engine -. Traces LLM & RAG .-> Phoenix_Server
+    HITL_Manager -. Metadata Decizie HITL .-> Phoenix_Server
+    Phoenix_Server --> Phoenix_Dashboard
 ```
 
 ### 4.2 Descrierea Subsistemelor
@@ -313,18 +321,18 @@ Pentru a elimina riscurile inerente asociate halucinațiilor și nedeterminismul
 * **Executori Determiniști (Python Pure Tools)**: Realizează operațiunile critice — salvarea stărilor, calculul matematic al scorului ponderat, interogările în baza de date vectorială, curățarea regex a datelor PII și trimiterea span-urilor de telemetrie.
 
 ```mermaid
-graph LR
-    subgraph "Reasoning Layer (Probabilistic Proposer)"
-        LLM[LLM / GenAI Engine] -->|Generează JSON Schema| PydanticCheck[Validare Pydantic]
+flowchart LR
+    subgraph Reasoning ["1. Raționament Semantic (LLM - Proposer)"]
+        LLM_Core["LLM Engine"] -->|"Propunere JSON"| Schema_Check{"Validare Pydantic"}
     end
 
-    subgraph "Execution Layer (Deterministic Tools)"
-        PydanticCheck -->|Valid| PyTools[Python Tools & Guards]
-        PydanticCheck -->|Invalid| RetryHandler[Reîncercare Ghidată / Eroare]
-        PyTools --> Scrubbing[Scrubbing PII & Regex]
-        PyTools --> ChromaOps[ChromaDB Cosine Query]
-        PyTools --> MathScoring[Calcul Matematic Ponderat]
-        PyTools --> Telemetry[Arize Phoenix Logging]
+    subgraph Execution ["2. Execuție Deterministă (Python - Executor)"]
+        Schema_Check -->|"Valid"| Tool_PII["Filtru PII & Regex Scrubbing"]
+        Schema_Check -->|"Invalid"| Retry["Reîncercare Ghidată"]
+        
+        Tool_PII --> Tool_Chroma["Interogare Cosinus ChromaDB"]
+        Tool_Chroma --> Tool_Math["Calcul Ponderat Scor & Gaps"]
+        Tool_Math --> Tool_OTEL["Înregistrare Span Arize Phoenix"]
     end
 ```
 
