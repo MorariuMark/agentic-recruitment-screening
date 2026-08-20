@@ -1,6 +1,6 @@
-# 🤖 Sistem Agentic pentru Screening Tehnic, Potrivire Semantică și Validare Umană (HITL)
+# Sistem Agentic pentru Screening Tehnic, Potrivire Semantică și Validare Umană (HITL)
 
-[![Architecture](https://img.shields.io/badge/Architecture-Modular%20Agentic-blue.svg)](#4-high-level-architecture-20p)
+[![Architecture](https://img.shields.io/badge/Architecture-Modular%20Agentic-blue.svg)](#4-high-level-architecture--system-decomposition)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![ChromaDB](https://img.shields.io/badge/Vector%20Store-ChromaDB-orange.svg)](https://www.trychroma.com)
@@ -12,21 +12,21 @@
 
 ---
 
-## 📑 Cuprins
-1. [Problem Definition & Scope (15p)](#1-problem-definition--scope-15p)
-2. [Understanding of the Process: AS-IS vs. TO-BE (15p)](#2-understanding-of-the-process-as-is-vs-to-be-15p)
-3. [Proposed Solution & TO-BE Agentic Workflow (15p)](#3-proposed-solution--to-be-agentic-workflow-15p)
-4. [High-Level Architecture & System Decomposition (20p)](#4-high-level-architecture--system-decomposition-20p)
-5. [Data Design, RAG Strategy & RAGAS Framework (15p)](#5-data-design-rag-strategy--ragas-framework-15p)
-6. [Reasoning, Decision & Execution Concept (10p)](#6-reasoning-decision--execution-concept-10p)
-7. [KPIs & Success Criteria (10p)](#7-kpis--success-criteria-10p)
+## Cuprins
+1. [Problem Definition & Scope](#1-problem-definition--scope)
+2. [Understanding of the Process: AS-IS vs. TO-BE](#2-understanding-of-the-process-as-is-vs-to-be)
+3. [Proposed Solution & TO-BE Agentic Workflow](#3-proposed-solution--to-be-agentic-workflow)
+4. [High-Level Architecture & System Decomposition](#4-high-level-architecture--system-decomposition)
+5. [Data Design, RAG Strategy & RAGAS Framework](#5-data-design-rag-strategy--ragas-framework)
+6. [Reasoning, Decision & Execution Concept](#6-reasoning-decision--execution-concept)
+7. [KPIs & Success Criteria](#7-kpis--success-criteria)
 8. [Software Product Delivery: FastAPI, Streamlit & Docker Compose](#8-software-product-delivery-fastapi-streamlit--docker-compose)
 9. [Instalare, Configurare și Rulare Locală](#9-instalare-configurare-și-rulare-locală)
 10. [Referințe din Industrie & Bibliografie](#10-referințe-din-industrie--bibliografie)
 
 ---
 
-## 1. Problem Definition & Scope (15p)
+## 1. Problem Definition & Scope
 
 ### 1.1 Contextul Industrial și Deficiențele Sistemelor Convenționale
 Procesele contemporane de recrutare tehnică din industria IT se confruntă cu o ineficiență structurală critică determinată de trei factori majori:
@@ -59,7 +59,7 @@ Dezvoltarea unui sistem software agentic integrat (*end-to-end*) care:
 
 ---
 
-## 2. Understanding of the Process: AS-IS vs. TO-BE (15p)
+## 2. Understanding of the Process: AS-IS vs. TO-BE
 
 ### 2.1 Analiza Fluxului Tradițional (AS-IS)
 În fluxul clasic, procesul de recrutare suferă de o lipsă acută de structură și trasabilitate:
@@ -99,7 +99,7 @@ graph TD
 
 ---
 
-## 3. Proposed Solution & TO-BE Agentic Workflow (15p)
+## 3. Proposed Solution & TO-BE Agentic Workflow
 
 ### 3.1 Succesiunea Logică a Pipeline-ului Operațional
 
@@ -142,7 +142,7 @@ sequenceDiagram
 
 ---
 
-## 4. High-Level Architecture & System Decomposition (20p)
+## 4. High-Level Architecture & System Decomposition
 
 ### 4.1 Arhitectura pe 5 Straturi Funcționale
 
@@ -215,7 +215,7 @@ graph TB
 
 ---
 
-## 5. Data Design, RAG Strategy & RAGAS Framework (15p)
+## 5. Data Design, RAG Strategy & RAGAS Framework
 
 ### 5.1 Scheme de Date Structurate (Pydantic Models)
 
@@ -284,20 +284,28 @@ Pentru o calibrare statistică riguroasă, corpusul de test este structurat pe 5
 ### 5.3 Strategia RAG Asimetric în ChromaDB
 * **Indexare**: Fișa postului este descompusă în elemente atomice $R_i$ de tip `JobRequirement`. Fiecare cerință este transformată într-un vector dens $v(R_i)$ folosind modelul de embedding `all-MiniLM-L6-v2` și stocată cu metadatele aferente (`requirement_id`, `is_mandatory`).
 * **Interogare**: Fiecare experiență $E_j$ din `AnonymizedCandidate` este vectorizată și interogată împotriva colecției ChromaDB folosind distanța cosinus:
-  $$\text{Similarity}(E_j, R_i) = \frac{v(E_j) \cdot v(R_i)}{\|v(E_j)\| \|v(R_i)\|}$$
+
+$$
+	ext{Similarity}(E_j, R_i) = rac{v(E_j) \cdot v(R_i)}{\|v(E_j)\| \|v(R_i)\|}
+$$
+
 * **Grounding Constrâns**: Cele mai relevante potriviri sunt transmise LLM-ului cu o constrângere strictă de citare (*verbatim citation rule*): orice cerință validată trebuie însoțită de fragmentul textual exact extras din CV.
 
 ### 5.4 Cadrul Formal de Evaluare RAG prin Ragas
 Pentru auditarea automată a componentei RAG, se utilizează metricele din biblioteca **Ragas**:
 1. **Faithfulness (Fidelitate)**:
-   $$\text{Faithfulness} = \frac{|\text{Afirmații susținute direct de contextul CV}|}{|\text{Total afirmații generate în evaluare}|}$$
+
+$$
+	ext{Faithfulness} = rac{|	ext{Afirmații susținute direct de contextul CV}|}{|	ext{Total afirmații generate în evaluare}|}
+$$
+
 2. **Answer Relevance**: Evaluează dacă raportul de sinteză și întrebările răspund strict cerințelor postului.
 3. **Context Precision**: Măsoară dacă cerințele cele mai relevante sunt returnate pe primele poziții în ChromaDB.
 4. **Context Recall**: Verifică dacă toate dovezile necesare pentru validarea cerințelor obligatorii au fost extrase de retriever.
 
 ---
 
-## 6. Reasoning, Decision & Execution Concept (10p)
+## 6. Reasoning, Decision & Execution Concept
 
 ### 6.1 Separarea Strictă: Reasoning (LLM) vs. Execuție Deterministă
 Pentru a elimina riscurile inerente asociate halucinațiilor și nedeterminismului LLM-urilor în producție:
@@ -330,32 +338,48 @@ graph LR
 | Categorie Scor & Condiții Tehnice | Recomandare Algoritmică | Vizualizare în UI Dashboard | Decizie Operator Uman (HITL) | Acțiune Post-Decizie |
 | :--- | :--- | :--- | :--- | :--- |
 | **Scor $\ge 70.0\%$** și **0 gaps must-have** | **Recomandare Favorabilă** | Shortlist propus; afișare dovezi verbatim și sinteză calitativă. | `APPROVE` sau `REJECT` | Aprobarea declanșează automat generarea ghidului de interviu. |
-| **$50.0\% \le \text{Scor} < 70.0\%$** sau **max. 1 gap must-have** | **Zonă de Atenție (Borderline)** | Flag galben; evidențiere discrepanțe tehnice și competențe lipsă. | `APPROVE` (cu justificare) sau `REJECT` | Permite recrutorului să valideze competențe compensatorii. |
+| **$50.0\% \le 	ext{Scor} < 70.0\%$** sau **max. 1 gap must-have** | **Zonă de Atenție (Borderline)** | Flag galben; evidențiere discrepanțe tehnice și competențe lipsă. | `APPROVE` (cu justificare) sau `REJECT` | Permite recrutorului să valideze competențe compensatorii. |
 | **Scor $< 50.0\%$** sau **$\ge 2$ gaps must-have** | **Recomandare Negativă** | Profil clasificat ca sub-calificat; motivare automată. | `APPROVE` (override) sau `REJECT` | Respingerea arhivează raportul; datele sunt stocate pentru audit. |
 
 ---
 
-## 7. KPIs & Success Criteria (10p)
+## 7. KPIs & Success Criteria
 
 Pentru evaluarea cantitativă a performanței soluției în raport cu procesul tradițional, sunt monitorizate 5 metrici cheie:
 
 ### 7.1 Rata de Acord Uman-AI (Recruiter Alignment Rate - RAR)
 Măsoară procentul de candidaturi recomandate de sistem care sunt validate afirmativ de recrutor în nodul HITL:
-$$\text{RAR} = \left( \frac{N_{\text{aprobate\_HITL}}}{N_{\text{propuse\_AI\_scor\_peste\_70}}} \right) \times 100$$
+
+$$
+	ext{RAR} = \left( rac{N_{	ext{aprobate}}}{N_{	ext{propuse}}} ight) 	imes 100
+$$
+
 * **Criteriu de succes**: $\mathbf{RAR \ge 80\%}$, indicând calibrarea raționamentului semantic pe standardele reale ale companiei.
 
 ### 7.2 Scorul de Fidelitate a Citărilor (Citation Verification Score - CVS)
 Măsoară integritatea dovezilor textuale prin verificarea existenței exacte a fiecărui fragment din `grounding_citations` în textul sursă al CV-ului:
-$$\text{CVS} = \left( \frac{N_{\text{citari\_valide\_verbatim}}}{N_{\text{total\_citari\_generate}}} \right) \times 100$$
+
+$$
+	ext{CVS} = \left( rac{N_{	ext{citari valide}}}{N_{	ext{total citari}}} ight) 	imes 100
+$$
+
 * **Criteriu de succes**: $\mathbf{CVS = 100\%}$, garantând eliminarea completă a halucinațiilor factuale.
 
 ### 7.3 Rata de Intervenție Umană Extinsă (Human Intervention Rate - HIR)
 Măsoară procentul de cazuri ambigue (*borderline*) care necesită analiză manuală extinsă:
-$$\text{HIR} = \left( \frac{N_{\text{profile\_zona\_gri}}}{N_{\text{total\_candidaturi}}} \right) \times 100$$
+
+$$
+	ext{HIR} = \left( rac{N_{	ext{cazuri borderline}}}{N_{	ext{total candidaturi}}} ight) 	imes 100
+$$
+
 * **Criteriu de succes**: $\mathbf{HIR \le 20\%}$, demonstrând decizii algoritmice cu certitudine ridicată pentru majoritatea profilurilor.
 
 ### 7.4 Reducerea Timpului de Îndeplinire (Time-to-Fulfillment Reduction - TFR)
-$$\text{TFR} = \left( \frac{T_{\text{manual}} - T_{\text{agentic}}}{T_{\text{manual}}} \right) \times 100$$
+
+$$
+	ext{TFR} = \left( rac{T_{	ext{manual}} - T_{	ext{agentic}}}{T_{	ext{manual}}} ight) 	imes 100
+$$
+
 * **Criteriu de succes**: $\mathbf{TFR \ge 75\%}$, reducând timpul mediu de la ~30 min la sub 2.5 min per candidat.
 
 ### 7.5 Timpul Mediu de Rezoluție Simulat (Mean Time to Resolution - MTTR)
@@ -448,7 +472,7 @@ volumes:
 
 1. **Clonare repository**:
    ```bash
-   git clone https://github.com/your-username/agentic-recruitment-screening.git
+   git clone https://github.com/MorariuMark/agentic-recruitment-screening.git
    cd agentic-recruitment-screening
    ```
 
