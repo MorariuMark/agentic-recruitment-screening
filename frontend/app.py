@@ -1,0 +1,1 @@
+"""Streamlit Recruiter Dashboard application."""

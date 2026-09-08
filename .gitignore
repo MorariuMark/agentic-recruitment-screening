@@ -1,36 +1,27 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 env/
-venv/
 .venv/
+venv/
 ENV/
 
-# ChromaDB & Vector Stores
-chroma_db/
-*.parquet
-*.sqlite3
-
-# Arize Phoenix & Logs
-phoenix_data/
-*.log
-.system_generated/
-
-# Environment variables & secrets
+# Environment Variables
 .env
-.env.local
-*.pem
-*.key
 
-# IDE & Editor
-.vscode/
-.idea/
-*.swp
-*.swo
+# Vector Store & Local Data (keep gitkeep files)
+data/chroma_db/*
+!data/chroma_db/.gitkeep
 
-# OS files
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & Temp
+*.log
 .DS_Store
 Thumbs.db
