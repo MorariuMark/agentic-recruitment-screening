@@ -1,0 +1,24 @@
+JORDAN LEE
+Email: jordan.lee.dev@fastmail.com
+Phone: +1 (206) 555-0184
+Location: Seattle, WA
+LinkedIn: linkedin.com/in/jordanlee-dev
+
+PROFESSIONAL SUMMARY
+Junior Python Backend Developer with 2 years of experience building basic REST APIs, database models, and web applications. Looking to transition into AI platform engineering.
+
+TECHNICAL SKILLS
+- Languages: Python, JavaScript, HTML/CSS, SQL
+- Backend: FastAPI, Flask, SQLite, PostgreSQL
+- Tools: Git, Docker (Basic), VS Code
+
+WORK EXPERIENCE
+
+Junior Software Developer | Apex Web Solutions | Aug 2022 - Present
+- Built simple CRUD endpoints in Python with FastAPI for internal dashboard tools.
+- Maintained relational database tables in PostgreSQL and wrote basic SQL queries.
+- Containerized local development environments using Docker and docker-compose.
+- Assisted in bug fixes and documentation for web services.
+
+EDUCATION
+B.S. in Information Systems | University of Washington | 2018 - 2022

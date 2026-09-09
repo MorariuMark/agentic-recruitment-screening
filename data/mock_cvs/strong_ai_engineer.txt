@@ -1,0 +1,35 @@
+ALEXANDER WRIGHT
+Email: alex.wright@cloudtech-innovations.io
+Phone: +1 (415) 892-4102
+Location: San Francisco, CA
+LinkedIn: linkedin.com/in/alex-wright-ai
+GitHub: github.com/alexwright-cloud
+
+PROFESSIONAL SUMMARY
+Senior AI Platform Engineer with 6+ years of production experience architecting scalable retrieval-augmented generation (RAG) pipelines, distributed vector search systems, and high-throughput asynchronous microservices.
+
+CORE TECHNICAL SKILLS
+- Languages: Python, Go, SQL, Bash
+- AI / Retrieval: ChromaDB, SentenceTransformers, LangChain, LlamaIndex, PyTorch, HuggingFace
+- Backend & Microservices: FastAPI, Pydantic, AsyncIO, Celery, Redis, PostgreSQL
+- DevOps & Cloud: Docker, Kubernetes, Helm, AWS (ECS, EKS, S3, RDS), GitHub Actions CI/CD
+
+WORK EXPERIENCE
+
+Lead AI Engineer | NovaSphere Technologies | Mar 2022 - Present
+- Architected enterprise RAG retrieval systems using ChromaDB and SentenceTransformers, indexing over 12 million documents and reducing semantic query latency by 45%.
+- Engineered asynchronous microservices utilizing FastAPI and Pydantic v2, handling 3,500+ requests per second with 99.98% uptime.
+- Containerized deep learning inference workloads with Docker and orchestrated blue-green deployments across Kubernetes clusters using Helm charts.
+- Mentored a distributed team of 5 junior and mid-level software engineers on Python concurrency, vector indexing patterns, and clean architecture.
+
+Backend AI Software Engineer | DataPulse Systems | Jun 2018 - Feb 2022
+- Developed high-performance REST APIs in Python using FastAPI, integrating PostgreSQL connection pooling with SQLAlchemy.
+- Implemented automated semantic chunking and embedding pipelines for unstructured text documents.
+- Built Dockerized continuous deployment pipelines using GitHub Actions, cutting staging release times in half.
+
+EDUCATION
+B.S. in Computer Science | University of California, Berkeley | 2014 - 2018
+
+CERTIFICATIONS
+- AWS Certified Machine Learning - Specialty
+- Certified Kubernetes Application Developer (CKAD)
