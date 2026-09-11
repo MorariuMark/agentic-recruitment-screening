@@ -33,4 +33,21 @@ class JobDescription(BaseModel):
     department: Optional[str] = Field(default=None, description="Department")
     seniority_level: Optional[str] = Field(default=None, description="Seniority level")
     requirements: List[JobRequirement] = Field(default_factory=list, description="List of job requirements")
+    unused_details: List[str] = Field(default_factory=list, description="Extracted non-requirement JD sections (perks, company intro, EEO)")
     raw_text: str = Field(default="", description="Original job description text")
+
+
+class JobExtractionResult(BaseModel):
+    """Result of parsing and extracting a Job Description from URL or unstructured text."""
+    job_description: JobDescription = Field(description="Extracted structured Job Description")
+    missing_fields: List[str] = Field(default_factory=list, description="Fields that could not be confidently identified")
+    warnings: List[str] = Field(default_factory=list, description="Actionable warnings prompting manual completion")
+
+
+class JDTaggedExport(BaseModel):
+    """Complete exported JSON structure for a Job Description with tagged details."""
+    export_type: str = Field(default="job_description", description="Type of export")
+    job_id: UUID = Field(description="UUID of job posting")
+    tag_counts: dict = Field(default_factory=dict, description="Summary counts of details by tag")
+    items: list = Field(default_factory=list, description="All tagged items (TaggedDetailItem)")
+    job_description: JobDescription = Field(description="Underlying structured Job Description")
