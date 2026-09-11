@@ -38,6 +38,10 @@ if "evaluation_result" not in st.session_state:
     st.session_state.evaluation_result = None
 if "interview_plan" not in st.session_state:
     st.session_state.interview_plan = None
+if "jd_warnings" not in st.session_state:
+    st.session_state.jd_warnings = []
+if "jd_missing_fields" not in st.session_state:
+    st.session_state.jd_missing_fields = []
 if "job_description" not in st.session_state:
     # Default sample Job Description
     st.session_state.job_description = JobDescription(
@@ -112,6 +116,8 @@ with st.sidebar:
         st.session_state.anonymized_candidate = None
         st.session_state.evaluation_result = None
         st.session_state.interview_plan = None
+        st.session_state.jd_warnings = []
+        st.session_state.jd_missing_fields = []
         st.rerun()
 
 
@@ -134,20 +140,44 @@ with tab_cv:
     st.header("Candidate CV Ingestion & PII Scrubbing")
     st.markdown("Upload a candidate CV in PDF, DOCX, or text format. The pipeline extracts structured data and scrubs PII.")
 
-    uploaded_file = st.file_uploader(
-        "Select Candidate Resume/CV",
-        type=["pdf", "txt"],
-        help="Upload candidate PDF or plain text resume",
-    )
+    col_upload, col_sample = st.columns([1.5, 1])
 
-    if uploaded_file and st.button("🚀 Ingest & Scrub Candidate Profile", type="primary"):
+    with col_upload:
+        uploaded_file = st.file_uploader(
+            "Select Candidate Resume/CV",
+            type=["pdf", "txt"],
+            help="Upload candidate PDF or plain text resume",
+        )
+
+    with col_sample:
+        st.markdown("**Or pick a pre-built mock candidate:**")
+        sample_options = {
+            "Strong AI Engineer": "data/mock_cvs/strong_ai_engineer.txt",
+            "Borderline Junior Developer": "data/mock_cvs/borderline_junior_developer.txt",
+            "Reject (Unrelated Background)": "data/mock_cvs/reject_unrelated_candidate.txt",
+        }
+        selected_sample_label = st.selectbox("Sample Candidates", list(sample_options.keys()))
+        selected_sample_path = sample_options[selected_sample_label]
+
+    ingest_button = st.button("🚀 Ingest & Scrub Candidate Profile", type="primary")
+
+    if ingest_button:
         with st.spinner("Extracting text, running LLM structured parser, and scrubbing PII..."):
             try:
-                result = api_client.upload_cv(uploaded_file.getvalue(), uploaded_file.name)
+                if uploaded_file:
+                    file_bytes = uploaded_file.getvalue()
+                    filename = uploaded_file.name
+                else:
+                    with open(selected_sample_path, "rb") as f:
+                        file_bytes = f.read()
+                    filename = selected_sample_path.split("/")[-1]
+
+                result = api_client.upload_cv(file_bytes, filename)
                 st.session_state.candidate_id = UUID(result["candidate_id"])
                 st.session_state.parsed_cv = ParsedCV.model_validate(result["parsed_cv"])
                 st.session_state.anonymized_candidate = AnonymizedCandidate.model_validate(result["anonymized_candidate"])
                 st.success(f"Candidate indexed successfully! UUID: `{st.session_state.candidate_id}` ({result['chunks_indexed']} chunks in ChromaDB)")
+                st.rerun()
             except Exception as e:
                 st.error(f"Failed to ingest candidate CV: {e}")
 
@@ -161,7 +191,8 @@ with tab_cv:
             if contact:
                 st.write(f"**Name:** {contact.full_name}")
                 st.write(f"**Email:** {contact.email}")
-                st.write(f"**Phone:** {contact.phone_number or 'N/A'}")
+                phone_display = getattr(contact, "phone_number", None) or getattr(contact, "phone", None) or "N/A"
+                st.write(f"**Phone:** {phone_display}")
                 st.write(f"**Location:** {contact.location or 'N/A'}")
                 st.write(f"**LinkedIn:** {contact.linkedin_url or 'N/A'}")
 
@@ -169,6 +200,10 @@ with tab_cv:
             st.subheader("🛡️ Scrubbed Anonymized Profile (Passed to LLM)")
             st.write(f"**Candidate UUID:** `{st.session_state.anonymized_candidate.candidate_id}`")
             st.write(f"**Identified Skills:** {', '.join(st.session_state.anonymized_candidate.anonymized_skills)}")
+            langs = getattr(st.session_state.anonymized_candidate, "anonymized_languages", [])
+            if langs:
+                lang_str = ", ".join([f"{l.language} ({l.proficiency})" if l.proficiency else l.language for l in langs])
+                st.write(f"**Languages:** {lang_str}")
             st.write(f"**Demographic Audit Data:** {st.session_state.anonymized_candidate.demographic_data or 'None detected'}")
 
         with st.expander("View Anonymized Work Experiences", expanded=False):
@@ -178,23 +213,112 @@ with tab_cv:
                 for bullet in exp.work_description:
                     st.markdown(f"- {bullet}")
 
+        projects = getattr(st.session_state.anonymized_candidate, "anonymized_projects", [])
+        if projects:
+            with st.expander(f"View Technical & Academic Projects ({len(projects)})", expanded=False):
+                for proj in projects:
+                    st.markdown(f"### 🛠️ {proj.project_name}")
+                    if proj.technologies:
+                        st.caption(f"**Technologies:** {', '.join(proj.technologies)}")
+                    if proj.project_url:
+                        st.caption(f"**Repository/Link:** `{proj.project_url}`")
+                    for bullet in proj.description:
+                        st.markdown(f"- {bullet}")
+
+        custom_secs = getattr(st.session_state.anonymized_candidate, "anonymized_custom_sections", [])
+        if custom_secs:
+            with st.expander(f"View Additional Relevant Sections ({len(custom_secs)})", expanded=False):
+                for sec in custom_secs:
+                    st.markdown(f"### 📌 {sec.section_title}")
+                    for it in sec.items:
+                        st.markdown(f"- {it}")
+
+        # Export Tagged CV JSON
+        st.markdown("---")
+        col_cv_info, col_cv_btn = st.columns([2.5, 1])
+        with col_cv_info:
+            st.markdown("💾 **Export Annotated Candidate CV (JSON)**")
+            st.caption("Downloads all extracted attributes with provenance tags: `anonymised`, `visible`, `unused`, and `extra`.")
+        with col_cv_btn:
+            try:
+                cv_export_payload = api_client.export_candidate_cv(st.session_state.candidate_id)
+                st.download_button(
+                    label="📥 Download Tagged CV JSON",
+                    data=json.dumps(cv_export_payload, indent=2),
+                    file_name=f"candidate_{st.session_state.candidate_id}_tagged.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(f"Export error: {e}")
+
 
 # ---------------------------------------------------------------------------
 # TAB 2: Job Description Setup
 # ---------------------------------------------------------------------------
 with tab_jd:
     st.header("Job Description & Atomic Criteria")
-    st.markdown("Configure the requirements and scoring weights for the target position.")
+    st.markdown("Import a posting via web URL or manually configure requirements and scoring weights.")
+
+    # 1. URL Import Section
+    with st.expander("🌐 Import Job Description from Web URL (LinkedIn, Indeed, Company Site, etc.)", expanded=True):
+        col_url, col_fetch = st.columns([3, 1])
+        with col_url:
+            job_url_input = st.text_input(
+                "Job Posting URL",
+                placeholder="https://example.com/careers/senior-ai-engineer",
+                label_visibility="collapsed",
+            )
+        with col_fetch:
+            fetch_btn = st.button("🚀 Fetch & Extract", use_container_width=True)
+
+        if fetch_btn:
+            if not job_url_input or not job_url_input.strip():
+                st.error("Please enter a valid job posting URL (starting with http:// or https://).")
+            else:
+                with st.spinner("Accessing webpage, parsing role metadata, and decomposing requirements with AI..."):
+                    try:
+                        res = api_client.parse_job_url(job_url_input)
+                        st.session_state.job_description = JobDescription.model_validate(res["job_description"])
+                        st.session_state.jd_missing_fields = res.get("missing_fields", [])
+                        st.session_state.jd_warnings = res.get("warnings", [])
+                        st.success(
+                            f"Successfully imported job posting! Extracted {len(st.session_state.job_description.requirements)} requirements."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to extract job description from URL: {e}")
+
+    # 2. Missing Fields / Incomplete Data Warnings
+    if st.session_state.jd_warnings:
+        warning_bullets = "\n".join([f"- **{w}**" for w in st.session_state.jd_warnings])
+        st.warning(
+            f"⚠️ **Incomplete Job Posting Details Detected:**\n\n"
+            f"{warning_bullets}\n\n"
+            f"👉 *The AI populated all available information. Please fill in the missing fields manually below.*"
+        )
 
     jd = st.session_state.job_description
-    jd.title = st.text_input("Job Title", value=jd.title)
-    jd.department = st.text_input("Department", value=jd.department or "")
 
-    st.subheader("Granular Requirements")
+    # 3. Position Metadata Fields
+    col_t1, col_t2, col_t3 = st.columns([2, 1, 1])
+    with col_t1:
+        jd.title = st.text_input("Job Title *", value=jd.title)
+    with col_t2:
+        jd.department = st.text_input("Department", value=jd.department or "")
+    with col_t3:
+        jd.seniority_level = st.text_input("Seniority Level", value=jd.seniority_level or "")
+
+    st.subheader("Granular Requirements & Weights")
+
+    # 4. Atomic Requirements Editor
+    reqs_to_remove = []
     for idx, req in enumerate(jd.requirements):
-        with st.expander(f"Requirement {idx + 1}: {req.title} [{req.category.value.upper()}]", expanded=True):
-            cols = st.columns([2, 1, 1])
+        badge_style = "🔥 MUST-HAVE" if req.category == RequirementCategory.MUST_HAVE else ("✨ NICE-TO-HAVE" if req.category == RequirementCategory.NICE_TO_HAVE else "🤝 SOFT-SKILL")
+        with st.expander(f"Requirement {idx + 1}: {req.title} [{badge_style}]", expanded=True):
+            cols = st.columns([2.5, 1.2, 1, 0.5])
             with cols[0]:
+                req.title = st.text_input(f"Title ({req.id})", value=req.title)
                 req.description = st.text_area(f"Description ({req.id})", value=req.description, height=70)
             with cols[1]:
                 req.category = RequirementCategory(
@@ -204,6 +328,12 @@ with tab_jd:
                         index=[c.value for c in RequirementCategory].index(req.category.value),
                     )
                 )
+                if req.category == RequirementCategory.MUST_HAVE:
+                    req.weight = 1.0
+                elif req.category == RequirementCategory.NICE_TO_HAVE:
+                    req.weight = 0.8
+                else:
+                    req.weight = 0.5
             with cols[2]:
                 req.minimum_years_experience = st.number_input(
                     f"Min Years ({req.id})",
@@ -211,6 +341,66 @@ with tab_jd:
                     max_value=20,
                     value=req.minimum_years_experience or 0,
                 )
+            with cols[3]:
+                st.write("")
+                st.write("")
+                if st.button("🗑️", key=f"del_{req.id}_{idx}", help="Remove requirement"):
+                    reqs_to_remove.append(idx)
+
+    if reqs_to_remove:
+        for r_idx in sorted(reqs_to_remove, reverse=True):
+            jd.requirements.pop(r_idx)
+        st.rerun()
+
+    # 5. Add Custom Requirement Button
+    col_add, col_audit = st.columns([1, 1])
+    with col_add:
+        if st.button("➕ Add Requirement Manually", use_container_width=True):
+            new_num = len(jd.requirements) + 1
+            jd.requirements.append(
+                JobRequirement(
+                    id=f"req_manual_{new_num}",
+                    title=f"Custom Requirement {new_num}",
+                    category=RequirementCategory.MUST_HAVE,
+                    weight=1.0,
+                    description="Enter required skill, experience, or credential details.",
+                    minimum_years_experience=0,
+                )
+            )
+            st.rerun()
+
+    with col_audit:
+        if st.session_state.jd_warnings:
+            if st.button("✅ Clear Warnings & Validate", use_container_width=True):
+                must_haves = [r for r in jd.requirements if r.category == RequirementCategory.MUST_HAVE]
+                if not jd.title or jd.title.strip() in {"", "Untitled Position"}:
+                    st.error("Please provide a specific Job Title before proceeding.")
+                elif not must_haves:
+                    st.error("At least one requirement must be categorized as 'MUST-HAVE'.")
+                else:
+                    st.session_state.jd_warnings = []
+                    st.session_state.jd_missing_fields = []
+                    st.success("Job Description validated!")
+                    st.rerun()
+
+    # Export Tagged JD JSON
+    st.markdown("---")
+    col_jd_info, col_jd_btn = st.columns([2.5, 1])
+    with col_jd_info:
+        st.markdown("💾 **Export Annotated Job Description (JSON)**")
+        st.caption("Downloads all criteria and scoring weights tagged as `visible`, `extra`, `unused`, or `anonymised`.")
+    with col_jd_btn:
+        try:
+            jd_export_payload = api_client.export_job_description(jd)
+            st.download_button(
+                label="📥 Download Tagged JD JSON",
+                data=json.dumps(jd_export_payload, indent=2),
+                file_name="job_description_tagged.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"Export error: {e}")
 
 
 # ---------------------------------------------------------------------------

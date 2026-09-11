@@ -11,12 +11,14 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from backend.agents.interview_agent import InterviewAgent
+from backend.agents.job_parser_agent import JobParserAgent
 from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent
-from backend.schemas.cv import AnonymizedCandidate, ParsedCV
+from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan
-from backend.schemas.job import JobDescription
+from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport
 from backend.schemas.match import MatchEvaluationResult, Recommendation
+from backend.services.audit_exporter import AuditExporter
 from backend.services.scoring_engine import ScoringEngine
 from backend.services.vector_store import VectorStoreService
 
@@ -27,11 +29,13 @@ router = APIRouter(prefix="/api/v1", tags=["Recruitment Screening"])
 # ---------------------------------------------------------------------------
 _CANDIDATE_RAW_STORE: Dict[UUID, ParsedCV] = {}
 _CANDIDATE_ANONYMIZED_STORE: Dict[UUID, AnonymizedCandidate] = {}
+_CANDIDATE_CHUNKS_STORE: Dict[UUID, int] = {}
 _EVALUATION_STORE: Dict[UUID, MatchEvaluationResult] = {}
 _INTERVIEW_PLAN_STORE: Dict[UUID, InterviewPlan] = {}
 
 # Reusable service instances
 _parser_agent = ParserAgent()
+_job_parser_agent = JobParserAgent()
 _vector_store = VectorStoreService()
 _scoring_engine = ScoringEngine()
 _matching_agent = MatchingAgent(vector_store=_vector_store, scoring_engine=_scoring_engine)
@@ -70,9 +74,38 @@ class InterviewGenerateRequest(BaseModel):
     target_duration_minutes: int = Field(default=45, ge=15, le=120, description="Target interview length")
 
 
+class JobUrlParseRequest(BaseModel):
+    """Request payload to extract a Job Description from a URL."""
+    url: str = Field(description="Web URL of the job description posting")
+
+
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+@router.post(
+    "/job/parse-url",
+    response_model=JobExtractionResult,
+    summary="Fetch, parse, and decompose a Job Description from a web URL",
+)
+async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
+    """
+    Retrieves the HTML content of the job posting URL, extracts structured metadata
+    and atomic requirement criteria using LLM, and audits for missing required elements.
+    """
+    try:
+        result = _job_parser_agent.parse_job_url(request.url)
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error extracting job description from URL: {str(e)}",
+        )
+
 @router.post(
     "/cv/upload",
     response_model=CVUploadResponse,
@@ -103,6 +136,7 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
         cid = anonymized_candidate.candidate_id
         _CANDIDATE_RAW_STORE[cid] = parsed_cv
         _CANDIDATE_ANONYMIZED_STORE[cid] = anonymized_candidate
+        _CANDIDATE_CHUNKS_STORE[cid] = chunks_indexed
 
         return CVUploadResponse(
             candidate_id=cid,
@@ -115,6 +149,44 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing candidate CV: {str(e)}",
         )
+
+
+@router.get(
+    "/cv/{candidate_id}/export",
+    response_model=CVTaggedExport,
+    summary="Export candidate CV with tagged details (anonymised, visible, unused, extra)",
+)
+async def export_cv(candidate_id: UUID) -> CVTaggedExport:
+    """
+    Returns full structured audit export of candidate profile with every detail tagged
+    by its extraction, redaction, or usage status.
+    """
+    anonymized = _CANDIDATE_ANONYMIZED_STORE.get(candidate_id)
+    parsed = _CANDIDATE_RAW_STORE.get(candidate_id)
+    if not anonymized or not parsed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {candidate_id} not found in session cache.",
+        )
+    chunks_count = _CANDIDATE_CHUNKS_STORE.get(candidate_id, 0)
+    return AuditExporter.build_cv_tagged_export(
+        parsed_cv=parsed,
+        anonymized_candidate=anonymized,
+        chunks_count=chunks_count,
+    )
+
+
+@router.post(
+    "/job/export",
+    response_model=JDTaggedExport,
+    summary="Export Job Description with tagged details (visible, unused, extra, anonymised)",
+)
+async def export_job(job_description: JobDescription) -> JDTaggedExport:
+    """
+    Returns full structured audit export of the target Job Description with every
+    criterion, scoring weight, and unmapped content item tagged with its status.
+    """
+    return AuditExporter.build_jd_tagged_export(job_description=job_description)
 
 
 @router.post(
