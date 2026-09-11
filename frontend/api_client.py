@@ -129,6 +129,15 @@ class BackendAPIClient:
         res = self._post_with_retry("/api/v1/job/parse-url", json_data=payload)
         return res.json()
 
+    def parse_job_text(self, text: str) -> Dict[str, Any]:
+        """
+        Invokes /api/v1/job/parse-text to extract and audit raw job description text.
+        Returns dict with job_description, missing_fields, and warnings.
+        """
+        payload = {"text": text.strip()}
+        res = self._post_with_retry("/api/v1/job/parse-text", json_data=payload)
+        return res.json()
+
     def export_candidate_cv(self, candidate_id: UUID) -> Dict[str, Any]:
         """
         Fetches the complete tagged audit JSON for a candidate via /api/v1/cv/{candidate_id}/export.
@@ -194,3 +203,85 @@ class BackendAPIClient:
         }
         res = self._post_with_retry("/api/v1/interview/generate", json_data=payload)
         return InterviewPlan.model_validate(res.json())
+
+    def get_llm_settings(self) -> Dict[str, Any]:
+        """Fetches active LLM provider, current model, and models catalog from backend."""
+        res = self._get_with_retry("/api/v1/settings/llm")
+        return res.json()
+
+    def update_llm_settings(
+        self,
+        provider: str,
+        model: str,
+        compatibility_mode: str = "auto",
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Hot-swaps active LLM provider and model in backend runtime."""
+        payload: Dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "compatibility_mode": compatibility_mode,
+        }
+        if api_key:
+            payload["api_key"] = api_key
+        if base_url:
+            payload["base_url"] = base_url
+        res = self._post_with_retry("/api/v1/settings/llm", json_data=payload)
+        return res.json()
+
+    def test_llm_connection(
+        self,
+        provider: str,
+        model: str,
+        compatibility_mode: str = "auto",
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Runs a ping test against the specified provider and model."""
+        payload: Dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "compatibility_mode": compatibility_mode,
+        }
+        if api_key:
+            payload["api_key"] = api_key
+        if base_url:
+            payload["base_url"] = base_url
+        res = self._post_with_retry("/api/v1/settings/test", json_data=payload, timeout=60.0)
+        return res.json()
+
+    def get_ollama_status(self) -> Dict[str, Any]:
+        """Checks if local Ollama daemon is running."""
+        res = self._get_with_retry("/api/v1/ollama/status")
+        return res.json()
+
+    def start_ollama_service(self) -> Dict[str, Any]:
+        """Requests backend to start the local Ollama daemon process."""
+        res = self._post_with_retry("/api/v1/ollama/start", timeout=15.0)
+        return res.json()
+
+    def get_ollama_models(self) -> Dict[str, Any]:
+        """Fetches installed local models and models currently loaded in RAM/VRAM."""
+        res = self._get_with_retry("/api/v1/ollama/models")
+        return res.json()
+
+    def load_ollama_model(self, model: str, keep_alive: str = "1h") -> Dict[str, Any]:
+        """Pre-loads local Ollama model into memory (GPU VRAM / RAM)."""
+        payload = {"model": model, "keep_alive": keep_alive}
+        res = self._post_with_retry("/api/v1/ollama/load", json_data=payload, timeout=60.0)
+        return res.json()
+
+    def unload_ollama_model(self, model: str) -> Dict[str, Any]:
+        """Unloads model weights from memory immediately."""
+        payload = {"model": model}
+        res = self._post_with_retry("/api/v1/ollama/unload", json_data=payload, timeout=15.0)
+        return res.json()
+
+    def pull_ollama_model(self, model: str) -> Dict[str, Any]:
+        """Downloads/pulls a new model tag from the Ollama library."""
+        payload = {"model": model}
+        res = self._post_with_retry("/api/v1/ollama/pull", json_data=payload, timeout=300.0)
+        return res.json()
+
+
