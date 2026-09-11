@@ -60,6 +60,7 @@ class OpenRouterClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
+            timeout=60.0,
             default_headers={
                 "HTTP-Referer": "https://github.com/MorariuMark/agentic-recruitment-screening",
                 "X-Title": "Agentic Recruitment Screening",
@@ -122,7 +123,7 @@ class GroqClient(BaseLLMClient):
         if not self.api_key:
             raise ValueError("GROQ_API_KEY must be provided or set in environment variables.")
         self.model = model or settings.groq_model
-        self.client = Groq(api_key=self.api_key)
+        self.client = Groq(api_key=self.api_key, timeout=60.0)
 
     def generate_text(
         self,

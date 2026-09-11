@@ -476,28 +476,37 @@ volumes:
 * Docker & Docker Compose
 * [Ollama](https://ollama.ai) instalat local (cu modelul `llama3.1:8b`) **SAU** un API Key gratuit de la [Groq Cloud](https://console.groq.com).
 
-### 9.2 Rulare cu Docker Compose (Recomandat)
+### 9.2 Rulare Rapidă Locală (One-Command Runner)
 
-1. **Clonare repository**:
-   ```bash
-   git clone https://github.com/MorariuMark/agentic-recruitment-screening.git
-   cd agentic-recruitment-screening
-   ```
+Puteți porni simultan atât backend-ul FastAPI cât și panoul Streamlit printr-o singură comandă:
 
-2. **Configurare variabile de mediu**:
+```bash
+# Pornire concomitentă backend + frontend cu deschidere automată în browser
+python start.py
+```
+
+### 9.3 Rulare cu Docker Compose (Producție)
+
+1. **Configurare variabile de mediu**:
    ```bash
    cp .env.example .env
-   # Completați GROQ_API_KEY în .env dacă doriți inferență prin Groq Cloud
+   # Completați cheile pentru OpenRouter sau Groq în .env
    ```
 
-3. **Pornire servicii**:
+2. **Pornire containere**:
    ```bash
    docker-compose up --build
    ```
 
+3. **Rulare teste automate**:
+   ```bash
+   pytest tests -v
+   ```
+
 4. **Accesare aplicații**:
-   * **Streamlit UI**: [http://localhost:8501](http://localhost:8501)
+   * **Streamlit UI Dashboard**: [http://localhost:8501](http://localhost:8501)
    * **FastAPI Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+   * **Health Check Endpoint**: [http://localhost:8000/health](http://localhost:8000/health)
    * **Arize Phoenix Tracing**: [http://localhost:6006](http://localhost:6006)
 
 ---

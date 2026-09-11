@@ -4,6 +4,8 @@ Semantic matching agent for evaluating candidate-JD alignment and gap proposals.
 Retrieves candidate evidence chunks via ChromaDB and performs grounded LLM reasoning.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+import logging
 from typing import List, Optional
 from uuid import UUID
 
@@ -115,15 +117,29 @@ class MatchingAgent:
         # 1. Ensure candidate is indexed in vector store
         self.vector_store.index_candidate(candidate)
 
-        # 2. Evaluate all requirements in the JD
+        # 2. Evaluate all requirements in the JD concurrently
         matches: List[RequirementMatch] = []
-        for req in job_description.requirements:
-            match = self.evaluate_requirement(
-                candidate_id=candidate.candidate_id,
-                requirement=req,
-                n_chunks=n_chunks_per_req,
-            )
-            matches.append(match)
+        if job_description.requirements:
+            def _evaluate_single(req: JobRequirement) -> RequirementMatch:
+                try:
+                    return self.evaluate_requirement(
+                        candidate_id=candidate.candidate_id,
+                        requirement=req,
+                        n_chunks=n_chunks_per_req,
+                    )
+                except Exception as e:
+                    logging.warning(f"Error evaluating requirement {req.id}: {e}")
+                    return RequirementMatch(
+                        requirement_id=req.id,
+                        status=MatchStatus.NOT_MET,
+                        score=0.0,
+                        reasoning=f"Automated evaluation encountered a provider timeout or error: {str(e)}",
+                        citations=[],
+                    )
+
+            max_workers = min(len(job_description.requirements), 6)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                matches = list(executor.map(_evaluate_single, job_description.requirements))
 
         # 3. Compute deterministic score, citation verification, and recommendation
         evaluation_result = self.scoring_engine.compute_evaluation(

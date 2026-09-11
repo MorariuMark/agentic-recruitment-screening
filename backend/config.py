@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = True
 
-    # Active LLM Provider: 'openrouter' (default), 'groq', or 'ollama'
-    llm_provider: Literal["openrouter", "groq", "ollama"] = Field(
-        default="openrouter",
-        description="Active LLM backend provider ('openrouter', 'groq', or 'ollama')",
+    # Active LLM Provider: 'groq' (default), 'openrouter', or 'ollama'
+    llm_provider: Literal["groq", "openrouter", "ollama"] = Field(
+        default="groq",
+        description="Active LLM backend provider ('groq', 'openrouter', or 'ollama')",
     )
 
     # OpenRouter Settings
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         description="API key for Groq Cloud API",
     )
     groq_model: str = Field(
-        default="llama-3.3-70b-versatile",
+        default="openai/gpt-oss-120b",
         description="Groq model identifier",
     )
 

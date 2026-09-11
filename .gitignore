@@ -13,8 +13,8 @@ ENV/
 .env
 
 # Vector Store & Local Data (keep gitkeep files)
-data/chroma_db/*
-!data/chroma_db/.gitkeep
+data/chroma_db*/*
+!data/chroma_db*/.gitkeep
 
 # Testing & Coverage
 .pytest_cache/
