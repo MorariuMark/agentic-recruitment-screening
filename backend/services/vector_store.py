@@ -94,7 +94,73 @@ class VectorStoreService:
             })
             ids.append(f"candidate_{candidate.candidate_id}_skills")
 
-        # 3. Idempotently upsert all chunks into ChromaDB (safe against re-indexing existing IDs)
+        # 3. Add project chunks
+        for p_idx, project in enumerate(getattr(candidate, "anonymized_projects", [])):
+            proj_desc = " ".join(project.description)
+            tech_str = f" Technologies: {', '.join(project.technologies)}." if project.technologies else ""
+            proj_content = f"Project: {project.project_name}.{tech_str} {proj_desc}".strip()
+            documents.append(proj_content)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "project",
+                "job_title": f"Project: {project.project_name}",
+                "company_name": "Independent/Academic",
+                "experience_index": p_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_proj_{p_idx}")
+
+        # 4. Add languages chunk
+        langs = getattr(candidate, "anonymized_languages", [])
+        if langs:
+            lang_strings = [
+                f"{lang.language} ({lang.proficiency})" if lang.proficiency else lang.language
+                for lang in langs
+            ]
+            documents.append(f"Languages: {', '.join(lang_strings)}")
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "languages",
+                "job_title": "Languages",
+                "company_name": "Candidate Profile",
+                "experience_index": -1,
+                "bullet_index": -1,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_languages")
+
+        # 5. Add custom fallback sections chunks
+        for s_idx, sec in enumerate(getattr(candidate, "anonymized_custom_sections", [])):
+            if not sec.is_relevant or not sec.items:
+                continue
+            sec_content = f"{sec.section_title}: " + "; ".join(sec.items)
+            documents.append(sec_content)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "custom_section",
+                "job_title": sec.section_title,
+                "company_name": "Additional Qualifications",
+                "experience_index": s_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_sec_{s_idx}")
+
+        # 6. Add education chunks
+        for edu_idx, edu in enumerate(getattr(candidate, "anonymized_education", [])):
+            edu_content = f"Degree: {edu.degree_title} in {edu.field_of_study or 'General'} from {edu.institution_name}"
+            if edu.graduation_year:
+                edu_content += f" ({edu.graduation_year})"
+            documents.append(edu_content)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "education",
+                "job_title": edu.degree_title,
+                "company_name": edu.institution_name,
+                "experience_index": edu_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_edu_{edu_idx}")
+
+        # 7. Idempotently upsert all chunks into ChromaDB (safe against re-indexing existing IDs)
         if documents:
             self.candidate_collection.upsert(
                 documents=documents,

@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
-from backend.schemas.cv import AnonymizedCandidate, WorkExperience
+from backend.schemas.cv import AnonymizedCandidate, LanguageSkill, Project, WorkExperience
 from backend.services.vector_store import VectorStoreService
 
 TEST_CHROMA_DIR = "./data/chroma_db_pytest"
@@ -25,7 +25,7 @@ def vector_service():
 
 
 def test_index_and_query_candidate(vector_service):
-    """Verify candidate experience bullets and skills are chunked and retrievable."""
+    """Verify candidate experience bullets, skills, projects, and languages are chunked and retrievable."""
     cid = uuid4()
     candidate = AnonymizedCandidate(
         candidate_id=cid,
@@ -42,13 +42,24 @@ def test_index_and_query_candidate(vector_service):
         ],
         anonymized_education=[],
         anonymized_skills=["Python", "ChromaDB", "Docker"],
+        anonymized_projects=[
+            Project(
+                project_name="Autonomous Robot",
+                description=["Implemented person tracking and obstacle avoidance."],
+                technologies=["OpenCV", "YOLO"],
+            )
+        ],
+        anonymized_languages=[
+            LanguageSkill(language="English", proficiency="C1"),
+            LanguageSkill(language="German", proficiency="B2"),
+        ],
         demographic_data={}
     )
 
     indexed_count = vector_service.index_candidate(candidate)
-    assert indexed_count == 3  # 2 bullets + 1 aggregated skills chunk
+    assert indexed_count == 5  # 2 bullets + 1 skills + 1 project + 1 languages
 
-    # Query for vector similarity
+    # Query for vector similarity on work experience
     results = vector_service.query_candidate_chunks(
         candidate_id=cid,
         query_text="vector similarity search RAG",
@@ -60,6 +71,16 @@ def test_index_and_query_candidate(vector_service):
     assert "distance" in top_result
     assert "metadata" in top_result
     assert top_result["metadata"]["candidate_id"] == str(cid)
+
+    # Query for vector similarity on projects
+    proj_results = vector_service.query_candidate_chunks(
+        candidate_id=cid,
+        query_text="robot obstacle avoidance computer vision",
+        n_results=1
+    )
+    assert len(proj_results) > 0
+    assert proj_results[0]["metadata"]["type"] == "project"
+    assert "Autonomous Robot" in proj_results[0]["metadata"]["job_title"]
 
 
 def test_candidate_isolation_in_query(vector_service):

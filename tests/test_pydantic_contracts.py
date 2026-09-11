@@ -9,8 +9,11 @@ import pytest
 from backend.schemas.cv import (
     AnonymizedCandidate,
     ContactInfo,
+    CustomSection,
     Education,
+    LanguageSkill,
     ParsedCV,
+    Project,
     WorkExperience,
 )
 from backend.schemas.job import (
@@ -51,25 +54,48 @@ def test_cv_schemas_validation():
         institution_name="MIT",
         graduation_year=2020
     )
+    proj = Project(
+        project_name="Autonomous Robot",
+        description=["Built ROS navigation pipeline."],
+        technologies=["Python", "C++", "ROS"],
+        project_url="https://github.com/example/robot",
+    )
+    lang = LanguageSkill(language="English", proficiency="C1")
+    custom = CustomSection(section_title="Volunteering", items=["Community mentoring"])
+
     cv = ParsedCV(
         contact_info=contact,
         skills=["Python", "PyTorch"],
         experiences=[exp],
-        education=[edu]
+        education=[edu],
+        projects=[proj],
+        languages=[lang],
+        custom_sections=[custom],
     )
 
     assert cv.contact_info.full_name == "Jane Doe"
     assert len(cv.experiences) == 1
     assert cv.experiences[0].skills_used == ["Python", "FastAPI"]
+    assert len(cv.projects) == 1
+    assert cv.projects[0].project_name == "Autonomous Robot"
+    assert len(cv.languages) == 1
+    assert cv.languages[0].language == "English"
+    assert len(cv.custom_sections) == 1
+    assert cv.custom_sections[0].section_title == "Volunteering"
 
     anonymized = AnonymizedCandidate(
         anonymized_work_experiences=[exp],
         anonymized_education=[edu],
         anonymized_skills=["Python", "PyTorch"],
+        anonymized_projects=[proj],
+        anonymized_languages=[lang],
+        anonymized_custom_sections=[custom],
         demographic_data={"name_redacted": "Jane Doe"}
     )
     assert isinstance(anonymized.candidate_id, UUID)
     assert anonymized.demographic_data["name_redacted"] == "Jane Doe"
+    assert len(anonymized.anonymized_projects) == 1
+    assert len(anonymized.anonymized_languages) == 1
 
 
 def test_job_description_schemas_validation():
