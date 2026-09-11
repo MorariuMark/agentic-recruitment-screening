@@ -16,10 +16,16 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = True
 
-    # Active LLM Provider: 'groq' (default), 'openrouter', or 'ollama'
-    llm_provider: Literal["groq", "openrouter", "ollama"] = Field(
+    # Active LLM Provider: 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'
+    llm_provider: Literal["groq", "openrouter", "nvidia_nim", "gemini", "ollama"] = Field(
         default="groq",
-        description="Active LLM backend provider ('groq', 'openrouter', or 'ollama')",
+        description="Active LLM backend provider ('groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama')",
+    )
+
+    # Global structured output compatibility mode: 'auto', 'json_object', 'schema_prompt'
+    compatibility_mode: Literal["auto", "json_object", "schema_prompt"] = Field(
+        default="auto",
+        description="Structured JSON compatibility strategy",
     )
 
     # OpenRouter Settings
@@ -32,7 +38,7 @@ class Settings(BaseSettings):
         description="Base URL for OpenRouter API",
     )
     openrouter_model: str = Field(
-        default="meta-llama/llama-3.3-70b-instruct",
+        default="openrouter/free",
         description="Default model identifier for OpenRouter",
     )
 
@@ -42,8 +48,36 @@ class Settings(BaseSettings):
         description="API key for Groq Cloud API",
     )
     groq_model: str = Field(
-        default="openai/gpt-oss-120b",
+        default="openai/gpt-oss-20b",
         description="Groq model identifier",
+    )
+
+    # NVIDIA NIM Settings
+    nvidia_nim_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for NVIDIA NIM Microservices (build.nvidia.com)",
+    )
+    nvidia_nim_base_url: str = Field(
+        default="https://integrate.api.nvidia.com/v1",
+        description="Base URL for NVIDIA NIM OpenAI endpoint",
+    )
+    nvidia_nim_model: str = Field(
+        default="meta/llama-3.2-11b-vision-instruct",
+        description="NVIDIA NIM model identifier",
+    )
+
+    # Google Gemini Settings (AI Studio)
+    gemini_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for Google Gemini (aistudio.google.com)",
+    )
+    gemini_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/",
+        description="Base URL for Gemini OpenAI endpoint",
+    )
+    gemini_model: str = Field(
+        default="gemini-flash-latest",
+        description="Google Gemini model identifier",
     )
 
     # Ollama Settings
