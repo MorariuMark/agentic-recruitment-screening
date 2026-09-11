@@ -97,6 +97,9 @@ class LLMSettingsResponse(BaseModel):
     compatibility_mode: str = Field(description="Structured JSON compatibility mode ('auto', 'json_object', 'schema_prompt')")
     providers_catalog: Dict[str, Any] = Field(description="Complete provider and model definitions with rate limits")
     api_keys_configured: Dict[str, bool] = Field(description="Status of configured API keys per provider")
+    fallback_enabled: bool = Field(default=True, description="Whether multi-tier automatic failover is active")
+    fallback_chain: List[str] = Field(default_factory=list, description="Sequence of fallback (provider:model) candidates")
+    last_fallback_event: Optional[Dict[str, Any]] = Field(default=None, description="Metadata of most recent failover event")
 
 
 class LLMUpdateRequest(BaseModel):
@@ -418,6 +421,11 @@ async def get_llm_settings() -> LLMSettingsResponse:
     catalog_dict = {
         pid: pinfo.model_dump() for pid, pinfo in CATALOG_PROVIDERS.items()
     }
+    from backend.agents.llm_factory import DynamicLLMClient, get_last_fallback_event
+
+    dyn = DynamicLLMClient()
+    chain_labels = [f"{p}:{m}" for p, m, _ in dyn.get_fallback_chain()]
+
     return LLMSettingsResponse(
         active_provider=settings.llm_provider,
         active_model=_get_active_model_for_provider(settings.llm_provider),
@@ -430,6 +438,9 @@ async def get_llm_settings() -> LLMSettingsResponse:
             "gemini": bool(settings.gemini_api_key),
             "ollama": True,
         },
+        fallback_enabled=True,
+        fallback_chain=chain_labels,
+        last_fallback_event=get_last_fallback_event(),
     )
 
 
