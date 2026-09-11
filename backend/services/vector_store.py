@@ -17,6 +17,19 @@ from backend.schemas.job import JobDescription, JobRequirement
 DEFAULT_CHROMA_PATH = "./data/chroma_db"
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
+# Global module-level cache for SentenceTransformer embedding functions
+# Prevents reloading PyTorch weights into memory repeatedly across instances/tests
+_EMBEDDING_FUNCTION_CACHE: Dict[str, Any] = {}
+
+
+def get_cached_embedding_function(model_name: str = DEFAULT_EMBEDDING_MODEL) -> Any:
+    """Returns a process-wide cached SentenceTransformerEmbeddingFunction instance."""
+    if model_name not in _EMBEDDING_FUNCTION_CACHE:
+        _EMBEDDING_FUNCTION_CACHE[model_name] = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=model_name
+        )
+    return _EMBEDDING_FUNCTION_CACHE[model_name]
+
 
 class VectorStoreService:
     """Service managing local ChromaDB collections for candidate chunks and job criteria."""
@@ -36,9 +49,7 @@ class VectorStoreService:
     @property
     def embedding_fn(self):
         if self._embedding_fn is None:
-            self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=self.model_name
-            )
+            self._embedding_fn = get_cached_embedding_function(self.model_name)
         return self._embedding_fn
 
     @property
@@ -69,15 +80,28 @@ class VectorStoreService:
     def job_collection(self, value):
         self._job_collection = value
 
-
-
-    def index_candidate(self, candidate: AnonymizedCandidate) -> int:
+    def index_candidate(self, candidate: AnonymizedCandidate, force: bool = False) -> int:
         """
         Chunks candidate experience bullet points and skills, then indexes them in ChromaDB.
+        Skips re-indexing if candidate chunks are already resident unless force=True.
 
         Returns:
             Number of indexed chunks.
         """
+        cid_str = str(candidate.candidate_id)
+        if not force:
+            try:
+                existing = self.candidate_collection.get(
+                    where={"candidate_id": cid_str},
+                    limit=1,
+                )
+                if existing and existing.get("ids") and len(existing["ids"]) > 0:
+                    total_existing = self.candidate_collection.get(
+                        where={"candidate_id": cid_str},
+                    )
+                    return len(total_existing.get("ids", []))
+            except Exception:
+                pass
         documents: List[str] = []
         metadatas: List[Dict[str, Any]] = []
         ids: List[str] = []
