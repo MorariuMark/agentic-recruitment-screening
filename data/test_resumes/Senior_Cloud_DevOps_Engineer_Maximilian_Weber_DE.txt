@@ -1,0 +1,42 @@
+LEBENSLAUF
+
+PERSÖNLICHE DATEN
+Name: Maximilian Weber
+E-Mail: m.weber.software@gmail.com
+Telefon: +49 89 12345678
+Wohnort: München, Deutschland
+LinkedIn: linkedin.com/in/maximilian-weber-dev
+GitHub: github.com/max-weber-cloud
+
+BERUFLICHER WERDEGANG
+
+Senior Cloud & DevOps Engineer
+BMW Group | München, Deutschland
+April 2020 – Heute
+- Konzeption, Aufbau und Skalierung unternehmensweiter Kubernetes-Cluster auf Microsoft Azure (AKS) zur Unterstützung vernetzter Fahrzeugdienste.
+- Implementierung automatisierter CI/CD-Pipelines mit GitLab CI und Terraform (Infrastructure as Code) für mehr als 30 Microservices.
+- Erhöhung der Systemverfügbarkeit auf 99,95% durch Einführung proaktiver Monitoring-Lösungen mit Prometheus, Grafana und Datadog.
+Technologien: Kubernetes (AKS), Docker, Terraform, GitLab CI, Python, Bash, Prometheus, Grafana, Azure.
+
+DevOps & Backend Engineer
+Siemens AG | München, Deutschland
+Oktober 2017 – März 2020
+- Entwicklung von REST-APIs und Middleware-Diensten mit Go und Python für industrielle IoT-Anwendungen.
+- Migration monolithischer Altsysteme in containerisierte Docker-Infrastrukturen unter Einhaltung strenger Sicherheits- und Compliance-Richtlinien.
+Technologien: Go, Python, Docker, Linux, Bash, PostgreSQL, REST APIs.
+
+AUSBILDUNG
+Master of Science (M.Sc.) Informatik (2015 – 2017)
+Technische Universität München (TUM)
+
+Bachelor of Science (B.Sc.) Wirtschaftsinformatik (2012 – 2015)
+Ludwig-Maximilians-Universität München (LMU)
+
+SPRACHKENNTNISSE
+- Deutsch: Muttersprache
+- Englisch: Verhandlungssicher (C2)
+- Französisch: Grundkenntnisse (A2)
+
+ZERTIFIZIERUNGEN
+- Certified Kubernetes Administrator (CKA), The Linux Foundation (2022)
+- Microsoft Certified: Azure Solutions Architect Expert (2021)

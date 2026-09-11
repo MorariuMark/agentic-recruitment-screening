@@ -1,0 +1,178 @@
+[
+  {
+    "filename": "Awesome_CV_Tech_Software_Engineer_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Tech / Software Engineer",
+    "size_kb": 117.4,
+    "source": "https://raw.githubusercontent.com/posquit0/Awesome-CV/master/examples/resume.pdf"
+  },
+  {
+    "filename": "Awesome_CV_Academic_Research_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Academic / Research",
+    "size_kb": 125.6,
+    "source": "https://raw.githubusercontent.com/posquit0/Awesome-CV/master/examples/cv.pdf"
+  },
+  {
+    "filename": "Deedy_Resume_Software_Engineer_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Software Engineer / Systems",
+    "size_kb": 66.0,
+    "source": "https://raw.githubusercontent.com/deedy/Deedy-Resume/master/OpenFonts/deedy_resume-openfont.pdf"
+  },
+  {
+    "filename": "Fullstack_Developer_Rishu_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Fullstack Developer",
+    "size_kb": 162.9,
+    "source": "https://raw.githubusercontent.com/rishu-8104/rishu-8104/master/Resume.pdf"
+  },
+  {
+    "filename": "Computer_Science_Jules_Bertholet_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Computer Science / Data",
+    "size_kb": 52.3,
+    "source": "https://raw.githubusercontent.com/Jules-Bertholet/cv/master/Jules%20Bertholet%20CS%20resume.pdf"
+  },
+  {
+    "filename": "Senior_Software_Engineer_Kevin_Robayna_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Senior Software Engineer",
+    "size_kb": 40.6,
+    "source": "https://raw.githubusercontent.com/kevinrobayna/cv/main/resume.pdf"
+  },
+  {
+    "filename": "Systems_Cloud_Engineer_Gregory_Blood_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Systems & Cloud",
+    "size_kb": 64.6,
+    "source": "https://raw.githubusercontent.com/gregoryblood/gregoryblood.github.io/master/resume.pdf"
+  },
+  {
+    "filename": "Software_Engineer_David_Read_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Software Engineer",
+    "size_kb": 165.1,
+    "source": "https://raw.githubusercontent.com/david-read-iii/developer-portfolio-media/main/documents/resumes/Resume.pdf"
+  },
+  {
+    "filename": "React_Frontend_Engineer_Ashish_EN.pdf",
+    "language": "English",
+    "format": "PDF",
+    "category": "Frontend / React Engineer",
+    "size_kb": 66.5,
+    "source": "https://raw.githubusercontent.com/ashishd751/react-ultimate-resume/develop/public/Ashish_Deshpande_Resume.pdf"
+  },
+  {
+    "filename": "Lebenslauf_Software_Entwickler_DE.pdf",
+    "language": "German",
+    "format": "PDF",
+    "category": "German Lebenslauf Developer",
+    "size_kb": 33.3,
+    "source": "https://raw.githubusercontent.com/Poeschl/Markdown-Lebenslauf/main/sample/cv.pdf"
+  },
+  {
+    "filename": "Lebenslauf_Software_Entwickler_DE.md",
+    "language": "German",
+    "format": "Markdown (.md)",
+    "category": "German Lebenslauf Source",
+    "size_kb": 2.6,
+    "source": "https://raw.githubusercontent.com/Poeschl/Markdown-Lebenslauf/main/sample/sample.md"
+  },
+  {
+    "filename": "Model_CV_European_Europass_RO.pdf",
+    "language": "Romanian",
+    "format": "PDF",
+    "category": "Europass Romania Standard",
+    "size_kb": 39.9,
+    "source": "https://static.anaf.ro/static/5/Anaf/20241025121041_anexa_nr_3_model_cv_european.pdf"
+  },
+  {
+    "filename": "Model_CV_Universitar_Craiova_RO.pdf",
+    "language": "Romanian",
+    "format": "PDF",
+    "category": "Academic & Professional Romania",
+    "size_kb": 57.3,
+    "source": "https://cis01.ucv.ro/relatii_internationale/files/model_cv.pdf"
+  },
+  {
+    "filename": "CV_Complet_Experienta_Profesionala_RO.pdf",
+    "language": "Romanian",
+    "format": "PDF",
+    "category": "Full Professional Experience Romania",
+    "size_kb": 85.5,
+    "source": "https://iuls.ro/wp-content/uploads/2021/12/2008_CV_Huma.pdf"
+  },
+  {
+    "filename": "Le_CV_Professionnel_Sorbonne_FR.pdf",
+    "language": "French",
+    "format": "PDF",
+    "category": "French University & Professional CV",
+    "size_kb": 219.5,
+    "source": "https://www.pantheonsorbonne.fr/sites/default/files/inline-files/Le%20CV%20.pdf"
+  },
+  {
+    "filename": "CV_Professionnel_Ministere_Culture_FR.pdf",
+    "language": "French",
+    "format": "PDF",
+    "category": "French Public/Cultural Administration",
+    "size_kb": 239.1,
+    "source": "https://www.culture.gouv.fr/content/download/179212/1970701"
+  },
+  {
+    "filename": "Official_Europass_CV_Template_EN.docx",
+    "language": "English / European",
+    "format": "DOCX",
+    "category": "Official Europass Word Template",
+    "size_kb": 78.1,
+    "source": "https://www.eea.europa.eu/en/about/working-practices/docs-register/template-europass-cv/@@download/file"
+  },
+  {
+    "filename": "JSON_Resume_Standard_Schema_EN.json",
+    "language": "English",
+    "format": "JSON",
+    "category": "Standard JSON Resume Format",
+    "size_kb": 4.9,
+    "source": "https://raw.githubusercontent.com/jsonresume/resume-schema/master/sample.resume.json"
+  },
+  {
+    "filename": "Real_Resume_Accountant_EN.txt",
+    "language": "English",
+    "format": "TXT",
+    "category": "Accountant (HuggingFace)",
+    "size_kb": 5.4,
+    "source": "Hugging Face InferencePrince555/Resume-Dataset"
+  },
+  {
+    "filename": "Inginer_Software_Senior_Alexandru_Ionescu_RO.txt",
+    "language": "Romanian",
+    "format": "TXT",
+    "category": "Senior Software Engineer (RO)",
+    "size_kb": 2.8,
+    "source": "Curated Localized Tech Resume"
+  },
+  {
+    "filename": "Senior_Cloud_DevOps_Engineer_Maximilian_Weber_DE.txt",
+    "language": "German",
+    "format": "TXT",
+    "category": "Cloud & DevOps Engineer (DE)",
+    "size_kb": 1.7,
+    "source": "Curated Localized Tech Resume"
+  },
+  {
+    "filename": "Cheffe_de_Projet_Fullstack_Claire_Dubois_FR.txt",
+    "language": "French",
+    "format": "TXT",
+    "category": "Lead Developer & Project Manager (FR)",
+    "size_kb": 2.0,
+    "source": "Curated Localized Tech Resume"
+  }
+]

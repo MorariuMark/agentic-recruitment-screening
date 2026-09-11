@@ -300,6 +300,56 @@ class AuditExporter:
                     notes="Expected seniority level used to calibrate question difficulty and experience thresholds",
                 )
             )
+        if getattr(job_description, "location", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="location",
+                    category="role_metadata",
+                    status=DetailStatus.VISIBLE,
+                    value=job_description.location,
+                    notes="Geographic location and on-site constraints",
+                )
+            )
+        if getattr(job_description, "work_model", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="work_model",
+                    category="role_metadata",
+                    status=DetailStatus.VISIBLE,
+                    value=job_description.work_model,
+                    notes="Work model (On-site, Hybrid, Remote)",
+                )
+            )
+        if getattr(job_description, "employment_type", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="employment_type",
+                    category="role_metadata",
+                    status=DetailStatus.VISIBLE,
+                    value=job_description.employment_type,
+                    notes="Employment type (Full-time, Part-time, Contract, Internship)",
+                )
+            )
+        if getattr(job_description, "languages", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="languages",
+                    category="role_metadata",
+                    status=DetailStatus.VISIBLE,
+                    value=job_description.languages,
+                    notes="Required or preferred languages",
+                )
+            )
+        if getattr(job_description, "custom_sections", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="custom_sections",
+                    category="custom_sections",
+                    status=DetailStatus.VISIBLE,
+                    value=job_description.custom_sections,
+                    notes="Fallback unmapped operational job constraints",
+                )
+            )
 
         for req in job_description.requirements:
             category_label = "MUST-HAVE (75% weight)" if req.category == RequirementCategory.MUST_HAVE else ("NICE-TO-HAVE (25% weight)" if req.category == RequirementCategory.NICE_TO_HAVE else "SOFT SKILL")

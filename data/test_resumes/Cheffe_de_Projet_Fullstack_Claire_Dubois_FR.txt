@@ -1,0 +1,43 @@
+CURRICULUM VITAE
+
+INFORMATIONS PERSONNELLES
+Nom: Claire Dubois
+E-mail: claire.dubois.consulting@outlook.com
+Téléphone: +33 6 12 34 56 78
+Localisation: Paris, France
+LinkedIn: linkedin.com/in/claire-dubois-tech
+GitHub: github.com/claire-dubois
+
+PROFIL PROFESSIONNEL
+Cheffe de Projet Digital & Développeuse Fullstack avec 7 ans d'expérience dans la transformation numérique, la conception d'applications web réactives et la direction d'équipes agiles (Scrum). Double compétence technique (React, Node.js, Python) et managériale.
+
+EXPÉRIENCE PROFESSIONNELLE
+
+Cheffe de Projet Technique / Lead Développeur
+Dassault Systèmes | Vélizy-Villacoublay, France
+Septembre 2020 – Présent
+- Pilotage du cycle de vie de développement de la plateforme collaborative 3DExperience, coordination d'une équipe de 8 ingénieurs.
+- Conception de l'architecture frontend moderne en React.js et TypeScript avec micro-frontends et GraphQL.
+- Réduction du délai de mise en production de 35% grâce à l'automatisation des pipelines CI/CD dans GitHub Actions.
+Technologies: React, TypeScript, GraphQL, Node.js, Docker, Agile/Scrum, Jira.
+
+Développeuse Fullstack
+Capgemini | Paris, France
+Janvier 2017 – Août 2020
+- Développement d'applications web sur mesure pour des clients des secteurs bancaire et assurance.
+- Création d'APIs REST robustes en Python (FastAPI/Flask) et interfaces utilisateur Angular.
+Technologies: Python, FastAPI, Angular, PostgreSQL, Docker, Git.
+
+FORMATION
+Diplôme d'Ingénieur en Informatique (Bac+5) (2012 – 2017)
+INSA Lyon (Institut National des Sciences Appliquées)
+
+COMPÉTENCES CLÉS
+- Management de projet: Méthodologie Agile, Scrum Master certifiée, gestion des risques, budget.
+- Développement Web: React, Node.js, TypeScript, Python, FastAPI, HTML5/CSS3.
+- Base de données & Outils: PostgreSQL, MongoDB, Docker, Git, CI/CD, JIRA, Confluence.
+
+COMPÉTENCES LINGUISTIQUES
+- Français: Langue maternelle
+- Anglais: Courant (Score TOEIC: 975/990)
+- Espagnol: Niveau intermédiaire (B1)

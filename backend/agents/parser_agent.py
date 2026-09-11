@@ -40,9 +40,10 @@ Guidelines:
 11. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
 
 
-def extract_text_from_pdf(pdf_source: Union[str, Path, bytes]) -> str:
+def extract_text_from_pdf(pdf_source: Union[str, Path, bytes], max_pages: int = 8) -> str:
     """
     Extracts text from a PDF file path or raw PDF bytes using pdfplumber with pypdf fallback.
+    Limits to first max_pages (default 8) to guard against oversized books/handbooks.
     """
     text_content = []
 
@@ -51,13 +52,13 @@ def extract_text_from_pdf(pdf_source: Union[str, Path, bytes]) -> str:
 
         if isinstance(pdf_source, (str, Path)):
             with pdfplumber.open(str(pdf_source)) as pdf:
-                for page in pdf.pages:
+                for page in pdf.pages[:max_pages]:
                     extracted = page.extract_text()
                     if extracted:
                         text_content.append(extracted)
         else:
             with pdfplumber.open(io.BytesIO(pdf_source)) as pdf:
-                for page in pdf.pages:
+                for page in pdf.pages[:max_pages]:
                     extracted = page.extract_text()
                     if extracted:
                         text_content.append(extracted)
@@ -72,7 +73,7 @@ def extract_text_from_pdf(pdf_source: Union[str, Path, bytes]) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(pdf_source if isinstance(pdf_source, (str, Path)) else io.BytesIO(pdf_source))
-        for page in reader.pages:
+        for page in reader.pages[:max_pages]:
             extracted = page.extract_text()
             if extracted:
                 text_content.append(extracted)
@@ -80,6 +81,49 @@ def extract_text_from_pdf(pdf_source: Union[str, Path, bytes]) -> str:
         raise ValueError(f"Failed to extract text from PDF document: {e}")
 
     return "\n\n".join(text_content).strip()
+
+
+def extract_text_from_docx(docx_source: Union[str, Path, bytes]) -> str:
+    """
+    Extracts text from a DOCX file using python-docx if installed,
+    or standard library zipfile + xml.etree.ElementTree as a robust zero-dependency fallback.
+    """
+    try:
+        import docx
+
+        doc_stream = io.BytesIO(docx_source) if isinstance(docx_source, bytes) else docx_source
+        doc = docx.Document(doc_stream)
+        paragraphs = [p.text for p in doc.paragraphs if p.text]
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    paragraphs.append(row_text)
+        if paragraphs:
+            return "\n".join(paragraphs).strip()
+    except Exception:
+        pass
+
+    try:
+        import xml.etree.ElementTree as ET
+        import zipfile
+
+        file_obj = io.BytesIO(docx_source) if isinstance(docx_source, bytes) else open(docx_source, "rb")
+        with zipfile.ZipFile(file_obj) as z:
+            xml_content = z.read("word/document.xml")
+        tree = ET.fromstring(xml_content)
+        texts = []
+        for elem in tree.iter():
+            if elem.tag.endswith("}p"):
+                p_text = "".join(node.text for node in elem.iter() if node.text)
+                if p_text.strip():
+                    texts.append(p_text.strip())
+        if not texts:
+            texts = [node.text.strip() for node in tree.iter() if node.text and node.text.strip()]
+        return "\n".join(texts).strip()
+    except Exception as e:
+        raise ValueError(f"Failed to extract text from DOCX document: {e}")
+
 
 
 class ParserAgent:
@@ -96,18 +140,40 @@ class ParserAgent:
     def parse_cv_text(self, raw_text: str) -> ParsedCV:
         """
         Invokes LLM structured generation to parse raw CV text into a ParsedCV object.
+        Applies safe character limits to avoid provider rate/TPM limit errors on oversized inputs.
         """
         if not raw_text or not raw_text.strip():
             raise ValueError("Cannot parse empty CV text.")
 
-        prompt = f"Extract the structured candidate profile from the following CV text:\n\n{raw_text.strip()}"
+        # Cap text at 12,000 characters (~2,800 tokens) to guarantee headroom for the ~1,500 token JSON schema
+        trimmed = raw_text.strip()
+        max_chars = 12000
+        if len(trimmed) > max_chars:
+            trimmed = trimmed[:max_chars]
 
-        parsed = self.llm_client.generate_structured(
-            prompt=prompt,
-            response_model=ParsedCV,
-            system_prompt=PARSER_SYSTEM_PROMPT,
-            temperature=0.0,
-        )
+        prompt = f"Extract the structured candidate profile from the following CV text:\n\n{trimmed}"
+
+        try:
+            parsed = self.llm_client.generate_structured(
+                prompt=prompt,
+                response_model=ParsedCV,
+                system_prompt=PARSER_SYSTEM_PROMPT,
+                temperature=0.0,
+            )
+        except Exception as err:
+            err_str = str(err).lower()
+            if "rate_limit" in err_str or "too large" in err_str or "413" in str(err) or "429" in str(err):
+                # Fallback: further truncate text and retry
+                fallback_prompt = f"Extract the structured candidate profile from the following CV text:\n\n{trimmed[:6000]}"
+                parsed = self.llm_client.generate_structured(
+                    prompt=fallback_prompt,
+                    response_model=ParsedCV,
+                    system_prompt=PARSER_SYSTEM_PROMPT,
+                    temperature=0.0,
+                )
+            else:
+                raise err
+
         parsed.raw_text = raw_text
         return parsed
 
@@ -127,15 +193,32 @@ class ParserAgent:
         """
         # 1. Determine input type and extract text
         is_pdf = False
-        if filename and filename.lower().endswith(".pdf"):
-            is_pdf = True
-        elif isinstance(source, (str, Path)) and str(source).lower().endswith(".pdf"):
-            is_pdf = True
-        elif isinstance(source, bytes) and source.startswith(b"%PDF-"):
-            is_pdf = True
+        is_docx = False
+
+        if filename:
+            fn_lower = filename.lower()
+            if fn_lower.endswith(".pdf"):
+                is_pdf = True
+            elif fn_lower.endswith(".docx"):
+                is_docx = True
+
+        if not is_pdf and not is_docx:
+            if isinstance(source, (str, Path)):
+                src_lower = str(source).lower()
+                if src_lower.endswith(".pdf"):
+                    is_pdf = True
+                elif src_lower.endswith(".docx"):
+                    is_docx = True
+            elif isinstance(source, bytes):
+                if source.startswith(b"%PDF-"):
+                    is_pdf = True
+                elif source.startswith(b"PK\x03\x04"):
+                    is_docx = True
 
         if is_pdf:
             raw_text = extract_text_from_pdf(source)
+        elif is_docx:
+            raw_text = extract_text_from_docx(source)
         elif isinstance(source, bytes):
             try:
                 raw_text = source.decode("utf-8")

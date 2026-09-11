@@ -1,0 +1,54 @@
+CURRICULUM VITAE
+
+INFORMAȚII PERSONALE
+Nume: Alexandru Ionescu
+Email: alexandru.ionescu.tech@gmail.com
+Telefon: +40 722 123 456
+Locație: Timișoara, România
+LinkedIn: linkedin.com/in/alexandru-ionescu-dev
+GitHub: github.com/alex-ionescu-ai
+
+REZUMAT PROFESIONAL
+Inginer Software Senior cu peste 6 ani de experiență în arhitecturi de backend scalabile, sisteme distribuite, Python (FastAPI, Django), Docker, Kubernetes și cloud AWS. Pasiune pentru integrarea agenților autonomi AI și modele LLM în fluxuri industriale de business.
+
+EXPERIENȚĂ PROFESIONALĂ
+
+Senior Python / Backend AI Engineer
+Continental Engineering Services | Timișoara, România
+Martie 2021 – Prezent
+- Arhitecturat și dezvoltat microservicii backend de procesare a datelor telemetry folosind Python 3.11, FastAPI, Celery și Redis, scăzând latența endpoint-urilor critice cu 42%.
+- Implementat pipeline-uri RAG (Retrieval-Augmented Generation) cu vector stores ChromaDB și modele OpenAI/Anthropic pentru căutare semantică în documentații tehnice complexe.
+- Mentinut un cluster Kubernetes (EKS) pe AWS gestionat prin Terraform și fluxuri automate de CI/CD în GitHub Actions.
+- Mentorship tehnic pentru o echipă formată din 5 dezvoltatori juniori și mid.
+Tehnologii: Python, FastAPI, Docker, Kubernetes, AWS (EKS, S3, RDS), ChromaDB, PostgreSQL, Redis, GitHub Actions.
+
+Software Developer
+Endava România | Timișoara, România
+Iulie 2018 – Februarie 2021
+- Dezvoltat soluții enterprise Fintech bazate pe Django REST Framework și baze de date PostgreSQL.
+- Proiectat scheme relaționale de baze de date optimizate pentru volume mari de tranzacții bancare.
+- Integrat teste automate unitare și de integrare cu Pytest, menținând un grad de acoperire a codului (test coverage) de peste 90%.
+Tehnologii: Python, Django REST, PostgreSQL, Git, Docker, Linux, Pytest, Jira.
+
+EDUCAȚIE ȘI FORMARE
+Master în Inginerie Software și Inteligență Artificială (2018 – 2020)
+Universitatea Politehnica Timișoara, Facultatea de Automatică și Calculatoare
+
+Licență în Calculatoare și Tehnologia Informației (2014 – 2018)
+Universitatea Politehnica Timișoara
+
+COMPETENȚE TEHNICE
+- Limbaje de programare: Python (expert), SQL, Bash scripting, TypeScript / JavaScript (mediu)
+- Framework-uri: FastAPI, Django, Flask, PyTorch, LangChain, Pydantic
+- Baze de date: PostgreSQL, MongoDB, Redis, ChromaDB, SQLite
+- Cloud & DevOps: AWS (EC2, S3, EKS, RDS), Docker, Kubernetes, CI/CD, Terraform
+- Metodologii: Agile, Scrum, TDD, Clean Architecture
+
+COMPETENȚE LINGVISTICE
+- Română: Matern
+- Engleză: C1 - Utilizator experimentat (certificare Cambridge CAE)
+- Germană: B1 - Nivel intermediar independent
+
+PROIECTE PERSONALE & OPEN-SOURCE
+Agentic Screening Hub: Sistem open-source de triere automată a candidaților bazat pe matching asimetric și RAG.
+URL: github.com/alex-ionescu-ai/agentic-screening
