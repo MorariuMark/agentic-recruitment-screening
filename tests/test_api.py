@@ -99,3 +99,119 @@ def test_hitl_validation_endpoint(api_client):
     assert updated["recommendation"] == "strong_match"
     assert updated["hitl_validated"] is True
     assert "equivalent transferrable skills" in updated["recruiter_notes"]
+
+
+def test_llm_settings_get_endpoint(api_client):
+    """Verify GET /api/v1/settings/llm returns active configuration and full catalog."""
+    res = api_client.get("/api/v1/settings/llm")
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_provider" in data
+    assert "active_model" in data
+    assert "compatibility_mode" in data
+    assert "providers_catalog" in data
+    catalog = data["providers_catalog"]
+    assert "groq" in catalog
+    assert "openrouter" in catalog
+    assert "nvidia_nim" in catalog
+    assert "gemini" in catalog
+    assert "ollama" in catalog
+    # Verify rate limits are present in model definitions
+    for prov in catalog.values():
+        for model in prov["models"]:
+            assert "rate_limits" in model
+            assert "context_window" in model
+
+
+def test_llm_settings_update_endpoint(api_client):
+    """Verify POST /api/v1/settings/llm dynamically hot-swaps provider and model."""
+    payload = {
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "compatibility_mode": "schema_prompt",
+    }
+    res = api_client.post("/api/v1/settings/llm", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["active_provider"] == "openrouter"
+    assert data["active_model"] == "openrouter/free"
+    assert data["compatibility_mode"] == "schema_prompt"
+
+
+def test_llm_settings_test_endpoint_mock(api_client, monkeypatch):
+    """Verify POST /api/v1/settings/test runs connection probe and measures latency."""
+    class MockClient:
+        def generate_text(self, prompt, temperature=0.0):
+            return "CONNECTED"
+
+    monkeypatch.setattr(
+        "backend.api.routes.create_llm_client",
+        lambda **kwargs: MockClient(),
+    )
+
+    payload = {
+        "provider": "nvidia_nim",
+        "model": "meta/llama-3.3-70b-instruct",
+        "compatibility_mode": "auto",
+        "api_key": "test-key-123",
+    }
+    res = api_client.post("/api/v1/settings/test", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["provider"] == "nvidia_nim"
+    assert data["model"] == "meta/llama-3.3-70b-instruct"
+    assert data["sample_output"] == "CONNECTED"
+    assert data["latency_ms"] >= 0
+
+
+def test_ollama_status_and_models_endpoints(api_client, monkeypatch):
+    """Verify /api/v1/ollama/status and /api/v1/ollama/models endpoints."""
+    monkeypatch.setattr(
+        routes._ollama_service,
+        "get_status",
+        lambda: {"running": True, "version": "0.32.5", "installed": True, "base_url": "http://localhost:11434"}
+    )
+    monkeypatch.setattr(
+        routes._ollama_service,
+        "list_installed_models",
+        lambda: [{"name": "qwen3.5:2b-q4_K_M", "size_gb": 1.81, "parameter_size": "2.3B", "family": "qwen35", "format": "gguf"}]
+    )
+    monkeypatch.setattr(
+        routes._ollama_service,
+        "list_running_models",
+        lambda: [{"name": "qwen3.5:2b-q4_K_M", "size_vram_mb": 1500.0, "size_ram_mb": 0.0}]
+    )
+
+    res_stat = api_client.get("/api/v1/ollama/status")
+    assert res_stat.status_code == 200
+    assert res_stat.json()["running"] is True
+
+    res_models = api_client.get("/api/v1/ollama/models")
+    assert res_models.status_code == 200
+    assert len(res_models.json()["installed"]) == 1
+    assert len(res_models.json()["running"]) == 1
+
+
+def test_ollama_load_and_unload_endpoints(api_client, monkeypatch):
+    """Verify POST /api/v1/ollama/load and /api/v1/ollama/unload endpoints."""
+    monkeypatch.setattr(
+        routes._ollama_service,
+        "load_model",
+        lambda model_name, keep_alive="1h": {"success": True, "model": model_name, "keep_alive": keep_alive}
+    )
+    monkeypatch.setattr(
+        routes._ollama_service,
+        "unload_model",
+        lambda model_name: {"success": True, "model": model_name}
+    )
+
+    res_load = api_client.post("/api/v1/ollama/load", json={"model": "qwen3.5:2b-q4_K_M", "keep_alive": "1h"})
+    assert res_load.status_code == 200
+    assert res_load.json()["success"] is True
+
+    res_unload = api_client.post("/api/v1/ollama/unload", json={"model": "qwen3.5:2b-q4_K_M"})
+    assert res_unload.status_code == 200
+    assert res_unload.json()["success"] is True
+
+

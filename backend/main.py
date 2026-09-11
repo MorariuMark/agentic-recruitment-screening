@@ -67,11 +67,14 @@ app.include_router(api_router)
 @app.get("/health", tags=["Monitoring"], summary="Health check endpoint")
 async def health_check() -> Dict[str, str]:
     """Basic health check endpoint confirming API availability."""
+    from backend.api.routes import _get_active_model_for_provider
     return {
         "status": "ok",
         "app_name": settings.app_name,
         "environment": settings.environment,
         "llm_provider": settings.llm_provider,
+        "model": _get_active_model_for_provider(settings.llm_provider),
+        "compatibility_mode": settings.compatibility_mode,
     }
 
 

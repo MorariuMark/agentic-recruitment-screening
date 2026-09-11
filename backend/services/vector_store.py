@@ -26,28 +26,50 @@ class VectorStoreService:
         persist_directory: str = DEFAULT_CHROMA_PATH,
         model_name: str = DEFAULT_EMBEDDING_MODEL,
     ) -> None:
-        # 1. Initialize the local persistent ChromaDB client pointing to ./data/chroma_db
         self.persist_directory = persist_directory
+        self.model_name = model_name
         self.client = chromadb.PersistentClient(path=persist_directory)
+        self._embedding_fn = None
+        self._candidate_collection = None
+        self._job_collection = None
 
-        # 2. Configure local CPU embedding function (all-MiniLM-L6-v2, 384 dimensions)
-        self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=model_name
-        )
+    @property
+    def embedding_fn(self):
+        if self._embedding_fn is None:
+            self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=self.model_name
+            )
+        return self._embedding_fn
 
-        # 3. Create or load the 'candidate_chunks' collection using cosine distance metric
-        self.candidate_collection = self.client.get_or_create_collection(
-            name="candidate_chunks",
-            embedding_function=self.embedding_fn,
-            metadata={"hnsw:space": "cosine"},
-        )
+    @property
+    def candidate_collection(self):
+        if self._candidate_collection is None:
+            self._candidate_collection = self.client.get_or_create_collection(
+                name="candidate_chunks",
+                embedding_function=self.embedding_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._candidate_collection
 
-        # 4. Create or load the 'job_requirements' collection using cosine distance metric
-        self.job_collection = self.client.get_or_create_collection(
-            name="job_requirements",
-            embedding_function=self.embedding_fn,
-            metadata={"hnsw:space": "cosine"},
-        )
+    @candidate_collection.setter
+    def candidate_collection(self, value):
+        self._candidate_collection = value
+
+    @property
+    def job_collection(self):
+        if self._job_collection is None:
+            self._job_collection = self.client.get_or_create_collection(
+                name="job_requirements",
+                embedding_function=self.embedding_fn,
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._job_collection
+
+    @job_collection.setter
+    def job_collection(self, value):
+        self._job_collection = value
+
+
 
     def index_candidate(self, candidate: AnonymizedCandidate) -> int:
         """

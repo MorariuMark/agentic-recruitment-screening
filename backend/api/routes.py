@@ -4,7 +4,8 @@ FastAPI REST routes for CV ingestion, JD evaluation, semantic matching,
 Human-in-the-Loop (HITL) recruiter validation, and tailored interview guide generation.
 """
 
-from typing import Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -12,13 +13,17 @@ from pydantic import BaseModel, Field
 
 from backend.agents.interview_agent import InterviewAgent
 from backend.agents.job_parser_agent import JobParserAgent
+from backend.agents.llm_factory import create_llm_client
 from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent
+from backend.config import settings
 from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan
 from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport
 from backend.schemas.match import MatchEvaluationResult, Recommendation
+from backend.schemas.models_catalog import CATALOG_PROVIDERS, get_model_info, get_providers_catalog
 from backend.services.audit_exporter import AuditExporter
+from backend.services.ollama_service import OllamaService
 from backend.services.scoring_engine import ScoringEngine
 from backend.services.vector_store import VectorStoreService
 
@@ -40,6 +45,7 @@ _vector_store = VectorStoreService()
 _scoring_engine = ScoringEngine()
 _matching_agent = MatchingAgent(vector_store=_vector_store, scoring_engine=_scoring_engine)
 _interview_agent = InterviewAgent()
+_ollama_service = OllamaService()
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +85,60 @@ class JobUrlParseRequest(BaseModel):
     url: str = Field(description="Web URL of the job description posting")
 
 
+class JobTextParseRequest(BaseModel):
+    """Request payload to parse a Job Description from raw pasted text."""
+    text: str = Field(description="Raw text content of the job description posting")
+
+
+class LLMSettingsResponse(BaseModel):
+    """Response payload containing active LLM configuration and complete provider/model catalog."""
+    active_provider: str = Field(description="Currently active LLM provider")
+    active_model: str = Field(description="Currently active model for the active provider")
+    compatibility_mode: str = Field(description="Structured JSON compatibility mode ('auto', 'json_object', 'schema_prompt')")
+    providers_catalog: Dict[str, Any] = Field(description="Complete provider and model definitions with rate limits")
+    api_keys_configured: Dict[str, bool] = Field(description="Status of configured API keys per provider")
+
+
+class LLMUpdateRequest(BaseModel):
+    """Request payload to dynamically update the active LLM provider and model."""
+    provider: str = Field(description="Provider identifier (groq, openrouter, nvidia_nim, gemini, ollama)")
+    model: str = Field(description="Target model identifier")
+    compatibility_mode: str = Field(default="auto", description="Structured output compatibility mode")
+    api_key: Optional[str] = Field(default=None, description="Optional new API key for the target provider")
+    base_url: Optional[str] = Field(default=None, description="Optional custom base URL")
+
+
+class LLMTestRequest(BaseModel):
+    """Request payload to test connectivity and measure latency with specific LLM settings."""
+    provider: str = Field(description="Provider identifier")
+    model: str = Field(description="Model identifier")
+    compatibility_mode: str = Field(default="auto", description="Compatibility mode")
+    api_key: Optional[str] = Field(default=None, description="Optional API key for testing")
+    base_url: Optional[str] = Field(default=None, description="Optional custom base URL")
+
+
+class LLMTestResponse(BaseModel):
+    """Result of LLM connection ping."""
+    status: str = Field(description="'ok' or 'error'")
+    provider: str = Field(description="Tested provider")
+    model: str = Field(description="Tested model")
+    latency_ms: float = Field(description="Latency in milliseconds")
+    sample_output: Optional[str] = Field(default=None, description="Echo response if successful")
+    error_message: Optional[str] = Field(default=None, description="Error details if failed")
+
+
+class OllamaModelActionRequest(BaseModel):
+    """Request payload to load or unload a local Ollama model in memory."""
+    model: str = Field(description="Ollama model tag/name (e.g. 'qwen3.5:2b-q4_K_M')")
+    keep_alive: str = Field(default="1h", description="Memory duration ('1h', '-1', '0')")
+
+
+class OllamaPullRequest(BaseModel):
+    """Request payload to pull/download an Ollama model."""
+    model: str = Field(description="Model identifier to pull from the Ollama library")
+
+
+
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
@@ -104,6 +164,31 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error extracting job description from URL: {str(e)}",
+        )
+
+
+@router.post(
+    "/job/parse-text",
+    response_model=JobExtractionResult,
+    summary="Parse and decompose raw pasted Job Description text",
+)
+async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
+    """
+    Parses raw pasted job posting text, extracts structured metadata
+    and atomic requirement criteria using LLM, and audits for missing required elements.
+    """
+    try:
+        result = _job_parser_agent.parse_job_text(request.text)
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error parsing job description text: {str(e)}",
         )
 
 @router.post(
@@ -303,3 +388,207 @@ async def get_evaluation(evaluation_id: UUID) -> MatchEvaluationResult:
     if not evaluation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation not found.")
     return evaluation
+
+
+# ---------------------------------------------------------------------------
+# LLM Settings & Dynamic Switching Endpoints
+# ---------------------------------------------------------------------------
+def _get_active_model_for_provider(provider: str) -> str:
+    prov = provider.lower()
+    if prov == "groq":
+        return settings.groq_model
+    elif prov == "openrouter":
+        return settings.openrouter_model
+    elif prov == "nvidia_nim":
+        return settings.nvidia_nim_model
+    elif prov == "gemini":
+        return settings.gemini_model
+    elif prov == "ollama":
+        return settings.ollama_model
+    return "default"
+
+
+@router.get(
+    "/settings/llm",
+    response_model=LLMSettingsResponse,
+    summary="Fetch current LLM provider, active model, and complete catalog",
+)
+async def get_llm_settings() -> LLMSettingsResponse:
+    """Returns the full catalog of models with rate limits and active configuration."""
+    catalog_dict = {
+        pid: pinfo.model_dump() for pid, pinfo in CATALOG_PROVIDERS.items()
+    }
+    return LLMSettingsResponse(
+        active_provider=settings.llm_provider,
+        active_model=_get_active_model_for_provider(settings.llm_provider),
+        compatibility_mode=settings.compatibility_mode,
+        providers_catalog=catalog_dict,
+        api_keys_configured={
+            "groq": bool(settings.groq_api_key),
+            "openrouter": bool(settings.openrouter_api_key),
+            "nvidia_nim": bool(settings.nvidia_nim_api_key),
+            "gemini": bool(settings.gemini_api_key),
+            "ollama": True,
+        },
+    )
+
+
+@router.post(
+    "/settings/llm",
+    response_model=LLMSettingsResponse,
+    summary="Hot-swap the active LLM provider, model, and compatibility mode",
+)
+async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
+    """Dynamically applies the chosen LLM provider and model across all screening agents."""
+    prov = payload.provider.lower()
+    if prov not in CATALOG_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported provider '{payload.provider}'. Valid options: {list(CATALOG_PROVIDERS.keys())}",
+        )
+
+    settings.llm_provider = prov
+    settings.compatibility_mode = payload.compatibility_mode
+
+    if prov == "groq":
+        settings.groq_model = payload.model
+        if payload.api_key:
+            settings.groq_api_key = payload.api_key.strip()
+    elif prov == "openrouter":
+        settings.openrouter_model = payload.model
+        if payload.api_key:
+            settings.openrouter_api_key = payload.api_key.strip()
+        if payload.base_url:
+            settings.openrouter_base_url = payload.base_url.strip()
+    elif prov == "nvidia_nim":
+        settings.nvidia_nim_model = payload.model
+        if payload.api_key:
+            settings.nvidia_nim_api_key = payload.api_key.strip()
+        if payload.base_url:
+            settings.nvidia_nim_base_url = payload.base_url.strip()
+    elif prov == "gemini":
+        settings.gemini_model = payload.model
+        if payload.api_key:
+            settings.gemini_api_key = payload.api_key.strip()
+        if payload.base_url:
+            settings.gemini_base_url = payload.base_url.strip()
+    elif prov == "ollama":
+        settings.ollama_model = payload.model
+        if payload.base_url:
+            settings.ollama_base_url = payload.base_url.strip()
+
+    return await get_llm_settings()
+
+
+@router.post(
+    "/settings/test",
+    response_model=LLMTestResponse,
+    summary="Test connection and measure latency for a given provider/model",
+)
+async def test_llm_connection(payload: LLMTestRequest) -> LLMTestResponse:
+    """Runs a ping inference against the selected LLM provider and model."""
+    start_time = time.perf_counter()
+    prov = payload.provider.lower()
+    api_key = payload.api_key
+
+    if not api_key:
+        if prov == "groq":
+            api_key = settings.groq_api_key
+        elif prov == "openrouter":
+            api_key = settings.openrouter_api_key
+        elif prov == "nvidia_nim":
+            api_key = settings.nvidia_nim_api_key
+        elif prov == "gemini":
+            api_key = settings.gemini_api_key
+
+    try:
+        client = create_llm_client(
+            provider=prov,
+            model=payload.model,
+            api_key=api_key,
+            base_url=payload.base_url,
+            compatibility_mode=payload.compatibility_mode,
+        )
+        output = client.generate_text(
+            prompt="Respond with the single word CONNECTED and nothing else.",
+            temperature=0.0,
+        )
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        return LLMTestResponse(
+            status="ok",
+            provider=prov,
+            model=payload.model,
+            latency_ms=latency_ms,
+            sample_output=output.strip() or "CONNECTED",
+        )
+    except Exception as err:
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        return LLMTestResponse(
+            status="error",
+            provider=prov,
+            model=payload.model,
+            latency_ms=latency_ms,
+            error_message=str(err),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Ollama Local Service & Model Memory Management Endpoints
+# ---------------------------------------------------------------------------
+@router.get(
+    "/ollama/status",
+    summary="Check local Ollama daemon status, installed version, and binary path",
+)
+async def get_ollama_status() -> Dict[str, Any]:
+    """Returns whether Ollama is installed, running on port 11434, and its active version."""
+    return _ollama_service.get_status()
+
+
+@router.post(
+    "/ollama/start",
+    summary="Start the local Ollama background server daemon",
+)
+async def start_ollama_service() -> Dict[str, Any]:
+    """Launches 'ollama serve' in background if not already running."""
+    return _ollama_service.start_service()
+
+
+@router.get(
+    "/ollama/models",
+    summary="List all installed local models and models currently loaded in RAM/VRAM",
+)
+async def get_ollama_models() -> Dict[str, Any]:
+    """Fetches local tags from /api/tags and active in-memory models from /api/ps."""
+    return {
+        "installed": _ollama_service.list_installed_models(),
+        "running": _ollama_service.list_running_models(),
+    }
+
+
+@router.post(
+    "/ollama/load",
+    summary="Pre-load a local Ollama model into GPU VRAM / system RAM",
+)
+async def load_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, Any]:
+    """Loads weights into memory with specified keep_alive duration."""
+    return _ollama_service.load_model(model_name=payload.model, keep_alive=payload.keep_alive)
+
+
+@router.post(
+    "/ollama/unload",
+    summary="Evict and unload an Ollama model from memory immediately",
+)
+async def unload_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, Any]:
+    """Immediately unloads model from VRAM/RAM (keep_alive=0)."""
+    return _ollama_service.unload_model(model_name=payload.model)
+
+
+@router.post(
+    "/ollama/pull",
+    summary="Pull a model from the Ollama library",
+)
+async def pull_ollama_model(payload: OllamaPullRequest) -> Dict[str, Any]:
+    """Downloads model weights to local storage."""
+    return _ollama_service.pull_model(model_name=payload.model)
+
+
