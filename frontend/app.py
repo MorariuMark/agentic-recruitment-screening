@@ -1066,7 +1066,8 @@ with tab_interview:
 
             col_plan_m1, col_plan_m2 = st.columns(2)
             col_plan_m1.metric("Questions Synthesized", len(plan.questions))
-            col_plan_m2.metric("Target Interview Length", f"{plan.target_duration_minutes} min")
+            plan_duration = getattr(plan, "total_estimated_minutes", getattr(plan, "target_duration_minutes", 45))
+            col_plan_m2.metric("Target Interview Length", f"{plan_duration} min")
 
             st.markdown("<div class='app-card-title' style='margin-top: 1rem;'>Questions & Evaluation Rubric</div>", unsafe_allow_html=True)
 

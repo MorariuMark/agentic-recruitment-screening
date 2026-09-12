@@ -36,3 +36,8 @@ class InterviewPlan(BaseModel):
     total_estimated_minutes: int = Field(default=45, ge=15, le=120, description="Suggested time allocation for this interview in minutes")
     interview_focus_summary: str = Field(default="", description="Executive summary of what the interviewers should probe")
     interviewer_tips: Optional[List[str]] = Field(default_factory=list, description="Practical advice and follow-up probes for interviewers")
+
+    @property
+    def target_duration_minutes(self) -> int:
+        """Alias property for total_estimated_minutes to guarantee compatibility."""
+        return self.total_estimated_minutes
