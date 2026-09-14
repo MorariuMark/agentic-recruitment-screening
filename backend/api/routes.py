@@ -488,7 +488,22 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
         if payload.base_url:
             settings.ollama_base_url = payload.base_url.strip()
 
+    from backend.agents.llm_factory import clear_last_fallback_event
+    clear_last_fallback_event()
+
     return await get_llm_settings()
+
+
+@router.post(
+    "/settings/llm/clear-fallback",
+    summary="Clear or dismiss the last failover event metadata",
+)
+async def clear_fallback_endpoint() -> Dict[str, str]:
+    """Dismisses the active fallback/failover warning banner."""
+    from backend.agents.llm_factory import clear_last_fallback_event
+    clear_last_fallback_event()
+    return {"status": "ok", "message": "Fallback notification cleared."}
+
 
 
 @router.post(

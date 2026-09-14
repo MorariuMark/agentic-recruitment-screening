@@ -176,6 +176,10 @@ st.markdown(
         background: #ef4444;
         box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
     }
+    .status-dot-warning {
+        background: #f59e0b;
+        box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+    }
 
     /* Tag pills */
     .tag-pill {
@@ -380,48 +384,205 @@ with st.sidebar:
     st.caption("Enterprise AI Recruitment Platform")
     st.markdown("---")
 
-    health = api_client.health_check()
-    is_backend_online = (health.get("status") == "ok")
+    @st.fragment(run_every=3)
+    def render_sidebar_system_status():
+        health = api_client.health_check()
+        is_backend_online = (health.get("status") == "ok")
 
-    if is_backend_online:
+        if not is_backend_online:
+            st.markdown(
+                """
+                <div class="app-card" style="padding: 0.85rem; margin-bottom: 0.85rem;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.55rem;">
+                        <span style="font-weight: 600; font-size: 0.78rem; letter-spacing: 0.04em; color: #94a3b8; text-transform: uppercase;">System Status</span>
+                        <span class="badge badge-gap"><span class="status-dot status-dot-offline"></span>Offline</span>
+                    </div>
+                    <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.4;">
+                        Backend service unreachable on port 8000.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Start Backend Server", use_container_width=True, key="sb_start_backend"):
+                with st.spinner("Starting FastAPI backend service..."):
+                    if launch_fastapi_backend():
+                        st.success("Backend started.")
+                        st.rerun()
+                    else:
+                        st.error("Could not reach backend. Run 'python start.py' in a terminal.")
+            return
+
+        active_provider = health.get("llm_provider", "unknown")
+        active_model = health.get("model", "default")
+        compat_mode = health.get("compatibility_mode", "auto")
+        last_fallback = health.get("last_fallback_event")
+
+        # Keep session state caches in sync
+        st.session_state["active_provider"] = active_provider
+        st.session_state["active_model"] = active_model
+
+        # Real-time failover notification toast
+        if last_fallback:
+            fb_ts = last_fallback.get("timestamp", 0)
+            if st.session_state.get("_last_notified_failover_ts") != fb_ts:
+                st.session_state["_last_notified_failover_ts"] = fb_ts
+                to_m_clean = last_fallback.get("to_model", "").split("/")[-1]
+                to_p = last_fallback.get("to_provider", "")
+                st.toast(f"⚡ Failover Active: Auto-switched to {to_m_clean} ({to_p})", icon="⚠️")
+
+        has_failover = bool(last_fallback)
+        status_badge_html = (
+            """<span class="badge" style="background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45);"><span class="status-dot status-dot-warning"></span>Failover Active</span>"""
+            if has_failover
+            else """<span class="badge badge-met"><span class="status-dot status-dot-online"></span>Online</span>"""
+        )
+
+        failover_banner_html = ""
+        if has_failover:
+            from_m = last_fallback.get("from_model", "").split("/")[-1]
+            to_m = last_fallback.get("to_model", "").split("/")[-1]
+            err_msg = str(last_fallback.get("error", ""))
+            if len(err_msg) > 80:
+                err_msg = err_msg[:80] + "..."
+            failover_banner_html = f"""
+            <div style="margin-top: 0.55rem; padding: 0.5rem 0.65rem; background: rgba(245, 158, 11, 0.1); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 0.72rem; line-height: 1.45;">
+                <div style="color: #fbbf24; font-weight: 600;">⚡ Switched via Auto-Failover</div>
+                <div style="color: #cbd5e1; margin-top: 2px;">
+                    <span style="text-decoration: line-through; color: #f87171;">{from_m}</span> &rarr; <strong style="color: #34d399;">{to_m}</strong>
+                </div>
+                <div style="color: #94a3b8; font-size: 0.68rem; margin-top: 2px; font-style: italic;">
+                    {err_msg}
+                </div>
+            </div>
+            """
+
         st.markdown(
             f"""
-            <div class="app-card" style="padding: 0.85rem; margin-bottom: 0.85rem;">
+            <div class="app-card" style="padding: 0.85rem; margin-bottom: 0.45rem;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.55rem;">
                     <span style="font-weight: 600; font-size: 0.78rem; letter-spacing: 0.04em; color: #94a3b8; text-transform: uppercase;">System Status</span>
-                    <span class="badge badge-met"><span class="status-dot status-dot-online"></span>Online</span>
+                    {status_badge_html}
                 </div>
                 <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.6;">
-                    <div style="display: flex; justify-content: space-between;"><span>Provider</span><strong style="color: #f1f5f9;">{health.get('llm_provider', 'unknown')}</strong></div>
-                    <div style="display: flex; justify-content: space-between;"><span>Model</span><strong style="color: #f1f5f9;">{health.get('model', 'default').split('/')[-1]}</strong></div>
-                    <div style="display: flex; justify-content: space-between;"><span>Mode</span><strong style="color: #f1f5f9;">{health.get('compatibility_mode', 'auto')}</strong></div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Provider</span>
+                        <strong style="color: #f1f5f9;">{active_provider.upper()}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Active Model</span>
+                        <span class="badge badge-met" style="font-family: monospace; font-size: 0.7rem; padding: 0.15rem 0.45rem;">{active_model.split('/')[-1]}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Mode</span>
+                        <strong style="color: #f1f5f9;">{compat_mode.upper()}</strong>
+                    </div>
                 </div>
+                {failover_banner_html}
             </div>
             """,
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown(
-            """
-            <div class="app-card" style="padding: 0.85rem; margin-bottom: 0.85rem;">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.55rem;">
-                    <span style="font-weight: 600; font-size: 0.78rem; letter-spacing: 0.04em; color: #94a3b8; text-transform: uppercase;">System Status</span>
-                    <span class="badge badge-gap"><span class="status-dot status-dot-offline"></span>Offline</span>
-                </div>
-                <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.4;">
-                    Backend service unreachable on port 8000.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Start Backend Server", use_container_width=True, key="sb_start_backend"):
-            with st.spinner("Starting FastAPI backend service..."):
-                if launch_fastapi_backend():
-                    st.success("Backend started.")
+
+        if has_failover:
+            if st.button("Dismiss Failover Alert", key="sb_dismiss_failover", use_container_width=True):
+                try:
+                    api_client.clear_fallback_event()
+                    st.session_state["_last_notified_failover_ts"] = None
                     st.rerun()
-                else:
-                    st.error("Could not reach backend. Run 'python start.py' in a terminal.")
+                except Exception:
+                    pass
+
+        # Interactive Model & Provider Switcher Dropdown
+        with st.popover("⚡ Switch Model & Provider ▾", use_container_width=True):
+            st.markdown(
+                """
+                <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9; margin-bottom: 0.2rem;">
+                    Quick Engine Switcher
+                </div>
+                <div style="font-size: 0.74rem; color: #94a3b8; margin-bottom: 0.65rem;">
+                    Hot-swap the active inference engine directly without leaving the current workflow.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            from backend.schemas.models_catalog import CATALOG_PROVIDERS
+
+            prov_keys = list(CATALOG_PROVIDERS.keys())
+            prov_labels = {
+                "groq": "⚡ Groq Cloud LPU",
+                "openrouter": "🌐 OpenRouter",
+                "nvidia_nim": "🟢 NVIDIA NIM",
+                "gemini": "✨ Google Gemini",
+                "ollama": "🦙 Ollama (Local)",
+            }
+
+            default_prov_idx = prov_keys.index(active_provider) if active_provider in prov_keys else 0
+            quick_prov = st.selectbox(
+                "Provider",
+                options=prov_keys,
+                index=default_prov_idx,
+                format_func=lambda p: prov_labels.get(p, p.upper()),
+                key="sb_select_prov",
+            )
+
+            prov_info = CATALOG_PROVIDERS.get(quick_prov)
+            prov_models = prov_info.models if prov_info else []
+            model_id_list = [m.id for m in prov_models]
+
+            if quick_prov == active_provider and active_model in model_id_list:
+                default_mod_idx = model_id_list.index(active_model)
+            else:
+                default_mod_idx = 0
+
+            def format_quick_model_label(mid: str) -> str:
+                m_obj = next((m for m in prov_models if m.id == mid), None)
+                if not m_obj:
+                    return mid
+                free_str = " [Free]" if m_obj.free else ""
+                active_str = " • Active" if (quick_prov == active_provider and mid == active_model) else ""
+                return f"{m_obj.name}{free_str}{active_str} ({m_obj.rate_limits})"
+
+            quick_model = st.selectbox(
+                "Model",
+                options=model_id_list,
+                index=default_mod_idx,
+                format_func=format_quick_model_label,
+                key="sb_select_model",
+            )
+
+            m_details = next((m for m in prov_models if m.id == quick_model), None)
+            if m_details:
+                st.caption(f"Context: `{m_details.context_window}` | Limits: `{m_details.rate_limits}`")
+
+            compat_opts = ["auto", "json_object", "schema_prompt"]
+            quick_compat = st.selectbox(
+                "Compatibility Mode",
+                options=compat_opts,
+                index=compat_opts.index(compat_mode) if compat_mode in compat_opts else 0,
+                key="sb_select_compat",
+            )
+
+            if st.button("Apply & Switch Engine", type="primary", use_container_width=True, key="sb_apply_quick_switch"):
+                with st.spinner(f"Switching active engine to {quick_model}..."):
+                    try:
+                        res = api_client.update_llm_settings(
+                            provider=quick_prov,
+                            model=quick_model,
+                            compatibility_mode=quick_compat,
+                        )
+                        st.session_state["active_provider"] = res.get("active_provider", quick_prov)
+                        st.session_state["active_model"] = res.get("active_model", quick_model)
+                        st.toast(
+                            f"Active model successfully switched to {quick_model.split('/')[-1]} ({quick_prov})",
+                            icon="✅",
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not switch engine: {e}")
+
+    render_sidebar_system_status()
 
     st.markdown("---")
     st.markdown("<div class='app-card-title' style='margin-bottom: 0.5rem;'>Screening Workflow</div>", unsafe_allow_html=True)

@@ -284,4 +284,10 @@ class BackendAPIClient:
         res = self._post_with_retry("/api/v1/ollama/pull", json_data=payload, timeout=300.0)
         return res.json()
 
+    def clear_fallback_event(self) -> Dict[str, Any]:
+        """Dismisses the active fallback/failover alert event."""
+        res = self._post_with_retry("/api/v1/settings/llm/clear-fallback")
+        return res.json()
+
+
 

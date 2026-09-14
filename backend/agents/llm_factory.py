@@ -574,6 +574,12 @@ def get_last_fallback_event() -> Optional[Dict[str, Any]]:
     return _LAST_FALLBACK_EVENT
 
 
+def clear_last_fallback_event() -> None:
+    """Resets the last recorded fallback failover event."""
+    global _LAST_FALLBACK_EVENT
+    _LAST_FALLBACK_EVENT = None
+
+
 def _is_local_port_open(host: str, port: int, timeout: float = 0.15) -> bool:
     """Fast non-blocking socket test to check if local port is listening."""
     import socket
@@ -737,8 +743,12 @@ class DynamicLLMClient(BaseLLMClient):
                         "to_model": mod,
                         "error": str(last_error),
                     }
+                    # Hot-swap runtime configuration to the working fallback model
+                    settings.llm_provider = prov
+                    if hasattr(settings, f"{prov}_model"):
+                        setattr(settings, f"{prov}_model", mod)
                     logger.warning(
-                        "Failover active: Text generation succeeded via fallback [%s / %s] after primary [%s / %s] failed.",
+                        "Failover active: Text generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
                         mod,
                         primary_prov,
@@ -793,8 +803,12 @@ class DynamicLLMClient(BaseLLMClient):
                         "to_model": mod,
                         "error": str(last_error),
                     }
+                    # Hot-swap runtime configuration to the working fallback model
+                    settings.llm_provider = prov
+                    if hasattr(settings, f"{prov}_model"):
+                        setattr(settings, f"{prov}_model", mod)
                     logger.warning(
-                        "Failover active: Structured generation succeeded via fallback [%s / %s] after primary [%s / %s] failed.",
+                        "Failover active: Structured generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
                         mod,
                         primary_prov,

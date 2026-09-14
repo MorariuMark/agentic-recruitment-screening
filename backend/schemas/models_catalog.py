@@ -491,3 +491,8 @@ def get_model_info(provider_id: str, model_id: str) -> Optional[ModelInfo]:
             return m
     return None
 
+
+# Alias for backward and cross-module compatibility
+PROVIDERS_CATALOG = CATALOG_PROVIDERS
+
+

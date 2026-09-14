@@ -67,6 +67,10 @@ def test_text_generation_seamless_failover(monkeypatch):
     assert event["to_provider"] == "nvidia_nim"
     assert "Daily TPM reached" in event["error"]
 
+    from backend.config import settings
+    assert settings.llm_provider == "nvidia_nim"
+    assert settings.nvidia_nim_model == "meta/llama-3.2-11b-vision-instruct"
+
 
 def test_structured_generation_seamless_failover(monkeypatch):
     dyn = DynamicLLMClient()
@@ -89,6 +93,33 @@ def test_structured_generation_seamless_failover(monkeypatch):
     assert event["from_provider"] == "ollama"
     assert event["to_provider"] == "groq"
 
+    from backend.config import settings
+    assert settings.llm_provider == "groq"
+    assert settings.groq_model == "openai/gpt-oss-20b"
+
+
+def test_clear_last_fallback_event():
+    from backend.agents.llm_factory import clear_last_fallback_event
+    assert get_last_fallback_event() is not None
+    clear_last_fallback_event()
+    assert get_last_fallback_event() is None
+
+
+def test_clear_fallback_api_endpoint():
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    from backend.agents.llm_factory import _LAST_FALLBACK_EVENT, get_last_fallback_event
+    import backend.agents.llm_factory as llm_fac
+
+    llm_fac._LAST_FALLBACK_EVENT = {"timestamp": 12345.0, "from_provider": "groq", "to_provider": "gemini"}
+    assert get_last_fallback_event() is not None
+
+    client = TestClient(app)
+    res = client.post("/api/v1/settings/llm/clear-fallback")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+    assert get_last_fallback_event() is None
+
 
 def test_all_candidates_fail_raises_descriptive_error(monkeypatch):
     dyn = DynamicLLMClient()
@@ -109,3 +140,4 @@ def test_all_candidates_fail_raises_descriptive_error(monkeypatch):
     assert "All LLM models in fallback chain failed" in err_msg
     assert "groq:model1" in err_msg
     assert "nvidia_nim:model2" in err_msg
+
