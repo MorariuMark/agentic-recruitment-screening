@@ -150,7 +150,7 @@ class OllamaPullRequest(BaseModel):
     response_model=JobExtractionResult,
     summary="Fetch, parse, and decompose a Job Description from a web URL",
 )
-async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
+def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     """
     Retrieves the HTML content of the job posting URL, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.
@@ -175,7 +175,7 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     response_model=JobExtractionResult,
     summary="Parse and decompose raw pasted Job Description text",
 )
-async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
+def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     """
     Parses raw pasted job posting text, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.

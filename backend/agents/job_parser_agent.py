@@ -6,7 +6,7 @@ extracting structured atomic requirements via LLM, and detecting missing critica
 
 import json
 import re
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import uuid4
 from bs4 import BeautifulSoup
 import httpx
@@ -71,7 +71,7 @@ class StructuredJobPosting(BaseModel):
     work_model: Optional[str] = Field(default=None, description="On-site, Hybrid, or Remote")
     employment_type: Optional[str] = Field(default=None, description="Full-time, Part-time, Contract, Internship")
     languages: List[str] = Field(default_factory=list, description="Required or preferred languages")
-    custom_sections: List[dict] = Field(default_factory=list, description="Fallback unmapped job sections")
+    custom_sections: List[Any] = Field(default_factory=list, description="Fallback unmapped job sections")
     requirements: List[ExtractedRequirementItem] = Field(default_factory=list, description="Extracted requirements")
     unused_details: List[str] = Field(default_factory=list, description="Extracted non-requirement context (company background, perks, EEO)")
 
@@ -449,8 +449,8 @@ def fetch_url_content(url: str, timeout_seconds: float = 15.0) -> str:
             f"or protected by anti-bot verification. Please copy the job description text and paste it manually into the text input area."
         )
 
-    if len(result_text) > 15000:
-        result_text = result_text[:15000]
+    if len(result_text) > 7500:
+        result_text = result_text[:7500]
 
     return result_text
 

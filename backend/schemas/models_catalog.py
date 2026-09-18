@@ -46,7 +46,7 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
     "groq": ProviderInfo(
         id="groq",
         name="Groq Cloud LPU",
-        icon="⚡",
+        icon="",
         description="Ultra-fast LPUs with free on-demand quotas for open models.",
         api_key_url="https://console.groq.com/keys",
         default_model="openai/gpt-oss-20b",
@@ -135,7 +135,7 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
     "openrouter": ProviderInfo(
         id="openrouter",
         name="OpenRouter (Free Tier)",
-        icon="🌐",
+        icon="",
         description="Universal gateway with 20+ completely free community open-source models (:free).",
         api_key_url="https://openrouter.ai/keys",
         default_model="openrouter/free",
@@ -257,7 +257,7 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
     "nvidia_nim": ProviderInfo(
         id="nvidia_nim",
         name="NVIDIA NIM Microservices",
-        icon="🟢",
+        icon="",
         description="NVIDIA AI Foundation Endpoints optimized on DGX Cloud with free developer credits.",
         api_key_url="https://build.nvidia.com/",
         default_model="meta/llama-3.2-11b-vision-instruct",
@@ -324,7 +324,7 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
     "gemini": ProviderInfo(
         id="gemini",
         name="Google Gemini (AI Studio)",
-        icon="✨",
+        icon="",
         description="Google AI Studio Free Tier with 1M-2M context windows and generous 1,500 RPD quotas.",
         api_key_url="https://aistudio.google.com/app/apikey",
         default_model="gemini-flash-latest",
@@ -391,7 +391,7 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
     "ollama": ProviderInfo(
         id="ollama",
         name="Local Ollama (Self-Hosted)",
-        icon="🦙",
+        icon="",
         description="Runs 100% locally on your machine with zero data egress and unlimited requests.",
         api_key_url="https://ollama.com/",
         default_model="llama3.1:8b",

@@ -429,7 +429,7 @@ with st.sidebar:
                 st.session_state["_last_notified_failover_ts"] = fb_ts
                 to_m_clean = last_fallback.get("to_model", "").split("/")[-1]
                 to_p = last_fallback.get("to_provider", "")
-                st.toast(f"⚡ Failover Active: Auto-switched to {to_m_clean} ({to_p})", icon="⚠️")
+                st.toast(f"Failover Active: Auto-switched to {to_m_clean} ({to_p})")
 
         has_failover = bool(last_fallback)
         status_badge_html = (
@@ -447,7 +447,7 @@ with st.sidebar:
                 err_msg = err_msg[:80] + "..."
             failover_banner_html = f"""
             <div style="margin-top: 0.55rem; padding: 0.5rem 0.65rem; background: rgba(245, 158, 11, 0.1); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 0.72rem; line-height: 1.45;">
-                <div style="color: #fbbf24; font-weight: 600;">⚡ Switched via Auto-Failover</div>
+                <div style="color: #fbbf24; font-weight: 600;">Switched via Auto-Failover</div>
                 <div style="color: #cbd5e1; margin-top: 2px;">
                     <span style="text-decoration: line-through; color: #f87171;">{from_m}</span> &rarr; <strong style="color: #34d399;">{to_m}</strong>
                 </div>
@@ -494,7 +494,7 @@ with st.sidebar:
                     pass
 
         # Interactive Model & Provider Switcher Dropdown
-        with st.popover("⚡ Switch Model & Provider ▾", use_container_width=True):
+        with st.popover("Switch Model & Provider", use_container_width=True):
             st.markdown(
                 """
                 <div style="font-weight: 600; font-size: 0.88rem; color: #f1f5f9; margin-bottom: 0.2rem;">
@@ -511,11 +511,11 @@ with st.sidebar:
 
             prov_keys = list(CATALOG_PROVIDERS.keys())
             prov_labels = {
-                "groq": "⚡ Groq Cloud LPU",
-                "openrouter": "🌐 OpenRouter",
-                "nvidia_nim": "🟢 NVIDIA NIM",
-                "gemini": "✨ Google Gemini",
-                "ollama": "🦙 Ollama (Local)",
+                "groq": "Groq Cloud LPU",
+                "openrouter": "OpenRouter",
+                "nvidia_nim": "NVIDIA NIM",
+                "gemini": "Google Gemini",
+                "ollama": "Ollama (Local)",
             }
 
             default_prov_idx = prov_keys.index(active_provider) if active_provider in prov_keys else 0
@@ -576,7 +576,6 @@ with st.sidebar:
                         st.session_state["active_model"] = res.get("active_model", quick_model)
                         st.toast(
                             f"Active model successfully switched to {quick_model.split('/')[-1]} ({quick_prov})",
-                            icon="✅",
                         )
                         st.rerun()
                     except Exception as e:

@@ -4,7 +4,7 @@ Data contracts for Job Descriptions and granular atomic requirement criteria.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,7 @@ class JobDescription(BaseModel):
     work_model: Optional[str] = Field(default=None, description="Work model: On-site, Hybrid, or Remote")
     employment_type: Optional[str] = Field(default=None, description="Employment type: Full-time, Part-time, Contract, Internship")
     languages: List[str] = Field(default_factory=list, description="Required or preferred languages")
-    custom_sections: List[dict] = Field(default_factory=list, description="Fallback unmapped job sections (Travel, Security Clearance, etc.)")
+    custom_sections: List[Any] = Field(default_factory=list, description="Fallback unmapped job sections (Travel, Security Clearance, etc.)")
     requirements: List[JobRequirement] = Field(default_factory=list, description="List of job requirements")
     unused_details: List[str] = Field(default_factory=list, description="Extracted non-requirement JD sections (perks, company intro, EEO)")
     raw_text: str = Field(default="", description="Original job description text")

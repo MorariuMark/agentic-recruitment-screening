@@ -187,11 +187,11 @@ class GroqClient(BaseLLMClient):
             raise ValueError("GROQ_API_KEY must be provided or set in environment variables.")
         self.model = model or settings.groq_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
-        self.client = Groq(api_key=self.api_key, timeout=60.0)
+        self.client = Groq(api_key=self.api_key, timeout=20.0, max_retries=0)
 
     def _get_candidate_models(self) -> List[str]:
         candidates = [self.model]
-        for fallback in ["openai/gpt-oss-20b", "qwen/qwen3.8-27b"]:
+        for fallback in ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
             if fallback not in candidates:
                 candidates.append(fallback)
         return candidates
@@ -207,24 +207,12 @@ class GroqClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        last_error = None
-        for candidate_model in self._get_candidate_models():
-            try:
-                response = self.client.chat.completions.create(
-                    model=candidate_model,
-                    messages=messages,
-                    temperature=temperature,
-                )
-                return response.choices[0].message.content or ""
-            except Exception as err:
-                err_str = str(err).lower()
-                if "rate_limit" in err_str or "429" in str(err) or "too large" in err_str or "413" in str(err):
-                    last_error = err
-                    continue
-                raise err
-        if last_error:
-            raise last_error
-        return ""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+        )
+        return response.choices[0].message.content or ""
 
     def generate_structured(
         self,
@@ -246,38 +234,19 @@ class GroqClient(BaseLLMClient):
 
         use_json_object = self.compatibility_mode in ("json_object", "auto")
 
-        last_error = None
-        for candidate_model in self._get_candidate_models():
-            try:
-                kwargs: Dict[str, Any] = {
-                    "model": candidate_model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": 4096,
-                }
-                if use_json_object:
-                    kwargs["response_format"] = {"type": "json_object"}
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 2048,
+        }
+        if use_json_object:
+            kwargs["response_format"] = {"type": "json_object"}
 
-                response = self.client.chat.completions.create(**kwargs)
-                raw_content = response.choices[0].message.content or "{}"
-                parsed_dict = clean_and_parse_json(raw_content)
-                return response_model.model_validate(parsed_dict)
-            except Exception as err:
-                err_str = str(err).lower()
-                if (
-                    "rate_limit" in err_str
-                    or "429" in str(err)
-                    or "too large" in err_str
-                    or "413" in str(err)
-                    or "400" in str(err)
-                    or "json_validate_failed" in err_str
-                ):
-                    last_error = err
-                    continue
-                raise err
-        if last_error:
-            raise last_error
-        return response_model.model_validate({})
+        response = self.client.chat.completions.create(**kwargs)
+        raw_content = response.choices[0].message.content or "{}"
+        parsed_dict = clean_and_parse_json(raw_content)
+        return response_model.model_validate(parsed_dict)
 
 
 class NvidiaNimClient(BaseLLMClient):
@@ -302,7 +271,7 @@ class NvidiaNimClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            timeout=60.0,
+            timeout=12.0,
         )
 
     def generate_text(
@@ -679,7 +648,7 @@ class DynamicLLMClient(BaseLLMClient):
 
         # 2. Intra-provider backup models for primary provider
         intra_fallbacks = {
-            "groq": ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"],
+            "groq": ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"],
             "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.3-70b-instruct"],
             "gemini": ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
@@ -689,7 +658,7 @@ class DynamicLLMClient(BaseLLMClient):
             add_candidate(primary_prov, fallback_mod)
 
         # 3. Cross-provider fallbacks (ordered by speed and reliability)
-        provider_priority = ["groq", "nvidia_nim", "gemini", "openrouter", "ollama"]
+        provider_priority = ["groq", "openrouter", "gemini", "nvidia_nim", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue

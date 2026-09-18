@@ -13,7 +13,7 @@ import webbrowser
 
 def main():
     print("=" * 70)
-    print(" 🚀 Starting Agentic Recruitment Screening System")
+    print(" Starting Agentic Recruitment Screening System")
     print("=" * 70)
 
     # Determine Python executable
@@ -48,7 +48,7 @@ def main():
     backend_ready = False
     for attempt in range(40):  # up to 20 seconds (0.5s intervals)
         if backend_proc.poll() is not None:
-            print("❌ Backend process terminated unexpectedly during startup.")
+            print("Backend process terminated unexpectedly during startup.")
             break
         try:
             with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=1.0) as resp:
@@ -59,9 +59,9 @@ def main():
             time.sleep(0.5)
 
     if backend_ready:
-        print("✅ FastAPI backend is healthy and responding.")
+        print("FastAPI backend is healthy and responding.")
     else:
-        print("⚠️ Warning: Backend health check timed out. Launching frontend anyway...")
+        print("Warning: Backend health check timed out. Launching frontend anyway...")
 
     print("Starting Streamlit frontend on http://127.0.0.1:8501 ...")
     frontend_proc = subprocess.Popen(
@@ -78,7 +78,7 @@ def main():
     )
 
     print("\n" + "=" * 70)
-    print(" 🌟 Applications successfully launched!")
+    print(" Applications successfully launched!")
     print("   - Frontend Dashboard:   http://127.0.0.1:8501")
     print("   - FastAPI Backend:      http://127.0.0.1:8000")
     print("   - API Interactive Docs: http://127.0.0.1:8000/docs")
