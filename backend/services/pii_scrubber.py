@@ -84,6 +84,25 @@ class PIIScrubber:
 
         sanitized = PHONE_REGEX.sub(_replace_phone, sanitized)
 
+        # 6. Extract demographic indicators into demographic_audit and redact them
+        demo_patterns = [
+            ("work_permit", r"Work permit:\s*([^\n\r\t]+?)(?=\s+(?:Nationality|Citizenship|Date of birth|Gender|Place of birth):|\n|$)"),
+            ("nationality", r"(?:Nationality|Citizenship):\s*([^\n\r\t]+?)(?=\s+(?:Work permit|Date of birth|Gender|Place of birth):|\n|$)"),
+            ("date_of_birth", r"(?:Date of birth|DOB):\s*([^\n\r\t]+?)(?=\s+(?:Place of birth|Gender|Nationality):|\n|$)"),
+            ("place_of_birth", r"(?:Place of birth|Birthplace):\s*([^\n\r\t]+?)(?=\s+(?:Gender|Phone|Email|Nationality):|\n|$)"),
+            ("gender", r"Gender:\s*([^\n\r\t]+?)(?=\s+(?:Phone|Email|Home|Date of birth):|\n|$)"),
+            ("marital_status", r"Marital status:\s*([^\n\r\t]+?)(?=\s+(?:Phone|Email|Home|Nationality):|\n|$)"),
+        ]
+        for key, pat in demo_patterns:
+            m = re.search(pat, sanitized, re.IGNORECASE)
+            if m:
+                val = m.group(1).strip()
+                if val:
+                    demographic_audit[key] = val
+
+        for _, pat in demo_patterns:
+            sanitized = re.sub(pat, "[REDACTED_DEMOGRAPHICS]", sanitized, flags=re.IGNORECASE)
+
         return sanitized, demographic_audit
 
     def anonymize_cv(self, parsed_cv: ParsedCV) -> AnonymizedCandidate:
@@ -124,6 +143,10 @@ class PIIScrubber:
                     duration_months=exp.duration_months,
                     work_description=scrubbed_bullets,
                     skills_used=exp.skills_used,
+                    location=exp.location,
+                    work_model=exp.work_model,
+                    employment_type=exp.employment_type,
+                    is_promotion=exp.is_promotion,
                 )
             )
 
@@ -167,7 +190,28 @@ class PIIScrubber:
                 sec.model_copy(update={"items": scrubbed_items})
             )
 
-        # 5. Construct and return the AnonymizedCandidate model
+        # 5. Scrub publications
+        anonymized_publications = []
+        for pub in getattr(parsed_cv, "publications", []):
+            scrubbed_authors = [
+                self.scrub_text(
+                    author,
+                    candidate_name=candidate_name,
+                    candidate_phone=candidate_phone,
+                    candidate_email=candidate_email,
+                )[0]
+                for author in pub.authors
+            ]
+            anonymized_publications.append(
+                pub.model_copy(update={"authors": scrubbed_authors})
+            )
+
+        # 6. Scrub patents
+        anonymized_patents = []
+        for pat in getattr(parsed_cv, "patents", []):
+            anonymized_patents.append(pat.model_copy())
+
+        # 7. Construct and return the AnonymizedCandidate model
         return AnonymizedCandidate(
             candidate_id=uuid4(),
             anonymized_work_experiences=anonymized_experiences,
@@ -176,6 +220,9 @@ class PIIScrubber:
             anonymized_certifications=parsed_cv.certifications,
             anonymized_projects=anonymized_projects,
             anonymized_languages=getattr(parsed_cv, "languages", []),
+            anonymized_publications=anonymized_publications,
+            anonymized_patents=anonymized_patents,
+            logistics=getattr(parsed_cv, "logistics", None),
             anonymized_custom_sections=anonymized_custom,
             sanitized_text=sanitized_text,
             demographic_data=demographic_audit,

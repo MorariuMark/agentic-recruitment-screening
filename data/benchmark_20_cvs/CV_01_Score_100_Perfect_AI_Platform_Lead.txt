@@ -1,0 +1,30 @@
+MARCUS AURELIUS VANCE
+Email: marcus.vance@ai-architects.io
+Phone: +1 (415) 789-0101
+Location: San Francisco, CA
+LinkedIn: https://linkedin.com/in/marcus-vance-ai
+
+PROFESSIONAL SUMMARY
+Distinguished Senior AI Platform Engineer & Tech Lead with 7+ years of expertise architecting enterprise-scale RAG systems, asynchronous Python microservices with FastAPI, and production Kubernetes deployments. Proven track record mentoring 8+ junior and mid-level engineers.
+
+CORE TECHNICAL SKILLS
+- AI & Vector Search: Python, ChromaDB, SentenceTransformers, LlamaIndex, LangChain, PyTorch
+- Backend Architecture: FastAPI, Pydantic v2, AsyncIO, Redis, PostgreSQL, gRPC
+- Cloud & Orchestration: Kubernetes (EKS), Docker, Helm, AWS, GitHub Actions CI/CD
+- Leadership: Technical Mentorship, Agile Sprint Planning, Cross-functional Collaboration
+
+WORK EXPERIENCE
+
+Lead AI Platform Engineer | Cortex Neural Systems | 01/2021 - Present
+- Architected production RAG pipelines with Python and ChromaDB, indexing 15M+ documents and achieving sub-50ms vector retrieval latencies.
+- Designed asynchronous REST APIs and microservices using FastAPI and Pydantic, supporting 5,000+ concurrent requests with 99.99% availability.
+- Containerized deep learning inference workflows using Docker and managed zero-downtime rolling deployments across multi-region Kubernetes clusters.
+- Mentored a distributed team of 6 junior and mid-level software engineers through weekly architectural design reviews, pair programming, and career coaching.
+
+Senior Backend Engineer | DataStream Global | 06/2017 - 12/2020
+- Built high-throughput Python REST services using FastAPI and PostgreSQL, reducing query processing bottlenecks by 60%.
+- Deployed microservice clusters to Kubernetes using Docker containers and automated Helm charts.
+- Collaborated across distributed product and data science teams to deliver mission-critical search features.
+
+EDUCATION
+B.S. in Computer Science | Stanford University | 2013 - 2017

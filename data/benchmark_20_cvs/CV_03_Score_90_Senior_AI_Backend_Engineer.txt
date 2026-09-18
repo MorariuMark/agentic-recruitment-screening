@@ -1,0 +1,28 @@
+DANIEL K. THORNE
+Email: daniel.thorne@apexai.cloud
+Phone: +1 (206) 555-0144
+Location: Seattle, WA
+
+PROFESSIONAL SUMMARY
+Senior AI Backend Engineer with 5 years of production experience building RAG search engines using ChromaDB and high-performance Python FastAPI microservices. Strong containerization skills in Docker and Kubernetes.
+
+CORE TECHNICAL SKILLS
+- AI & Search: Python, ChromaDB, SentenceTransformers, LangChain
+- Backend: FastAPI, Pydantic, PostgreSQL, Redis, AsyncIO
+- Cloud & DevOps: Docker, Kubernetes, GitLab CI/CD, AWS
+- Soft Skills: Mentorship, Team Collaboration
+
+WORK EXPERIENCE
+
+Senior AI Backend Engineer | Apex Cloud Innovations | 05/2021 - Present
+- Developed scalable RAG pipelines using Python and ChromaDB, enabling semantic retrieval over large internal knowledge bases.
+- Created robust asynchronous microservices using FastAPI and Pydantic, enforcing data integrity and contract-first API development.
+- Deployed microservices in Docker containers across production Kubernetes clusters.
+- Mentored junior teammates on asynchronous Python patterns, conducting bi-weekly code reviews.
+
+Software Engineer | PeakTech Software | 09/2019 - 04/2021
+- Developed REST APIs with FastAPI and integrated relational databases with PostgreSQL.
+- Containerized applications using Docker and assisted in Kubernetes manifest creation.
+
+EDUCATION
+B.S. in Computer Science | University of Washington | 2015 - 2019

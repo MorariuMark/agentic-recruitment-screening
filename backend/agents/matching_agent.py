@@ -60,11 +60,45 @@ class MatchingAgent:
         Retrieves top relevant candidate chunks for a single requirement and prompts LLM for grounded match.
         """
         # 1. Retrieve the most relevant candidate chunks from ChromaDB for this requirement
+        query_text = f"{requirement.title}: {requirement.description}".strip()
         retrieved_chunks = self.vector_store.query_candidate_chunks(
             candidate_id=candidate_id,
-            query_text=requirement.description,
+            query_text=query_text,
             n_results=n_chunks,
         )
+
+        # Ensure language chunks are included if requirement is about language/communication
+        req_lower = f"{requirement.title} {requirement.description}".lower()
+        is_language_req = any(kw in req_lower for kw in [
+            "language", "languages", "english", "german", "french", "spanish", "italian", "romanian",
+            "communication", "multilingual", "bilingual", "conversational", "cefr", "spoken", "written"
+        ])
+        is_cert_req = any(kw in req_lower for kw in [
+            "certification", "certifications", "license", "licence", "certified", "driver", "driving"
+        ])
+
+        chunk_types = {c.get("metadata", {}).get("type") for c in retrieved_chunks}
+        if is_language_req and "languages" not in chunk_types:
+            lang_chunks = self.vector_store.query_candidate_chunks(
+                candidate_id=candidate_id,
+                query_text="Candidate Languages & Communication English German Romanian linguistic competency",
+                n_results=1,
+            )
+            for lc in lang_chunks:
+                if lc.get("metadata", {}).get("type") == "languages":
+                    retrieved_chunks.append(lc)
+                    break
+
+        if is_cert_req and "certifications" not in chunk_types:
+            cert_chunks = self.vector_store.query_candidate_chunks(
+                candidate_id=candidate_id,
+                query_text="Certifications & Licences Driving Licence",
+                n_results=1,
+            )
+            for cc in cert_chunks:
+                if cc.get("metadata", {}).get("type") == "certifications":
+                    retrieved_chunks.append(cc)
+                    break
 
         # 2. Format the retrieved evidence chunks with provenance metadata
         evidence_lines: List[str] = []

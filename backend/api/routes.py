@@ -15,7 +15,7 @@ from backend.agents.interview_agent import InterviewAgent
 from backend.agents.job_parser_agent import JobParserAgent
 from backend.agents.llm_factory import create_llm_client
 from backend.agents.matching_agent import MatchingAgent
-from backend.agents.parser_agent import ParserAgent
+from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
 from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan
@@ -231,6 +231,18 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             parsed_cv=parsed_cv,
             anonymized_candidate=anonymized_candidate,
             chunks_indexed=chunks_indexed,
+        )
+    except ScannedPDFException as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
     except Exception as e:
         raise HTTPException(

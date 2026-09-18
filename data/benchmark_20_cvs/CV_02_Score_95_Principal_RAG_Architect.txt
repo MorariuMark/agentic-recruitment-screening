@@ -1,0 +1,30 @@
+DR. HELENA ROSTOVA
+Email: helena.rostova@vectorlabs.tech
+Phone: +1 (617) 555-0192
+Location: Boston, MA
+LinkedIn: https://linkedin.com/in/helena-rostova-rag
+
+PROFESSIONAL SUMMARY
+Principal AI Architect with 6 years of deep specialization in Retrieval-Augmented Generation (RAG) pipelines, dense vector indexing with ChromaDB, and asynchronous FastAPI backend platforms on Kubernetes. Passionate mentor and distributed team collaborator.
+
+CORE TECHNICAL SKILLS
+- AI & Retrieval: Python, ChromaDB, Pinecone, SentenceTransformers, HuggingFace, PyTorch
+- Backend: FastAPI, Pydantic, AsyncIO, SQLAlchemy, Celery, Redis
+- Infrastructure: Docker, Kubernetes, Helm, AWS (ECS/EKS), CI/CD Pipelines
+- Soft Skills: Mentorship of Junior Developers, Cross-Team Alignment
+
+WORK EXPERIENCE
+
+Principal AI Systems Engineer | HyperVector Technologies | 03/2022 - Present
+- Designed and maintained production RAG retrieval pipelines in Python utilizing ChromaDB and dense embeddings for enterprise semantic search.
+- Built low-latency asynchronous microservices using FastAPI and Pydantic with strict schema validation.
+- Orchestrated containerized deployment pipelines on Kubernetes using Docker, handling automated health-checks and blue-green releases.
+- Actively mentored 4 junior engineers on distributed systems architecture and clean Python coding practices.
+
+Senior AI Software Engineer | NeuralBridge Solutions | 08/2018 - 02/2022
+- Engineered REST APIs in Python with FastAPI and PostgreSQL for automated document processing.
+- Implemented containerization of machine learning services with Docker.
+- Collaborated with remote engineering and design teams across multiple time zones.
+
+EDUCATION
+Ph.D. in Computer Science | MIT | 2014 - 2018

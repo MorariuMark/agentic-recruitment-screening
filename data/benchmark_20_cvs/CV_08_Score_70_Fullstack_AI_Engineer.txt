@@ -1,0 +1,28 @@
+KEVIN ZHANG
+Email: kevin.zhang@fullstack-ai.com
+Phone: +1 (650) 555-0167
+Location: San Mateo, CA
+
+PROFESSIONAL SUMMARY
+Fullstack AI Software Engineer with 3.5 years of experience developing RAG retrieval backends with Python, ChromaDB, and FastAPI, coupled with React frontends. Proficient in Docker containerization.
+
+CORE TECHNICAL SKILLS
+- Backend & AI: Python, FastAPI, Pydantic, ChromaDB, LangChain
+- Frontend: TypeScript, React, Next.js
+- Infrastructure: Docker, Basic Kubernetes, AWS S3
+- Soft Skills: Team Player, Technical Documentation
+
+WORK EXPERIENCE
+
+Fullstack AI Engineer | Nexus Smart Apps | 09/2021 - Present
+- Developed RAG applications using Python, ChromaDB, and OpenAI models for enterprise search.
+- Built asynchronous REST APIs with FastAPI and Pydantic to feed web applications.
+- Packaged services into Docker containers and deployed to cloud instances.
+- Collaborated across engineering and UX design teams.
+
+Junior Backend Developer | CloudVibe | 01/2020 - 08/2021
+- Built REST API endpoints in Python using FastAPI.
+- Wrote unit tests and managed Docker dev environments.
+
+EDUCATION
+B.S. in Computer Science | UC Davis | 2016 - 2020

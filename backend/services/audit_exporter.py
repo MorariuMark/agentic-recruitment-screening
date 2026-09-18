@@ -187,14 +187,51 @@ class AuditExporter:
 
         # Custom Fallback Sections
         custom_items = getattr(anonymized_candidate, "anonymized_custom_sections", [])
-        if custom_items:
+        items.append(
+            TaggedDetailItem(
+                field_name="custom_sections",
+                category="custom_sections",
+                status=DetailStatus.VISIBLE,
+                value=[sec.model_dump() for sec in custom_items],
+                notes="Fallback relevant sections (e.g. volunteering, awards, publications, hackathons) evaluated for additional qualifications",
+            )
+        )
+
+        # Publications
+        pubs = getattr(anonymized_candidate, "anonymized_publications", [])
+        if pubs:
             items.append(
                 TaggedDetailItem(
-                    field_name="custom_sections",
-                    category="custom_sections",
+                    field_name="publications",
+                    category="research",
                     status=DetailStatus.VISIBLE,
-                    value=[sec.model_dump() for sec in custom_items],
-                    notes="Fallback relevant sections (e.g. volunteering, awards, publications, hackathons) evaluated for additional qualifications",
+                    value=[p.model_dump() for p in pubs],
+                    notes="Academic and industry research publications evaluated for deep technical expertise",
+                )
+            )
+
+        # Patents
+        pats = getattr(anonymized_candidate, "anonymized_patents", [])
+        if pats:
+            items.append(
+                TaggedDetailItem(
+                    field_name="patents",
+                    category="intellectual_property",
+                    status=DetailStatus.VISIBLE,
+                    value=[pt.model_dump() for pt in pats],
+                    notes="Filed or granted patents evaluated for technical innovation",
+                )
+            )
+
+        # Logistics & Availability
+        if getattr(anonymized_candidate, "logistics", None):
+            items.append(
+                TaggedDetailItem(
+                    field_name="logistics",
+                    category="logistics",
+                    status=DetailStatus.VISIBLE,
+                    value=anonymized_candidate.logistics.model_dump(),
+                    notes="Notice period, availability, relocation, and work authorization criteria evaluated for role logistics",
                 )
             )
 

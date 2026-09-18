@@ -1,0 +1,762 @@
+[
+  {
+    "index": 1,
+    "filename": "CV_01_Score_100_Perfect_AI_Platform_Lead.txt",
+    "candidate_name": "MARCUS AURELIUS VANCE",
+    "overall_score": 84.52,
+    "must_have_score": 80.0,
+    "nice_to_have_score": 98.08,
+    "gaps_count": 1,
+    "recommendation": "BORDERLINE",
+    "citation_verification_score": 0.875,
+    "elapsed_seconds": 36.97,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 1.0,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 1.0,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.95,
+        "citations_count": 3,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 2,
+    "filename": "CV_02_Score_95_Principal_RAG_Architect.txt",
+    "candidate_name": "DR. HELENA ROSTOVA",
+    "overall_score": 89.13,
+    "must_have_score": 95.0,
+    "nice_to_have_score": 71.54,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 0.8889,
+    "elapsed_seconds": 18.43,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.95,
+        "citations_count": 2,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.95,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 3,
+        "verified_citations": 3
+      }
+    }
+  },
+  {
+    "index": 3,
+    "filename": "CV_03_Score_90_Senior_AI_Backend_Engineer.txt",
+    "candidate_name": "DANIEL K. THORNE",
+    "overall_score": 90.0,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 90.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 78.24,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 4,
+    "filename": "CV_04_Score_85_Staff_Vector_Search_Engineer.txt",
+    "candidate_name": "ELIZABETH CHEN",
+    "overall_score": 90.0,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 90.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 80.79,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 3,
+        "verified_citations": 3
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 3,
+        "verified_citations": 3
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 5,
+    "filename": "CV_05_Score_80_Semantic_Equivalent_Qdrant_Cloud.txt",
+    "candidate_name": "MAXIMILIAN WEBER",
+    "overall_score": 90.0,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 90.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 33.73,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 3,
+        "verified_citations": 3
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 6,
+    "filename": "CV_06_Score_78_Senior_Python_Backend_Lead.txt",
+    "candidate_name": "CARLOS MENDEZ",
+    "overall_score": 90.0,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 90.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 0.875,
+    "elapsed_seconds": 29.62,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 7,
+    "filename": "CV_07_Score_75_AI_MLOps_Engineer.txt",
+    "candidate_name": "SARAH JENKINS",
+    "overall_score": 82.5,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 60.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 37.89,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 8,
+    "filename": "CV_08_Score_70_Fullstack_AI_Engineer.txt",
+    "candidate_name": "KEVIN ZHANG",
+    "overall_score": 82.5,
+    "must_have_score": 90.0,
+    "nice_to_have_score": 60.0,
+    "gaps_count": 0,
+    "recommendation": "STRONG_MATCH",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 33.81,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 3,
+        "verified_citations": 3
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 9,
+    "filename": "CV_09_Score_65_Mid_Level_FastAPI_Dev.txt",
+    "candidate_name": "JORDAN LEE",
+    "overall_score": 70.29,
+    "must_have_score": 75.0,
+    "nice_to_have_score": 56.15,
+    "gaps_count": 1,
+    "recommendation": "BORDERLINE",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 12.15,
+    "requirements": {
+      "req_rag_python": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_fastapi_backend": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 10,
+    "filename": "CV_10_Score_60_Junior_RAG_Developer.txt",
+    "candidate_name": "ANNA KOWALSKI",
+    "overall_score": 65.48,
+    "must_have_score": 75.0,
+    "nice_to_have_score": 36.92,
+    "gaps_count": 1,
+    "recommendation": "BORDERLINE",
+    "citation_verification_score": 0.8333,
+    "elapsed_seconds": 39.18,
+    "requirements": {
+      "req_rag_python": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      }
+    }
+  },
+  {
+    "index": 11,
+    "filename": "CV_11_Score_55_Data_Scientist_Transitioning.txt",
+    "candidate_name": "PRIYA PATEL",
+    "overall_score": 39.23,
+    "must_have_score": 40.0,
+    "nice_to_have_score": 36.92,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 0.8,
+    "elapsed_seconds": 42.54,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.2,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_fastapi_backend": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 2,
+        "verified_citations": 1
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      }
+    }
+  },
+  {
+    "index": 12,
+    "filename": "CV_12_Score_50_DevOps_Cloud_Engineer.txt",
+    "candidate_name": "TOMASZ NOWAK",
+    "overall_score": 18.65,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 74.62,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 11.04,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "met",
+        "score": 0.9,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 13,
+    "filename": "CV_13_Score_45_Traditional_Django_Dev.txt",
+    "candidate_name": "ALEXEI SOKOLOV",
+    "overall_score": 7.69,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 30.77,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 28.47,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 2,
+        "verified_citations": 2
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      }
+    }
+  },
+  {
+    "index": 14,
+    "filename": "CV_14_Score_38_Junior_Python_Scripts_Intern.txt",
+    "candidate_name": "LIAM O'CONNOR",
+    "overall_score": 5.77,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 23.08,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 29.55,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.6,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 15,
+    "filename": "CV_15_Score_30_Frontend_React_Developer.txt",
+    "candidate_name": "EMILY WATSON",
+    "overall_score": 6.68,
+    "must_have_score": 2.5,
+    "nice_to_have_score": 19.23,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 15.48,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.05,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 16,
+    "filename": "CV_16_Score_25_Embedded_Firmware_Engineer.txt",
+    "candidate_name": "RADU DUMITRESCU",
+    "overall_score": 0.0,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 0.0,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 38.36,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 1,
+        "verified_citations": 1
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      }
+    }
+  },
+  {
+    "index": 17,
+    "filename": "CV_17_Score_20_QA_Manual_Tester.txt",
+    "candidate_name": "VICTORIA ADAMS",
+    "overall_score": 0.96,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 3.85,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 7.78,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.1,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 18,
+    "filename": "CV_18_Score_10_Technical_Writer.txt",
+    "candidate_name": "NATHAN DRAKE",
+    "overall_score": 6.68,
+    "must_have_score": 2.5,
+    "nice_to_have_score": 19.23,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 0.6667,
+    "elapsed_seconds": 75.4,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.05,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 3,
+        "verified_citations": 2
+      }
+    }
+  },
+  {
+    "index": 19,
+    "filename": "CV_19_Score_05_Corporate_Accountant.txt",
+    "candidate_name": "BEATRICE MONTGOMERY",
+    "overall_score": 4.81,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 19.23,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 57.27,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "partial",
+        "score": 0.5,
+        "citations_count": 1,
+        "verified_citations": 1
+      }
+    }
+  },
+  {
+    "index": 20,
+    "filename": "CV_20_Score_00_Executive_Chef.txt",
+    "candidate_name": "JEAN-PIERRE LAURENT",
+    "overall_score": 0.0,
+    "must_have_score": 0.0,
+    "nice_to_have_score": 0.0,
+    "gaps_count": 2,
+    "recommendation": "REJECT",
+    "citation_verification_score": 1.0,
+    "elapsed_seconds": 542.58,
+    "requirements": {
+      "req_rag_python": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_fastapi_backend": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_k8s_docker": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 0,
+        "verified_citations": 0
+      },
+      "req_soft_collab": {
+        "status": "not_met",
+        "score": 0.0,
+        "citations_count": 2,
+        "verified_citations": 2
+      }
+    }
+  }
+]

@@ -153,3 +153,65 @@ def test_interview_agent_pipeline():
     assert plan.job_id == jid
     assert len(plan.questions) == 1
     assert plan.questions[0].archetype == QuestionArchetype.TECHNICAL_DEEP_DIVE
+
+
+def test_europass_language_and_detail_enrichment():
+    """Verify that audit_and_enrich_cv guarantees extraction of Europass languages, licences, volunteering, and demographics."""
+    mock_llm = MockTestLLM()
+    parser = ParserAgent(llm_client=mock_llm)
+
+    sample_cv = """
+Christian-Mark Morariu
+Work permit: Romanian Nationality: Romanian, Hungarian
+Date of birth: 22/09/2002 Place of birth: Arad, Romania Gender: Male
+Phone number: (+40) 756715421 Email: test@example.com
+
+SUMMARY
+Passionate engineer.
+
+LANGUAGE SKILLS
+Mother tongue(s): Romanian
+Other language(s):
+English German
+LISTENING C1 READING C1 WRITING C1 LISTENING C1 READING C1 WRITING C1
+SPOKEN PRODUCTION C1 SPOKEN INTERACTION C1 SPOKEN PRODUCTION C1 SPOKEN INTERACTION C1
+Levels: A1 and A2: Basic user; B1 and B2: Independent user; C1 and C2: Proficient user
+
+DRIVING LICENCE
+Driving Licence: B
+
+VOLUNTEERING
+[ 24/09/2022 – Current ] Timisoara
+Organization Amicus Timisoara
+• Contributed to cultural and charity projects.
+• Developed teamwork.
+Link: https://amicus.ro/timisoara
+"""
+
+    parsed, anonymized = parser.parse_and_anonymize(sample_cv)
+
+    # 1. Languages
+    lang_map = {l.language.lower(): l.proficiency for l in parsed.languages}
+    assert "romanian" in lang_map
+    assert lang_map["romanian"] == "Native"
+    assert "english" in lang_map
+    assert lang_map["english"] == "C1"
+    assert "german" in lang_map
+    assert lang_map["german"] == "C1"
+
+    # 2. Driving Licence
+    assert any("Driving Licence: B" in cert for cert in parsed.certifications)
+    assert any("Driving Licence: B" in cert for cert in anonymized.anonymized_certifications)
+
+    # 3. Volunteering custom section
+    sec_titles = [s.section_title for s in parsed.custom_sections]
+    assert "Volunteering" in sec_titles
+    v_sec = next(s for s in parsed.custom_sections if s.section_title == "Volunteering")
+    assert any("Amicus" in it for it in v_sec.items)
+
+    # 4. Demographics & Unused details
+    assert anonymized.demographic_data.get("nationality") == "Romanian, Hungarian"
+    assert anonymized.demographic_data.get("work_permit") == "Romanian"
+    assert anonymized.demographic_data.get("date_of_birth") == "22/09/2002"
+    assert anonymized.demographic_data.get("gender") == "Male"
+    assert any("Nationality: Romanian, Hungarian" in u for u in parsed.unused_details)

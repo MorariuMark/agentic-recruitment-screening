@@ -6,6 +6,7 @@ Semantic Matching, Human-in-the-Loop (HITL) Validation, and Interview Guide Synt
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -37,94 +38,212 @@ st.markdown(
 
     html, body, [class*="css"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 17px;
     }
 
-    /* Header styling */
+    /* -----------------------------------------------------------------------
+       Gemini-Style Minimalist Central Deep Blue Radial Glow on Black
+       ----------------------------------------------------------------------- */
+    .stApp {
+        background-color: #08090c !important;
+        background: radial-gradient(ellipse 70vw 60vh at 50% 46%, rgba(24, 52, 118, 0.70) 0%, rgba(14, 30, 72, 0.38) 35%, rgba(8, 12, 22, 0.18) 58%, #08090c 80%) fixed !important;
+        position: relative;
+    }
+
+    .stApp::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 0;
+        pointer-events: none;
+        background: radial-gradient(ellipse 58vw 48vh at 50% 46%, rgba(32, 70, 160, 0.48) 0%, rgba(18, 42, 102, 0.28) 35%, rgba(10, 20, 48, 0.12) 55%, transparent 75%);
+        filter: blur(55px);
+        animation: geminiPulse 24s ease-in-out infinite alternate;
+        will-change: transform, opacity;
+        transform: translate3d(0, 0, 0);
+    }
+
+    @keyframes geminiPulse {
+        0% {
+            transform: scale(0.96) translate3d(0, 0, 0);
+            opacity: 0.75;
+        }
+        50% {
+            transform: scale(1.08) translate3d(1.5vw, -1vh, 0);
+            opacity: 0.95;
+        }
+        100% {
+            transform: scale(1.02) translate3d(-1.5vw, 1.5vh, 0);
+            opacity: 0.82;
+        }
+    }
+
+    /* Keep app view container on top and transparent */
+    [data-testid="stAppViewContainer"] {
+        background: transparent !important;
+        position: relative;
+        z-index: 1;
+    }
+
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        position: relative;
+        z-index: 2;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: rgba(10, 15, 28, 0.82) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-right: 1px solid rgba(59, 130, 246, 0.2) !important;
+        position: relative;
+        z-index: 3;
+    }
+
+    /* -----------------------------------------------------------------------
+       Typography & Subtle Glowing Text
+       ----------------------------------------------------------------------- */
     .page-header {
-        margin-bottom: 1.75rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid rgba(140, 150, 170, 0.2);
+        margin-bottom: 1.85rem;
+        padding-bottom: 1.15rem;
+        border-bottom: 1px solid rgba(59, 130, 246, 0.22);
     }
     .page-title {
-        font-size: 1.65rem;
+        font-size: 1.85rem;
         font-weight: 700;
         letter-spacing: -0.025em;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.35rem;
+        color: #f8fafc;
+        text-shadow: 0 0 24px rgba(96, 165, 250, 0.45), 0 0 45px rgba(37, 99, 235, 0.22);
     }
     .page-subtitle {
-        font-size: 0.9rem;
-        color: #64748b;
+        font-size: 1.02rem;
+        color: #94a3b8;
         margin-bottom: 0;
+        line-height: 1.55;
     }
 
-    /* Card containers */
+    h1, h2, h3, h4 {
+        text-shadow: 0 0 18px rgba(147, 197, 253, 0.22);
+    }
+
+    p, [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {
+        font-size: 1.04rem !important;
+        line-height: 1.62 !important;
+    }
+
+    [data-testid="stWidgetLabel"] p, label {
+        font-size: 0.98rem !important;
+        font-weight: 500 !important;
+        color: #e2e8f0 !important;
+    }
+
+    /* -----------------------------------------------------------------------
+       Cards & Outlines with Subtle Luminescence
+       ----------------------------------------------------------------------- */
     .app-card {
-        background: rgba(140, 150, 170, 0.05);
-        border: 1px solid rgba(140, 150, 170, 0.18);
-        border-radius: 8px;
-        padding: 1.15rem;
-        margin-bottom: 1rem;
+        background: rgba(15, 23, 42, 0.65);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: 9px;
+        padding: 1.25rem;
+        margin-bottom: 1.15rem;
+        box-shadow: 0 4px 20px -2px rgba(2, 6, 23, 0.5), 0 0 14px rgba(59, 130, 246, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.06);
+        transition: all 0.22s ease;
+    }
+    .app-card:hover {
+        border-color: rgba(96, 165, 250, 0.45);
+        box-shadow: 0 8px 28px -4px rgba(2, 6, 23, 0.6), 0 0 20px rgba(59, 130, 246, 0.22);
     }
     .app-card-title {
-        font-size: 0.8rem;
+        font-size: 0.92rem;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.06em;
-        color: #64748b;
-        margin-bottom: 0.6rem;
+        color: #94a3b8;
+        margin-bottom: 0.7rem;
+        text-shadow: 0 0 12px rgba(96, 165, 250, 0.2);
+    }
+
+    /* Form Inputs with Glow Outline */
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextArea"] textarea,
+    div[data-baseweb="select"] > div,
+    div[data-testid="stFileUploader"] section {
+        border: 1px solid rgba(59, 130, 246, 0.28) !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+    div[data-testid="stTextInput"] input:focus,
+    div[data-testid="stTextArea"] textarea:focus,
+    div[data-baseweb="select"] > div:focus-within {
+        border-color: rgba(96, 165, 250, 0.7) !important;
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.32) !important;
     }
 
     /* Refined Status Badges & Pills */
     .badge {
         display: inline-flex;
         align-items: center;
-        padding: 0.2rem 0.65rem;
+        padding: 0.25rem 0.75rem;
         border-radius: 9999px;
-        font-size: 0.72rem;
+        font-size: 0.82rem;
         font-weight: 600;
         letter-spacing: 0.025em;
         line-height: 1.4;
         transition: all 0.2s ease;
     }
     .badge-must {
-        background: rgba(99, 102, 241, 0.15);
+        background: rgba(99, 102, 241, 0.18);
         color: #a5b4fc;
-        border: 1px solid rgba(99, 102, 241, 0.35);
+        border: 1px solid rgba(99, 102, 241, 0.45);
+        box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
     }
     .badge-nice {
-        background: rgba(148, 163, 184, 0.12);
-        color: #94a3b8;
-        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(148, 163, 184, 0.15);
+        color: #cbd5e1;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        box-shadow: 0 0 8px rgba(148, 163, 184, 0.1);
     }
     .badge-soft {
-        background: rgba(168, 85, 247, 0.12);
-        color: #c084fc;
-        border: 1px solid rgba(168, 85, 247, 0.25);
+        background: rgba(168, 85, 247, 0.16);
+        color: #d8b4fe;
+        border: 1px solid rgba(168, 85, 247, 0.4);
+        box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);
     }
     .badge-met {
-        background: rgba(16, 185, 129, 0.12);
-        color: #34d399;
-        border: 1px solid rgba(16, 185, 129, 0.28);
+        background: rgba(16, 185, 129, 0.16);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.42);
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.22);
     }
     .badge-partial {
-        background: rgba(245, 158, 11, 0.12);
-        color: #fbbf24;
-        border: 1px solid rgba(245, 158, 11, 0.28);
+        background: rgba(245, 158, 11, 0.16);
+        color: #fcd34d;
+        border: 1px solid rgba(245, 158, 11, 0.42);
+        box-shadow: 0 0 12px rgba(245, 158, 11, 0.22);
     }
     .badge-gap {
-        background: rgba(239, 68, 68, 0.12);
-        color: #f87171;
-        border: 1px solid rgba(239, 68, 68, 0.28);
+        background: rgba(239, 68, 68, 0.16);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.42);
+        box-shadow: 0 0 12px rgba(239, 68, 68, 0.22);
     }
     .badge-verified {
-        background: rgba(16, 185, 129, 0.14);
-        color: #34d399;
-        border: 1px solid rgba(16, 185, 129, 0.3);
+        background: rgba(16, 185, 129, 0.18);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.45);
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.22);
     }
     .badge-unverified {
-        background: rgba(245, 158, 11, 0.12);
-        color: #fbbf24;
-        border: 1px solid rgba(245, 158, 11, 0.28);
+        background: rgba(245, 158, 11, 0.16);
+        color: #fcd34d;
+        border: 1px solid rgba(245, 158, 11, 0.42);
+        box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
     }
 
     /* Workflow Tracker items */
@@ -132,16 +251,18 @@ st.markdown(
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.45rem 0.65rem;
-        margin-bottom: 0.4rem;
+        padding: 0.52rem 0.75rem;
+        margin-bottom: 0.45rem;
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(59, 130, 246, 0.18);
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.08);
         transition: all 0.2s ease;
     }
     .wf-item:hover {
-        background: rgba(255, 255, 255, 0.04);
-        border-color: rgba(255, 255, 255, 0.1);
+        background: rgba(59, 130, 246, 0.09);
+        border-color: rgba(96, 165, 250, 0.42);
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.22);
     }
     .wf-left {
         display: flex;
@@ -149,125 +270,136 @@ st.markdown(
     }
     .wf-num {
         font-family: monospace;
-        font-size: 0.72rem;
+        font-size: 0.82rem;
         font-weight: 700;
         color: #818cf8;
-        margin-right: 0.55rem;
+        margin-right: 0.6rem;
     }
     .wf-title {
-        font-size: 0.8rem;
+        font-size: 0.92rem;
         font-weight: 500;
         color: #e2e8f0;
     }
 
     /* Status dot */
     .status-dot {
-        width: 7px;
-        height: 7px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         display: inline-block;
-        margin-right: 6px;
+        margin-right: 7px;
     }
     .status-dot-online {
         background: #10b981;
-        box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.85);
     }
     .status-dot-offline {
         background: #ef4444;
-        box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+        box-shadow: 0 0 8px rgba(239, 68, 68, 0.85);
     }
     .status-dot-warning {
         background: #f59e0b;
-        box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
+        box-shadow: 0 0 8px rgba(245, 158, 11, 0.85);
     }
 
     /* Tag pills */
     .tag-pill {
         display: inline-block;
-        padding: 0.2rem 0.65rem;
-        margin: 0.15rem;
-        background: rgba(140, 150, 170, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.07);
+        padding: 0.25rem 0.75rem;
+        margin: 0.2rem;
+        background: rgba(59, 130, 246, 0.12);
+        border: 1px solid rgba(96, 165, 250, 0.22);
         border-radius: 9999px;
-        font-size: 0.76rem;
+        font-size: 0.85rem;
         font-weight: 500;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.08);
     }
 
     /* Citation callout */
     .citation-block {
         border-left: 3px solid #3b82f6;
-        padding: 0.6rem 1rem;
-        margin: 0.5rem 0;
-        background: rgba(59, 130, 246, 0.05);
-        border-radius: 0 6px 6px 0;
-        font-size: 0.88rem;
+        padding: 0.75rem 1.15rem;
+        margin: 0.6rem 0;
+        background: rgba(59, 130, 246, 0.08);
+        border-radius: 0 8px 8px 0;
+        font-size: 1.02rem;
+        box-shadow: 0 0 14px rgba(59, 130, 246, 0.12);
     }
     .citation-meta {
-        font-size: 0.75rem;
-        color: #64748b;
-        margin-top: 0.35rem;
+        font-size: 0.86rem;
+        color: #94a3b8;
+        margin-top: 0.4rem;
     }
 
     /* Metric clean typography */
     [data-testid="stMetricValue"] {
-        font-size: 1.55rem !important;
+        font-size: 1.8rem !important;
         font-weight: 700 !important;
         letter-spacing: -0.02em !important;
+        text-shadow: 0 0 18px rgba(96, 165, 250, 0.32) !important;
     }
     [data-testid="stMetricLabel"] {
-        font-size: 0.78rem !important;
+        font-size: 0.88rem !important;
         font-weight: 600 !important;
         text-transform: uppercase !important;
         letter-spacing: 0.05em !important;
-        color: #64748b !important;
+        color: #94a3b8 !important;
     }
 
-    /* Modern, Sleek Buttons */
+    /* Modern, Sleek Buttons with Glow */
     div[data-testid="stButton"] > button,
     div[data-testid="stDownloadButton"] > button,
     div[data-testid="stFormSubmitButton"] > button {
-        border-radius: 8px !important;
+        border-radius: 9px !important;
         font-weight: 600 !important;
-        font-size: 0.82rem !important;
+        font-size: 0.92rem !important;
         letter-spacing: 0.015em !important;
-        padding: 0.42rem 0.95rem !important;
-        min-height: 2.3rem !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        background: rgba(255, 255, 255, 0.04) !important;
-        color: #f1f5f9 !important;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+        padding: 0.48rem 1.05rem !important;
+        min-height: 2.45rem !important;
+        border: 1px solid rgba(96, 165, 250, 0.3) !important;
+        background: rgba(15, 23, 42, 0.65) !important;
+        color: #f8fafc !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 12px rgba(59, 130, 246, 0.15) !important;
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     div[data-testid="stButton"] > button:hover,
     div[data-testid="stDownloadButton"] > button:hover,
     div[data-testid="stFormSubmitButton"] > button:hover {
-        background: rgba(255, 255, 255, 0.09) !important;
-        border-color: rgba(99, 102, 241, 0.5) !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        border-color: rgba(147, 197, 253, 0.65) !important;
         color: #ffffff !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+        transform: translateY(-1.5px) !important;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), 0 0 20px rgba(59, 130, 246, 0.35) !important;
     }
     div[data-testid="stButton"] > button:active,
     div[data-testid="stDownloadButton"] > button:active,
     div[data-testid="stFormSubmitButton"] > button:active {
         transform: translateY(0) !important;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
 
     /* Primary Buttons */
     div[data-testid="stButton"] > button[kind="primary"],
     div[data-testid="stFormSubmitButton"] > button[kind="primary"] {
-        background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
-        border: 1px solid rgba(255, 255, 255, 0.18) !important;
+        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%) !important;
+        border: 1px solid rgba(147, 197, 253, 0.45) !important;
         color: #ffffff !important;
-        box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3) !important;
+        box-shadow: 0 2px 10px rgba(37, 99, 235, 0.4), 0 0 18px rgba(99, 102, 241, 0.35) !important;
     }
     div[data-testid="stButton"] > button[kind="primary"]:hover,
     div[data-testid="stFormSubmitButton"] > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%) !important;
-        border-color: rgba(255, 255, 255, 0.3) !important;
-        box-shadow: 0 6px 16px rgba(79, 70, 229, 0.45) !important;
+        background: linear-gradient(135deg, #1d4ed8 0%, #4338ca 100%) !important;
+        border-color: rgba(191, 219, 254, 0.8) !important;
+        box-shadow: 0 6px 22px rgba(37, 99, 235, 0.55), 0 0 26px rgba(99, 102, 241, 0.6) !important;
         transform: translateY(-1.5px) !important;
+    }
+
+    /* Suppress Proton Pass / password manager popover overlay */
+    protonpass-root {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
     }
     </style>
     """,
@@ -697,7 +829,18 @@ with tab_cv:
 
     with col_sample:
         st.markdown("<div class='app-card-title'>Or Select Benchmark Profile</div>", unsafe_allow_html=True)
-        sample_options = {
+        benchmark_dir = Path("data/benchmark_20_cvs")
+        sample_options = {}
+        if benchmark_dir.exists():
+            for b_file in sorted(benchmark_dir.glob("CV_*.txt")):
+                # Format friendly label: "Score ~95: Principal RAG Architect"
+                parts = b_file.stem.split("_")
+                score_str = parts[3] if len(parts) > 3 else "??"
+                name_str = " ".join(parts[4:]) if len(parts) > 4 else b_file.stem
+                sample_options[f"[{score_str}% Target] {name_str}"] = str(b_file)
+
+        # Baseline mock and multilingual profiles
+        sample_options.update({
             "Strong AI Platform Engineer (EN)": "data/mock_cvs/strong_ai_engineer.txt",
             "Borderline Junior Developer (EN)": "data/mock_cvs/borderline_junior_developer.txt",
             "Unrelated Domain - Accountant (EN)": "data/mock_cvs/reject_unrelated_candidate.txt",
@@ -706,7 +849,7 @@ with tab_cv:
             "Fullstack Project Lead (FR)": "data/test_resumes/Cheffe_de_Projet_Fullstack_Claire_Dubois_FR.txt",
             "Accountant Resume (EN)": "data/test_resumes/Real_Resume_Accountant_EN.txt",
             "Standard JSON Resume (EN)": "data/test_resumes/JSON_Resume_Standard_Schema_EN.json",
-        }
+        })
         selected_sample_label = st.selectbox("Sample Profiles", list(sample_options.keys()), label_visibility="collapsed")
         selected_sample_path = sample_options[selected_sample_label]
 
@@ -729,7 +872,11 @@ with tab_cv:
                 st.success(f"Candidate profile processed. ID: {st.session_state.candidate_id} ({result['chunks_indexed']} chunks indexed)")
                 st.rerun()
             except Exception as e:
-                st.error(f"Ingestion failed: {e}")
+                err_text = str(e)
+                if any(kw in err_text.lower() for kw in ["scanned", "image-only", "selectable text", "text layer"]):
+                    st.warning("⚠️ **Scanned or Image Document Detected**: The uploaded file contains no digital text stream. Please upload a searchable PDF or a Word (.docx) document.")
+                else:
+                    st.error(f"Ingestion failed: {e}")
 
     if st.session_state.anonymized_candidate:
         st.markdown("---")
@@ -755,12 +902,28 @@ with tab_cv:
                     unsafe_allow_html=True,
                 )
 
+            # Isolated Demographic Data
+            demographics = getattr(st.session_state.anonymized_candidate, "demographic_data", {})
+            if demographics:
+                demo_lines = "".join([f"<div><strong>{k.replace('_', ' ').title()}:</strong> {v}</div>" for k, v in demographics.items()])
+                st.markdown(
+                    f"""
+                    <div class="app-card" style="margin-top: 0.8rem;">
+                        <div class="app-card-title" style="color: #f59e0b;">Protected Demographic Audit (Redacted)</div>
+                        <div style="font-size: 0.86rem; line-height: 1.7;">
+                            {demo_lines}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
         with col_clean:
             st.markdown("<div class='app-card-title'>Anonymized Profile (Passed to Inference)</div>", unsafe_allow_html=True)
             skills_html = "".join([f"<span class='tag-pill'>{s}</span>" for s in st.session_state.anonymized_candidate.anonymized_skills])
             langs = getattr(st.session_state.anonymized_candidate, "anonymized_languages", [])
-            lang_str = ", ".join([f"{l.language} ({l.proficiency})" if l.proficiency else l.language for l in langs]) or "Not specified"
-            demo_str = st.session_state.anonymized_candidate.demographic_data or "None detected"
+            lang_pills = "".join([f"<span class='tag-pill'>{l.language} ({l.proficiency or 'Competent'})</span>" for l in langs]) if langs else "Not specified"
+            certs_count = len(getattr(st.session_state.anonymized_candidate, "anonymized_certifications", []))
 
             st.markdown(
                 f"""
@@ -768,8 +931,8 @@ with tab_cv:
                     <div style="font-size: 0.88rem; line-height: 1.8;">
                         <div><strong>Candidate ID:</strong> <code>{st.session_state.anonymized_candidate.candidate_id}</code></div>
                         <div style="margin-top: 0.35rem; margin-bottom: 0.35rem;"><strong>Identified Skills:</strong><br/>{skills_html}</div>
-                        <div><strong>Languages:</strong> {lang_str}</div>
-                        <div><strong>Demographic Audit:</strong> {demo_str}</div>
+                        <div style="margin-top: 0.35rem; margin-bottom: 0.35rem;"><strong>Languages:</strong><br/>{lang_pills}</div>
+                        <div><strong>Certifications / Licences:</strong> {certs_count} detected</div>
                     </div>
                 </div>
                 """,
@@ -779,10 +942,41 @@ with tab_cv:
         with st.expander(f"Work Experience ({len(st.session_state.anonymized_candidate.anonymized_work_experiences)} roles)", expanded=False):
             for exp in st.session_state.anonymized_candidate.anonymized_work_experiences:
                 st.markdown(f"**{exp.job_title}** - {exp.company_name}")
-                st.caption(f"{exp.start_date or ''} - {exp.end_date or ''}")
+                exp_tags = []
+                if exp.start_date or exp.end_date:
+                    exp_tags.append(f"{exp.start_date or ''} - {exp.end_date or ''}")
+                if getattr(exp, "employment_type", None):
+                    exp_tags.append(f"`{exp.employment_type}`")
+                if getattr(exp, "work_model", None):
+                    exp_tags.append(f"`{exp.work_model}`")
+                if getattr(exp, "location", None):
+                    exp_tags.append(f"`{exp.location}`")
+                st.caption(" • ".join(exp_tags))
                 for bullet in exp.work_description:
                     st.markdown(f"- {bullet}")
                 st.write("")
+
+        education_list = getattr(st.session_state.anonymized_candidate, "anonymized_education", [])
+        if education_list:
+            with st.expander(f"Education & Academic Credentials ({len(education_list)})", expanded=False):
+                for edu in education_list:
+                    st.markdown(f"**{edu.degree_title}** - {edu.institution_name}")
+                    edu_meta = []
+                    if edu.field_of_study:
+                        edu_meta.append(f"Major: `{edu.field_of_study}`")
+                    if edu.graduation_year:
+                        edu_meta.append(f"Year: `{edu.graduation_year}`")
+                    if getattr(edu, "gpa_or_grade", None):
+                        edu_meta.append(f"Grade: `{edu.gpa_or_grade}`")
+                    if getattr(edu, "honors", None):
+                        edu_meta.append(f"Honors: `{edu.honors}`")
+                    if getattr(edu, "location", None):
+                        edu_meta.append(f"Location: `{edu.location}`")
+                    if edu_meta:
+                        st.caption(" • ".join(edu_meta))
+                    if getattr(edu, "thesis_title", None):
+                        st.markdown(f"- *Thesis:* {edu.thesis_title}")
+                    st.write("")
 
         projects = getattr(st.session_state.anonymized_candidate, "anonymized_projects", [])
         if projects:
@@ -798,6 +992,46 @@ with tab_cv:
                         st.markdown(f"- {bullet}")
                     st.write("")
 
+        certifications = getattr(st.session_state.anonymized_candidate, "anonymized_certifications", [])
+        if certifications:
+            with st.expander(f"Certifications & Licences ({len(certifications)})", expanded=False):
+                for cert in certifications:
+                    st.markdown(f"- **{cert}**")
+
+        logistics = getattr(st.session_state.anonymized_candidate, "logistics", None)
+        if logistics and any(getattr(logistics, f) for f in logistics.model_fields):
+            with st.expander("Candidate Availability & Logistics", expanded=False):
+                col_l1, col_l2 = st.columns(2)
+                with col_l1:
+                    if logistics.notice_period:
+                        st.markdown(f"**Notice Period:** {logistics.notice_period}")
+                    if logistics.earliest_start_date:
+                        st.markdown(f"**Earliest Start:** {logistics.earliest_start_date}")
+                    if logistics.work_authorization:
+                        st.markdown(f"**Work Authorization:** {logistics.work_authorization}")
+                with col_l2:
+                    if logistics.relocation_preference:
+                        st.markdown(f"**Relocation Preference:** {logistics.relocation_preference}")
+                    if logistics.travel_willingness:
+                        st.markdown(f"**Travel Willingness:** {logistics.travel_willingness}")
+                    if logistics.security_clearance:
+                        st.markdown(f"**Security Clearance:** {logistics.security_clearance}")
+
+        publications = getattr(st.session_state.anonymized_candidate, "anonymized_publications", [])
+        if publications:
+            with st.expander(f"Research Publications ({len(publications)})", expanded=False):
+                for pub in publications:
+                    venue = f" ({pub.journal_or_conference}, {pub.year})" if pub.journal_or_conference and pub.year else ""
+                    st.markdown(f"- **{pub.title}**{venue}")
+                    if pub.doi_or_url:
+                        st.caption(f"DOI/URL: `{pub.doi_or_url}`")
+
+        patents = getattr(st.session_state.anonymized_candidate, "anonymized_patents", [])
+        if patents:
+            with st.expander(f"Patents & Inventions ({len(patents)})", expanded=False):
+                for pat in patents:
+                    st.markdown(f"- **{pat.title}** [{pat.status or 'Pending'}] - {pat.patent_office or 'Office'}: `{pat.patent_number or 'Application'}`")
+
         custom_secs = getattr(st.session_state.anonymized_candidate, "anonymized_custom_sections", [])
         if custom_secs:
             with st.expander(f"Additional Sections ({len(custom_secs)})", expanded=False):
@@ -805,6 +1039,13 @@ with tab_cv:
                     st.markdown(f"**{sec.section_title}**")
                     for it in sec.items:
                         st.markdown(f"- {it}")
+
+        unused_items = getattr(st.session_state.parsed_cv, "unused_details", [])
+        if unused_items:
+            with st.expander(f"Unused / Demographic Details ({len(unused_items)})", expanded=False):
+                st.caption("Extracted personal, demographic, or administrative items excluded from scoring:")
+                for item in unused_items:
+                    st.markdown(f"- {item}")
 
         st.markdown("---")
         col_cv_info, col_cv_btn = st.columns([2.5, 1])

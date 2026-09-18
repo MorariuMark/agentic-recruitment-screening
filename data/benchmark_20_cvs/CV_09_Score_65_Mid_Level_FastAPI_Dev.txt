@@ -1,0 +1,28 @@
+JORDAN LEE
+Email: jordan.lee.dev@fastmail.com
+Phone: +1 (206) 555-0184
+Location: Seattle, WA
+
+PROFESSIONAL SUMMARY
+Mid-Level Python Backend Developer with 3 years of experience building asynchronous REST APIs with FastAPI and Pydantic. 1 year of prototype experience with ChromaDB and vector search. Familiar with Docker.
+
+CORE TECHNICAL SKILLS
+- Languages: Python, SQL, JavaScript
+- Backend: FastAPI, Pydantic, PostgreSQL, Redis
+- Tools: Docker, Docker Compose, Git
+- AI: ChromaDB (1 year, prototype projects)
+
+WORK EXPERIENCE
+
+Python Backend Developer | Apex Web Solutions | 08/2021 - Present
+- Developed asynchronous REST API endpoints in Python using FastAPI and Pydantic.
+- Experimented with ChromaDB and SentenceTransformers for internal FAQ search prototype (1 year).
+- Containerized development workflows using Docker.
+- Collaborated with senior engineers on sprint deliverables.
+
+Junior Web Developer | Sound Software | 06/2020 - 07/2021
+- Created basic REST APIs and database models in PostgreSQL.
+- Wrote unit and integration tests for backend services.
+
+EDUCATION
+B.S. in Information Systems | University of Washington | 2016 - 2020

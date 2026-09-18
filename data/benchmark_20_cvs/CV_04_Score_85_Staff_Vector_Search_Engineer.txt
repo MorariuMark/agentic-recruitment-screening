@@ -1,0 +1,28 @@
+ELIZABETH CHEN
+Email: elizabeth.chen@vectorflow.io
+Phone: +1 (408) 555-0129
+Location: San Jose, CA
+
+PROFESSIONAL SUMMARY
+Staff Engineer with 5+ years building vector search systems in Python with ChromaDB and designing asynchronous FastAPI backends. Experienced with Docker containerization; basic Kubernetes cluster management.
+
+CORE TECHNICAL SKILLS
+- AI / Vector: Python, ChromaDB, HuggingFace, SentenceTransformers
+- Backend: FastAPI, Pydantic, AsyncIO, MongoDB, Redis
+- DevOps: Docker, Docker Compose, Kubernetes (Basic), AWS
+- Collaboration: Junior Developer Mentorship, Agile
+
+WORK EXPERIENCE
+
+Lead Software Engineer | VectorFlow Labs | 02/2021 - Present
+- Built and scaled production RAG systems with Python and ChromaDB for multi-tenant legal document search.
+- Designed high-throughput microservices using FastAPI and Pydantic for real-time document inference.
+- Containerized backend workloads with Docker; deployed and monitored pods on managed Kubernetes clusters.
+- Mentored 3 junior software developers on vector search fundamentals and unit testing best practices.
+
+Python Backend Developer | InnoCloud Systems | 07/2018 - 01/2021
+- Created REST endpoints using FastAPI and PostgreSQL.
+- Packaged services into Docker images for automated testing pipelines.
+
+EDUCATION
+B.S. in Software Engineering | San Jose State University | 2014 - 2018

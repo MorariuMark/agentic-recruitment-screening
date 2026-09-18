@@ -238,7 +238,7 @@ class GroqClient(BaseLLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         }
         if use_json_object:
             kwargs["response_format"] = {"type": "json_object"}

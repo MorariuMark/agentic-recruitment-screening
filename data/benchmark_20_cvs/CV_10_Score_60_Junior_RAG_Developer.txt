@@ -1,0 +1,26 @@
+ANNA KOWALSKI
+Email: anna.kowalski@devcloud.pl
+Phone: +48 22 123 4567
+Location: Warsaw, Poland
+
+PROFESSIONAL SUMMARY
+Junior AI & Python Developer with 1.5 years of practical experience implementing RAG prototypes with ChromaDB and building REST APIs with FastAPI and Pydantic.
+
+CORE TECHNICAL SKILLS
+- Languages: Python, SQL
+- AI: ChromaDB, LangChain, SentenceTransformers (1.5 years)
+- Backend: FastAPI, Pydantic, SQLite
+- DevOps: Docker (Basic)
+
+WORK EXPERIENCE
+
+Junior AI Developer | DataVenture Warsaw | 10/2022 - Present
+- Built semantic retrieval prototypes using Python and ChromaDB for customer FAQ routing.
+- Implemented basic REST endpoints using FastAPI and Pydantic.
+- Created Dockerfiles to containerize local test environments.
+
+Python Intern | CodeFactory Poland | 03/2022 - 09/2022
+- Wrote Python automation scripts and assisted backend team.
+
+EDUCATION
+B.Eng. in Computer Science | Warsaw University of Technology | 2018 - 2022

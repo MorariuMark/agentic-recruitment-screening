@@ -1,0 +1,25 @@
+NATHAN DRAKE
+Email: nathan.drake@docuwrite.org
+Phone: +1 (503) 555-0138
+Location: Portland, OR
+
+PROFESSIONAL SUMMARY
+Technical Writer with 5 years of experience producing user manuals, API documentation guides, and release notes for enterprise software products. Skilled in Markdown and documentation portals. No software engineering or AI experience.
+
+CORE TECHNICAL SKILLS
+- Technical Writing: API Reference Guides, User Manuals, Knowledge Bases, Release Notes
+- Tools: Markdown, Sphinx, Docusaurus, Git, Microsoft Word, Notion
+- Communication: Editing, Proofreading, Technical Communication
+
+WORK EXPERIENCE
+
+Lead Technical Writer | DocuFlow Solutions | 05/2019 - Present
+- Created comprehensive user guides and documentation portals using Markdown.
+- Interviewed software developers to document API endpoint descriptions.
+- Standardized terminology across company knowledge base.
+
+Technical Documentation Specialist | Pacific Tech Writers | 08/2017 - 04/2019
+- Edited release notes and created PDF onboarding manuals for software products.
+
+EDUCATION
+B.A. in English & Technical Writing | Portland State University | 2013 - 2017

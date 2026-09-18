@@ -1,0 +1,28 @@
+MAXIMILIAN WEBER
+Email: maximilian.weber@ai-systems.de
+Phone: +49 89 12345678
+Location: Munich, Germany
+
+PROFESSIONAL SUMMARY
+Senior Cloud & AI Engineer with 5 years of experience developing RAG architectures using Python and dense vector databases (Qdrant, Milvus), with asynchronous FastAPI microservices and Kubernetes (GKE).
+
+CORE TECHNICAL SKILLS
+- AI / Vector: Python, Qdrant, Milvus, SentenceTransformers, LangChain
+- Backend: FastAPI, Pydantic, AsyncIO, PostgreSQL
+- DevOps: Kubernetes (GKE), Docker, Terraform, Google Cloud Platform
+- Collaboration: Mentoring junior team members, distributed agile teams
+
+WORK EXPERIENCE
+
+Senior AI Systems Engineer | CloudScale Munich | 04/2021 - Present
+- Built production retrieval-augmented generation (RAG) pipelines in Python with Qdrant vector database as an alternative to ChromaDB.
+- Developed REST APIs and asynchronous microservices using FastAPI and Pydantic.
+- Containerized applications with Docker and deployed to Google Kubernetes Engine (GKE) clusters using Helm.
+- Provided technical guidance and mentoring to junior engineers on API design and vector indexing.
+
+Cloud Backend Developer | ByteWorks GmbH | 10/2018 - 03/2021
+- Designed Python REST microservices and managed Docker containers in production.
+- Participated in cross-functional international sprint teams.
+
+EDUCATION
+M.Sc. in Informatics | Technical University of Munich (TUM) | 2016 - 2018

@@ -1,0 +1,28 @@
+CARLOS MENDEZ
+Email: carlos.mendez@backend-architects.es
+Phone: +34 91 555 2341
+Location: Madrid, Spain
+
+PROFESSIONAL SUMMARY
+Senior Backend Engineering Lead with 6 years of expertise building high-performance REST APIs with FastAPI, Pydantic, and Kubernetes. Possesses 1.5 years of practical RAG and vector database experience. Strong leadership and mentoring skills.
+
+CORE TECHNICAL SKILLS
+- Backend: Python, FastAPI, Pydantic, AsyncIO, Celery, Redis, PostgreSQL
+- DevOps: Docker, Kubernetes, Helm, AWS (ECS, EKS)
+- AI & Vector: ChromaDB (1.5 years), Embeddings, OpenAI API
+- Leadership: Mentoring, Team Leadership, Technical Roadmaps
+
+WORK EXPERIENCE
+
+Backend Technical Lead | NovaTech Madrid | 01/2021 - Present
+- Architected enterprise asynchronous microservices using FastAPI and Pydantic handling 2,000+ RPS.
+- Deployed microservice clusters to Kubernetes using Docker containers and automated Helm pipelines.
+- Integrated ChromaDB for semantic search in customer support documentation (1.5 years RAG experience).
+- Led and mentored a team of 7 backend developers, establishing code quality standards.
+
+Senior Python Developer | Iberian Cloud Solutions | 03/2018 - 12/2020
+- Built REST API services in Python with FastAPI and PostgreSQL.
+- Containerized application services with Docker.
+
+EDUCATION
+B.S. in Computer Engineering | Universidad Politécnica de Madrid | 2014 - 2018

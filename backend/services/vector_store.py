@@ -163,16 +163,35 @@ class VectorStoreService:
                 f"{lang.language} ({lang.proficiency})" if lang.proficiency else lang.language
                 for lang in langs
             ]
-            documents.append(f"Languages: {', '.join(lang_strings)}")
+            doc_text = (
+                f"Candidate Languages & Communication: {', '.join(lang_strings)}. "
+                f"Spoken and written language proficiencies, CEFR competency levels, and international communication skills."
+            )
+            documents.append(doc_text)
             metadatas.append({
                 "candidate_id": str(candidate.candidate_id),
                 "type": "languages",
-                "job_title": "Languages",
+                "job_title": "Languages & Communication",
                 "company_name": "Candidate Profile",
                 "experience_index": -1,
                 "bullet_index": -1,
             })
             ids.append(f"candidate_{candidate.candidate_id}_languages")
+
+        # 5. Add certifications chunk
+        certs = getattr(candidate, "anonymized_certifications", [])
+        if certs:
+            certs_text = ", ".join(certs)
+            documents.append(f"Certifications & Licences: {certs_text}")
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "certifications",
+                "job_title": "Certifications & Licences",
+                "company_name": "Candidate Profile",
+                "experience_index": -1,
+                "bullet_index": -1,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_certifications")
 
         # 5. Add custom fallback sections chunks
         for s_idx, sec in enumerate(getattr(candidate, "anonymized_custom_sections", [])):
@@ -195,6 +214,14 @@ class VectorStoreService:
             edu_content = f"Degree: {edu.degree_title} in {edu.field_of_study or 'General'} from {edu.institution_name}"
             if edu.graduation_year:
                 edu_content += f" ({edu.graduation_year})"
+            if getattr(edu, "gpa_or_grade", None):
+                edu_content += f" - Grade/GPA: {edu.gpa_or_grade}"
+            if getattr(edu, "honors", None):
+                edu_content += f" - Honors: {edu.honors}"
+            if getattr(edu, "thesis_title", None):
+                edu_content += f" - Thesis: {edu.thesis_title}"
+            if getattr(edu, "location", None):
+                edu_content += f" - Location: {edu.location}"
             documents.append(edu_content)
             metadatas.append({
                 "candidate_id": str(candidate.candidate_id),
@@ -206,7 +233,69 @@ class VectorStoreService:
             })
             ids.append(f"candidate_{candidate.candidate_id}_edu_{edu_idx}")
 
-        # 7. Idempotently upsert all chunks into ChromaDB (safe against re-indexing existing IDs)
+        # 7. Add logistics & availability chunk
+        log = getattr(candidate, "logistics", None)
+        if log:
+            log_parts = []
+            if getattr(log, "notice_period", None):
+                log_parts.append(f"Notice Period / Availability: {log.notice_period}")
+            if getattr(log, "earliest_start_date", None):
+                log_parts.append(f"Earliest Start Date: {log.earliest_start_date}")
+            if getattr(log, "work_authorization", None):
+                log_parts.append(f"Work Authorization: {log.work_authorization}")
+            if getattr(log, "relocation_preference", None):
+                log_parts.append(f"Relocation Preference: {log.relocation_preference}")
+            if getattr(log, "travel_willingness", None):
+                log_parts.append(f"Travel Willingness: {log.travel_willingness}")
+            if getattr(log, "security_clearance", None):
+                log_parts.append(f"Security Clearance: {log.security_clearance}")
+            if log_parts:
+                documents.append("Candidate Logistics & Availability: " + "; ".join(log_parts))
+                metadatas.append({
+                    "candidate_id": str(candidate.candidate_id),
+                    "type": "logistics",
+                    "job_title": "Logistics & Availability",
+                    "company_name": "Candidate Profile",
+                    "experience_index": -1,
+                    "bullet_index": -1,
+                })
+                ids.append(f"candidate_{candidate.candidate_id}_logistics")
+
+        # 8. Add publications chunks
+        for pub_idx, pub in enumerate(getattr(candidate, "anonymized_publications", [])):
+            pub_text = f"Publication: {pub.title}"
+            if pub.journal_or_conference:
+                pub_text += f" in {pub.journal_or_conference}"
+            if pub.year:
+                pub_text += f" ({pub.year})"
+            if pub.doi_or_url:
+                pub_text += f" - Link/DOI: {pub.doi_or_url}"
+            documents.append(pub_text)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "publication",
+                "job_title": pub.title,
+                "company_name": pub.journal_or_conference or "Research Publication",
+                "experience_index": pub_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_pub_{pub_idx}")
+
+        # 9. Add patents chunks
+        for pat_idx, pat in enumerate(getattr(candidate, "anonymized_patents", [])):
+            pat_text = f"Patent: {pat.title} ({pat.patent_office or 'Patent Office'}: {pat.patent_number or 'Application'}) - Status: {pat.status or 'Filed'}"
+            documents.append(pat_text)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "patent",
+                "job_title": pat.title,
+                "company_name": pat.patent_office or "Patent Office",
+                "experience_index": pat_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_pat_{pat_idx}")
+
+        # 10. Idempotently upsert all chunks into ChromaDB (safe against re-indexing existing IDs)
         if documents:
             self.candidate_collection.upsert(
                 documents=documents,

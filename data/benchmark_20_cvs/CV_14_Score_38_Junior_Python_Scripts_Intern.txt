@@ -1,0 +1,24 @@
+LIAM O'CONNOR
+Email: liam.oconnor@collegemail.ie
+Phone: +353 1 496 0123
+Location: Dublin, Ireland
+
+PROFESSIONAL SUMMARY
+Recent Computer Science graduate with internship experience writing simple Python automation scripts and basic web scrapers. Eager to learn modern AI tools and backend frameworks.
+
+CORE TECHNICAL SKILLS
+- Languages: Python (Academic), Java, SQL
+- Tools: Git, VS Code, Linux
+- Concepts: Object-Oriented Programming, Data Structures
+
+WORK EXPERIENCE
+
+Software Development Intern | Dublin Softworks | 06/2023 - 09/2023
+- Wrote Python automation scripts to clean and parse CSV data files.
+- Assisted QA team by running automated test scripts in Python.
+
+Student Lab Assistant | Trinity College Dublin | 10/2022 - 05/2023
+- Guided first-year students through basic Python coding lab assignments.
+
+EDUCATION
+B.Sc. in Computer Science | Trinity College Dublin | 2019 - 2023

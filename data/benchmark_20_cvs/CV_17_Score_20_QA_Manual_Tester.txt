@@ -1,0 +1,25 @@
+VICTORIA ADAMS
+Email: victoria.adams@testassurance.com
+Phone: +1 (312) 555-0177
+Location: Chicago, IL
+
+PROFESSIONAL SUMMARY
+Quality Assurance Manual Tester with 4 years of experience writing test cases, logging bug tickets in Jira, and performing manual regression testing on web and mobile applications. No coding or backend development skills.
+
+CORE TECHNICAL SKILLS
+- QA Methodologies: Manual Testing, Regression Testing, Smoke Testing, Black Box Testing
+- Tools: Jira, Confluence, TestRail, Postman (basic manual GET requests)
+- Concepts: Agile, Scrum, Bug Lifecycle
+
+WORK EXPERIENCE
+
+Senior QA Specialist | QualityFirst Software | 04/2020 - Present
+- Authored 500+ detailed manual test cases for e-commerce client websites.
+- Executed manual regression test cycles before production releases.
+- Logged and tracked defects in Jira, coordinating with development leads.
+
+QA Tester | Midwest Digital Labs | 01/2018 - 03/2020
+- Performed cross-browser testing across Chrome, Safari, and Firefox.
+
+EDUCATION
+B.A. in Communications | DePaul University | 2013 - 2017

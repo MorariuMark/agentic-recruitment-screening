@@ -1,0 +1,25 @@
+RADU DUMITRESCU
+Email: radu.dumitrescu@embedded-systems.ro
+Phone: +40 721 555 901
+Location: Timisoara, Romania
+
+PROFESSIONAL SUMMARY
+Embedded Systems Engineer with 3 years of experience writing C/C++ firmware for automotive microcontrollers and CAN-bus communication. Wrote basic Python serial scripts for flashing hardware. No web/AI backend experience.
+
+CORE TECHNICAL SKILLS
+- Embedded: C, C++, Assembly, Microcontrollers (STM32, ESP32), CAN-bus, I2C, SPI
+- Tooling: Oscilloscopes, Logic Analyzers, Keil uVision, Git
+- Scripting: Basic Python (for serial port hardware flashing)
+
+WORK EXPERIENCE
+
+Embedded Software Engineer | AutoTech Solutions | 09/2021 - Present
+- Developed low-level driver firmware in C for automotive sensor ECUs.
+- Tested electronic hardware interfaces using logic analyzers and oscilloscopes.
+- Wrote simple Python utility scripts to automate serial firmware flashing.
+
+Junior Hardware Tester | MicroElectronica | 07/2020 - 08/2021
+- Performed functional testing on electronic circuit boards.
+
+EDUCATION
+B.S. in Applied Electronics | Politehnica University of Timisoara | 2016 - 2020

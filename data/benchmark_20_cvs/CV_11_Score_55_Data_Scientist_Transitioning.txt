@@ -1,0 +1,27 @@
+PRIYA PATEL
+Email: priya.patel@datascience-analytics.io
+Phone: +1 (512) 555-0198
+Location: Austin, TX
+
+PROFESSIONAL SUMMARY
+Data Scientist with 4 years of analytics and machine learning experience in Python. Built offline vector search models using PyTorch and SentenceTransformers. Limited production FastAPI and no Kubernetes.
+
+CORE TECHNICAL SKILLS
+- AI & Data Science: Python, PyTorch, Pandas, Scikit-Learn, SentenceTransformers, Vector Embeddings
+- Backend: Flask (basic), Python scripting
+- DevOps: Docker (Basic)
+- Collaboration: Reporting findings to non-technical stakeholders
+
+WORK EXPERIENCE
+
+Data Scientist | TrendMetrics Analytics | 01/2021 - Present
+- Trained custom sentence embedding models in Python for document clustering.
+- Researched vector similarity algorithms (Cosine, Euclidean) for text classification.
+- Packaged ML models into basic Docker containers for batch inference.
+
+Junior Data Analyst | Austin Retail Insights | 06/2019 - 12/2020
+- Built predictive models using Scikit-Learn and Pandas.
+- Automated SQL queries and generated statistical dashboards.
+
+EDUCATION
+M.S. in Statistics | UT Austin | 2017 - 2019

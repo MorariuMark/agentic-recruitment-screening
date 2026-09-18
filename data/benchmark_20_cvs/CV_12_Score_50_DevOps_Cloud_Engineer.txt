@@ -1,0 +1,27 @@
+TOMASZ NOWAK
+Email: tomasz.nowak@cloudinfra.net
+Phone: +48 12 987 6543
+Location: Krakow, Poland
+
+PROFESSIONAL SUMMARY
+DevOps & Infrastructure Engineer with 5 years of extensive experience deploying Docker containers and managing multi-tenant Kubernetes clusters. Basic Python scripting knowledge, but no RAG or FastAPI.
+
+CORE TECHNICAL SKILLS
+- Orchestration: Kubernetes, Docker, Helm, Terraform
+- Cloud: AWS, GCP, Azure
+- Languages: Bash, Python (basic scripting), YAML
+- CI/CD: Jenkins, GitLab CI
+
+WORK EXPERIENCE
+
+Senior DevOps Engineer | CloudGate Systems | 03/2020 - Present
+- Managed production Kubernetes clusters running 200+ containerized microservices.
+- Implemented automated CI/CD deployment pipelines using Docker and Helm.
+- Wrote Python and Bash scripts to monitor cluster health and disk usage.
+
+Systems Administrator | NetLogic Poland | 07/2018 - 02/2020
+- Maintained Linux servers and configured Docker host environments.
+- Assisted engineering teams with container orchestration.
+
+EDUCATION
+B.S. in Network Engineering | AGH University of Science and Technology | 2014 - 2018
