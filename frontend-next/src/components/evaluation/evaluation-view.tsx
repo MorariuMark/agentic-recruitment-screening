@@ -16,6 +16,7 @@ import {
   UserCheck,
   XCircle,
 } from "lucide-react";
+import { ComplianceDossierModal } from "@/components/compliance/compliance-dossier-modal";
 
 interface EvaluationViewProps {
   candidateId: string | null;
@@ -37,6 +38,7 @@ export function EvaluationView({
   const [notes, setNotes] = useState("");
   const [submittingHitl, setSubmittingHitl] = useState(false);
   const [hitlSuccess, setHitlSuccess] = useState(false);
+  const [showComplianceModal, setShowComplianceModal] = useState(false);
 
   const activeJob = jobs.find((j) => j.id === selectedJobId) || jobs[0];
 
@@ -138,6 +140,13 @@ export function EvaluationView({
 
         {evaluation && recBadge && (
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowComplianceModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors cursor-pointer mr-2 shadow-sm hover:border-indigo-400/50"
+            >
+              <FileCheck2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>EU AI Act Dossier</span>
+            </button>
             <div className="text-right">
               <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
                 Algorithmic Verdict
@@ -369,6 +378,15 @@ export function EvaluationView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* EU AI Act Annex III Compliance Modal */}
+      {evaluation && (
+        <ComplianceDossierModal
+          evaluationId={evaluation.id}
+          isOpen={showComplianceModal}
+          onClose={() => setShowComplianceModal(false)}
+        />
       )}
     </div>
   );

@@ -9,9 +9,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+from backend.services.compliance_service import ComplianceService
 
 from backend.agents.interview_agent import InterviewAgent
 from backend.agents.job_parser_agent import JobParserAgent
@@ -1297,5 +1299,77 @@ async def unload_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, An
 async def pull_ollama_model(payload: OllamaPullRequest) -> Dict[str, Any]:
     """Downloads model weights to local storage."""
     return _ollama_service.pull_model(model_name=payload.model)
+
+
+# ---------------------------------------------------------------------------
+# EU AI Act Annex III Compliance & Governance Endpoints
+# ---------------------------------------------------------------------------
+@router.get(
+    "/compliance/dossier/{evaluation_id}",
+    summary="Generate EU AI Act Annex III Compliance Dossier and SHA-256 Audit Seal",
+)
+async def get_compliance_dossier(
+    evaluation_id: UUID,
+    format: str = Query("json", pattern="^(json|markdown)$"),
+):
+    """
+    Synthesizes a legally grounded, cryptographically verified EU AI Act (Regulation (EU) 2024/1689)
+    Annex III technical documentation dossier and audit trail for High-Risk recruitment AI.
+    """
+    eval_record = await DatabaseRepository.get_evaluation(evaluation_id)
+    if not eval_record:
+        # Fallback to in-memory store if present
+        eval_mem = _EVALUATION_STORE.get(evaluation_id)
+        if not eval_mem:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Evaluation {evaluation_id} not found in database.",
+            )
+        # Attempt to persist memory evaluation
+        cand_mem = _CANDIDATE_ANONYMIZED_STORE.get(eval_mem.candidate_id) if hasattr(eval_mem, "candidate_id") else None
+        if cand_mem:
+            cand_record = await DatabaseRepository.get_candidate(cand_mem.candidate_id)
+        else:
+            cand_record = None
+        eval_record = await DatabaseRepository.get_evaluation(evaluation_id)
+
+    if not eval_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evaluation {evaluation_id} not found.",
+        )
+
+    cand_record = await DatabaseRepository.get_candidate(eval_record.candidate_id)
+    if not cand_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {eval_record.candidate_id} associated with evaluation not found.",
+        )
+
+    job_record = await DatabaseRepository.get_job(eval_record.job_id)
+    if not job_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job requisition {eval_record.job_id} associated with evaluation not found.",
+        )
+
+    dossier = ComplianceService.generate_dossier(
+        evaluation=eval_record,
+        candidate=cand_record,
+        job=job_record,
+    )
+
+    if format == "markdown":
+        md_text = ComplianceService.format_markdown_certificate(dossier)
+        return PlainTextResponse(
+            content=md_text,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'inline; filename="EU_AI_Act_Dossier_{evaluation_id}.md"',
+            },
+        )
+
+    return dossier
+
 
 

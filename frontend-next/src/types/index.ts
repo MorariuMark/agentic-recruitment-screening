@@ -189,3 +189,82 @@ export interface CandidateComparisonReport {
   comparative_analysis: string;
 }
 
+export interface ComplianceDossier {
+  compliance_standard: string;
+  risk_classification: string;
+  system_identity: {
+    name: string;
+    version: string;
+    vendor: string;
+    intended_purpose: string;
+  };
+  record_metadata: {
+    dossier_generated_at: string;
+    evaluation_id: string;
+    candidate_id: string;
+    candidate_alias: string;
+    job_requisition_id: string;
+    job_title: string;
+    department?: string | null;
+    cryptographic_sha256_seal: string;
+  };
+  article_9_risk_management: {
+    status: string;
+    risks_identified: string[];
+    mitigations_implemented: string[];
+  };
+  article_10_data_governance: {
+    status: string;
+    pii_redaction_enforced: boolean;
+    protected_attributes_scrubbed: string[];
+    demographic_data_isolation: string;
+    vector_store_cleanliness: string;
+  };
+  article_11_technical_documentation: {
+    status: string;
+    retrieval_architecture: string;
+    embedding_model: string;
+    inference_model: string;
+    inference_temperature: number;
+    structured_output_mode: string;
+    multi_tier_failover: string;
+  };
+  article_12_record_keeping: {
+    status: string;
+    immutable_logging: string;
+    audit_timestamp: string;
+    data_integrity_hash: string;
+  };
+  article_13_transparency_and_explainability: {
+    status: string;
+    scoring_formula: string;
+    overall_match_score: number;
+    must_have_score: number;
+    nice_to_have_score: number;
+    must_have_gaps_count: number;
+    citation_verification_score: number;
+    total_citations_extracted: number;
+    verbatim_verified_citations: number;
+    unmet_gaps_documented: Array<{
+      requirement_id: string;
+      gap_analysis?: string | null;
+      reasoning?: string | null;
+    }>;
+  };
+  article_14_human_oversight: {
+    human_in_the_loop_mandatory: boolean;
+    is_decision_finalized_by_human: boolean;
+    recruiter_decision: string;
+    recruiter_audit_notes: string;
+    algorithmic_recommendation: string;
+    human_override_exercised: boolean;
+    human_oversight_article: string;
+  };
+  article_15_accuracy_and_cybersecurity: {
+    status: string;
+    adversarial_prompt_injection_defense: string;
+    scanned_pdf_integrity_check: string;
+    failover_redundancy: string;
+  };
+}
+

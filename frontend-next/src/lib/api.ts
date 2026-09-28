@@ -6,6 +6,7 @@ import {
   BatchJobStatus,
   CandidateComparisonReport,
   CandidateSummary,
+  ComplianceDossier,
   InterviewPlan,
   JobDescription,
   JobRequirement,
@@ -230,6 +231,19 @@ class ApiClient {
 
   async getInterviewPlan(planId: string): Promise<InterviewPlan> {
     return this.request(`/api/v1/interview/${planId}`);
+  }
+
+  // Compliance & Governance (EU AI Act Annex III)
+  async getComplianceDossier(evaluationId: string): Promise<ComplianceDossier> {
+    return this.request(`/api/v1/compliance/dossier/${evaluationId}?format=json`);
+  }
+
+  async getComplianceDossierMarkdown(evaluationId: string): Promise<string> {
+    const res = await fetch(`${this.base}/api/v1/compliance/dossier/${evaluationId}?format=markdown`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch compliance markdown: ${res.statusText}`);
+    }
+    return res.text();
   }
 
   // Settings
