@@ -32,3 +32,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 scratch/
+
+# Node & Next.js
+node_modules/
+.next/
+out/
+
