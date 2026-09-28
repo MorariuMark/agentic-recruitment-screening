@@ -20,7 +20,7 @@ class JobRequirement(BaseModel):
     """A single atomic requirement extracted from a Job Description."""
     id: str = Field(description="Unique requirement slug, e.g. 'req_python_fastapi'")
     category: RequirementCategory = Field(description="Classification: must_have, nice_to_have, or soft_skill")
-    weight: float = Field(default=1.0, ge=0.0, le=1.0, description="Relative scoring weight between 0.0 and 1.0")
+    weight: float = Field(default=1.0, ge=0.0, le=10.0, description="Relative scoring weight multiplier between 0.0 and 10.0")
     title: str = Field(description="Short summary of the requirement")
     description: str = Field(description="Full granular expectation for this requirement")
     minimum_years_experience: Optional[int] = Field(default=None, description="Minimum years of experience required")

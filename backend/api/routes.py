@@ -138,10 +138,15 @@ def _reconstruct_interview_plan_from_db(plan_model: InterviewPlanModel) -> Inter
 class CandidateListItem(BaseModel):
     """Summary item for candidate pipeline listing."""
     id: UUID = Field(description="Candidate identifier")
+    masked_name: Optional[str] = Field(default=None, description="Anonymized name or alias")
     original_filename: Optional[str] = Field(default=None, description="Original uploaded filename")
     skills: List[str] = Field(default_factory=list, description="Extracted skills")
+    total_years_experience: Optional[float] = Field(default=None, description="Total detected years of experience")
     chunks_indexed: int = Field(default=0, description="Vector chunks count")
     created_at: Optional[str] = Field(default=None, description="ISO timestamp of upload")
+    latest_evaluation: Optional[Dict[str, Any]] = Field(default=None, description="Latest match evaluation summary if available")
+
+
 class CVUploadResponse(BaseModel):
     """Response returned upon parsing and anonymizing a candidate CV."""
     candidate_id: UUID = Field(description="Unique anonymized candidate ID")
@@ -740,19 +745,58 @@ async def get_evaluation(evaluation_id: UUID) -> MatchEvaluationResult:
     response_model=List[CandidateListItem],
     summary="List all stored candidates in database",
 )
-async def list_candidates(limit: int = 100, offset: int = 0) -> List[CandidateListItem]:
-    """Returns candidate records stored in the persistent database."""
+async def list_candidates(
+    job_id: Optional[UUID] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> List[CandidateListItem]:
+    """Returns candidate records stored in the persistent database with scoring breakdown."""
     records = await DatabaseRepository.list_candidates(limit=limit, offset=offset)
     items = []
     for r in records:
-        skills = r.raw_cv_json.get("skills", []) if r.raw_cv_json else []
+        raw = r.raw_cv_json or {}
+        anon = r.anonymized_cv_json or {}
+        skills = raw.get("skills", [])
+
+        # Demographics / alias
+        masked_name = r.full_name_redacted or anon.get("masked_name") or f"Candidate-{r.id[:8]}"
+
+        # Total experience
+        total_yrs = raw.get("total_years_experience") or anon.get("total_years_experience")
+        if total_yrs is None and raw.get("experiences"):
+            total_yrs = float(len(raw["experiences"]))
+
+        # Latest evaluation
+        latest_eval = None
+        target_evals = [e for e in (r.evaluations or []) if not job_id or e.job_id == str(job_id)]
+        if target_evals:
+            sorted_evals = sorted(
+                target_evals,
+                key=lambda x: str(getattr(x, "created_at", "")) or "",
+                reverse=True,
+            )
+            ev = sorted_evals[0]
+            latest_eval = {
+                "evaluation_id": ev.id,
+                "overall_score": ev.overall_score,
+                "must_have_score": ev.must_have_score,
+                "nice_to_have_score": ev.nice_to_have_score,
+                "recommendation": ev.recommendation,
+                "must_have_gaps_count": ev.must_have_gaps_count,
+                "citation_verification_score": ev.citation_verification_score,
+                "hitl_validated": ev.hitl_validated,
+            }
+
         items.append(
             CandidateListItem(
                 id=UUID(r.id),
+                masked_name=masked_name,
                 original_filename=r.original_filename,
                 skills=skills,
+                total_years_experience=float(total_yrs) if total_yrs is not None else None,
                 chunks_indexed=r.chunks_indexed,
                 created_at=r.created_at.isoformat() if r.created_at else None,
+                latest_evaluation=latest_eval,
             )
         )
     return items
@@ -767,6 +811,44 @@ async def list_jobs(limit: int = 50) -> List[JobDescription]:
     """Returns all job requisitions stored in the database."""
     job_records = await DatabaseRepository.list_jobs(limit=limit)
     return [_reconstruct_job_from_db(j) for j in job_records]
+
+
+@router.post(
+    "/jobs",
+    response_model=JobDescription,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create or update a job requisition with atomic requirement decomposition",
+)
+async def create_or_update_job(job: JobDescription) -> JobDescription:
+    """Persists a job requisition and its atomic criteria directly."""
+    await DatabaseRepository.save_job(job)
+    return job
+
+
+class RequirementUpdateRequest(BaseModel):
+    requirements: List[JobRequirement]
+
+
+@router.put(
+    "/jobs/{job_id}/requirements",
+    response_model=JobDescription,
+    summary="Update atomic requirement weights and categories for a job requisition",
+)
+async def update_job_requirements(
+    job_id: UUID,
+    payload: RequirementUpdateRequest,
+) -> JobDescription:
+    """Updates requirement criteria weights and categories, saving changes to database."""
+    job_record = await DatabaseRepository.get_job(job_id)
+    if not job_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job requisition {job_id} not found.",
+        )
+    job_desc = _reconstruct_job_from_db(job_record)
+    job_desc.requirements = payload.requirements
+    await DatabaseRepository.save_job(job_desc)
+    return job_desc
 
 
 @router.get(

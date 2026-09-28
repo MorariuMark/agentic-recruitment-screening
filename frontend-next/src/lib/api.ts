@@ -7,6 +7,7 @@ import {
   CandidateSummary,
   InterviewPlan,
   JobDescription,
+  JobRequirement,
   LLMSettings,
   MatchEvaluationResult,
 } from "@/types";
@@ -75,6 +76,20 @@ class ApiClient {
 
   async getJobEvaluations(jobId: string): Promise<MatchEvaluationResult[]> {
     return this.request(`/api/v1/jobs/${jobId}/evaluations`);
+  }
+
+  async createJob(job: JobDescription): Promise<JobDescription> {
+    return this.request("/api/v1/jobs", {
+      method: "POST",
+      body: JSON.stringify(job),
+    });
+  }
+
+  async updateJobRequirements(jobId: string, requirements: JobRequirement[]): Promise<JobDescription> {
+    return this.request(`/api/v1/jobs/${jobId}/requirements`, {
+      method: "PUT",
+      body: JSON.stringify({ requirements }),
+    });
   }
 
   // Candidates & Batch
