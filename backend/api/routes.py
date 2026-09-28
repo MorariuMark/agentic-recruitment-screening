@@ -9,7 +9,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from backend.agents.interview_agent import InterviewAgent
@@ -18,6 +18,7 @@ from backend.agents.llm_factory import create_llm_client
 from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
+from backend.services.batch_processor import BatchProcessorService
 from backend.db.models import (
     CandidateModel,
     InterviewPlanModel,
@@ -56,6 +57,12 @@ _scoring_engine = ScoringEngine()
 _matching_agent = MatchingAgent(vector_store=_vector_store, scoring_engine=_scoring_engine)
 _interview_agent = InterviewAgent()
 _ollama_service = OllamaService()
+_batch_processor = BatchProcessorService(
+    parser_agent=_parser_agent,
+    vector_store=_vector_store,
+    scoring_engine=_scoring_engine,
+    matching_agent=_matching_agent,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +146,28 @@ class CVUploadResponse(BaseModel):
     parsed_cv: ParsedCV = Field(description="Structured CV representation")
     anonymized_candidate: AnonymizedCandidate = Field(description="PII-scrubbed candidate profile")
     chunks_indexed: int = Field(description="Count of semantic chunks stored in ChromaDB")
+
+
+class BatchUploadResponse(BaseModel):
+    """Response returned upon dispatching asynchronous batch screening."""
+    batch_id: UUID = Field(description="Unique batch task identifier")
+    total_files: int = Field(description="Number of CV documents received")
+    status: str = Field(default="PROCESSING", description="Current status of the batch job")
+    message: str = Field(description="Confirmation message")
+
+
+class BatchJobStatusResponse(BaseModel):
+    """Current progress and results of a batch screening job."""
+    batch_id: UUID = Field(description="Unique batch task identifier")
+    job_id: Optional[UUID] = Field(default=None, description="Associated job requisition ID if specified")
+    status: str = Field(description="Batch status: QUEUED, PROCESSING, COMPLETED, PARTIAL, or FAILED")
+    total_files: int = Field(description="Total files in batch")
+    processed_files: int = Field(description="Count of successfully processed files")
+    failed_files: int = Field(description="Count of failed files")
+    progress_percentage: float = Field(description="Calculated progress from 0.0 to 100.0")
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="Array of per-candidate processing results")
+    created_at: Optional[str] = Field(default=None)
+    updated_at: Optional[str] = Field(default=None)
 
 
 class MatchEvaluateRequest(BaseModel):
@@ -357,6 +386,92 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing candidate CV: {str(e)}",
         )
+
+
+@router.post(
+    "/cv/batch-upload",
+    response_model=BatchUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Upload multiple candidate CVs for asynchronous batch parsing and screening",
+)
+async def batch_upload_cvs(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    job_id: Optional[UUID] = Form(None),
+) -> BatchUploadResponse:
+    """
+    Accepts multiple CV files, stores their payloads, initializes a tracked
+    batch job in the database, and dispatches background processing and semantic evaluation.
+    """
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded.")
+
+    file_payloads: List[Tuple[str, bytes]] = []
+    for f in files:
+        content = await f.read()
+        if content and f.filename:
+            file_payloads.append((f.filename, content))
+
+    if not file_payloads:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All uploaded files were empty.")
+
+    batch_id = uuid4()
+
+    # Initialize batch record in database
+    await DatabaseRepository.create_batch_job(
+        total_files=len(file_payloads),
+        job_id=job_id,
+        batch_id=batch_id,
+    )
+
+    # Dispatch asynchronous background task
+    background_tasks.add_task(
+        _batch_processor.execute_batch,
+        batch_id=batch_id,
+        file_payloads=file_payloads,
+        job_id=job_id,
+    )
+
+    return BatchUploadResponse(
+        batch_id=batch_id,
+        total_files=len(file_payloads),
+        status="PROCESSING",
+        message=f"Batch of {len(file_payloads)} resumes accepted and queued for processing.",
+    )
+
+
+@router.get(
+    "/cv/batch/{batch_id}",
+    response_model=BatchJobStatusResponse,
+    summary="Poll status and results of an asynchronous batch screening job",
+)
+async def get_batch_job_status(batch_id: UUID) -> BatchJobStatusResponse:
+    """
+    Fetches live progress, completion percentage, and individual candidate evaluation
+    results for the specified batch job.
+    """
+    record = await DatabaseRepository.get_batch_job(batch_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Batch job {batch_id} not found.",
+        )
+
+    processed_or_failed = record.processed_files + record.failed_files
+    progress = round((processed_or_failed / max(record.total_files, 1)) * 100.0, 1)
+
+    return BatchJobStatusResponse(
+        batch_id=UUID(record.id),
+        job_id=UUID(record.job_id) if record.job_id else None,
+        status=record.status,
+        total_files=record.total_files,
+        processed_files=record.processed_files,
+        failed_files=record.failed_files,
+        progress_percentage=min(progress, 100.0),
+        results=record.results_json or [],
+        created_at=record.created_at.isoformat() if record.created_at else None,
+        updated_at=record.updated_at.isoformat() if record.updated_at else None,
+    )
 
 
 @router.get(

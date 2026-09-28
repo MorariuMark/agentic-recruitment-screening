@@ -5,7 +5,7 @@ Job Requisitions, Semantic Evaluations, Interview Plans, and Audit Logs.
 """
 
 from typing import Any, Dict, List, Optional, Union
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from backend.db.models import (
     JobRequirementModel,
     JobRequisitionModel,
     MatchEvaluationModel,
+    BatchJobModel,
 )
 from backend.db.session import async_session_scope
 from backend.schemas.cv import AnonymizedCandidate, ParsedCV
@@ -408,6 +409,88 @@ class DatabaseRepository:
             await s.commit()
             await s.refresh(log_entry)
             return log_entry
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
+    async def create_batch_job(
+        total_files: int,
+        job_id: Optional[Union[UUID, str]] = None,
+        batch_id: Optional[Union[UUID, str]] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> BatchJobModel:
+        """Initializes a new batch screening job record."""
+        async def _op(s: AsyncSession) -> BatchJobModel:
+            bid_str = str(batch_id) if batch_id else str(uuid4())
+            record = BatchJobModel(
+                id=bid_str,
+                job_id=str(job_id) if job_id else None,
+                status="PROCESSING",
+                total_files=total_files,
+                processed_files=0,
+                failed_files=0,
+                results_json=[],
+            )
+            s.add(record)
+            await s.commit()
+            await s.refresh(record)
+            return record
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
+    async def get_batch_job(
+        batch_id: Union[UUID, str],
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[BatchJobModel]:
+        """Retrieves a batch screening job by ID."""
+        bid_str = str(batch_id)
+
+        async def _op(s: AsyncSession) -> Optional[BatchJobModel]:
+            return await s.get(BatchJobModel, bid_str)
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
+    async def update_batch_progress(
+        batch_id: Union[UUID, str],
+        candidate_result: Dict[str, Any],
+        is_success: bool = True,
+        is_completed: bool = False,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[BatchJobModel]:
+        """Appends candidate result and updates processed count on the batch job."""
+        bid_str = str(batch_id)
+
+        async def _op(s: AsyncSession) -> Optional[BatchJobModel]:
+            record = await s.get(BatchJobModel, bid_str)
+            if not record:
+                return None
+
+            curr_results = list(record.results_json or [])
+            curr_results.append(candidate_result)
+            record.results_json = curr_results
+
+            if is_success:
+                record.processed_files += 1
+            else:
+                record.failed_files += 1
+
+            if is_completed or (record.processed_files + record.failed_files >= record.total_files):
+                record.status = "COMPLETED" if record.failed_files == 0 else ("PARTIAL" if record.processed_files > 0 else "FAILED")
+
+            await s.commit()
+            await s.refresh(record)
+            return record
 
         if session:
             return await _op(session)

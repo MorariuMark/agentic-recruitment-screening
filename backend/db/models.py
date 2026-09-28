@@ -196,3 +196,23 @@ class AuditLogModel(Base):
     details_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BatchJobModel(Base):
+    """Tracks asynchronous multi-file CV screening batches."""
+    __tablename__ = "batch_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("job_requisitions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(50), default="QUEUED")  # QUEUED, PROCESSING, COMPLETED, FAILED
+    total_files: Mapped[int] = mapped_column(Integer, default=0)
+    processed_files: Mapped[int] = mapped_column(Integer, default=0)
+    failed_files: Mapped[int] = mapped_column(Integer, default=0)
+    results_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

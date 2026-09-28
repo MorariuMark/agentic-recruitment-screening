@@ -11,6 +11,7 @@ from backend.db.models import (
     MatchEvaluationModel,
     InterviewPlanModel,
     AuditLogModel,
+    BatchJobModel,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "MatchEvaluationModel",
     "InterviewPlanModel",
     "AuditLogModel",
+    "BatchJobModel",
 ]
