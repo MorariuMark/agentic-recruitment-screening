@@ -19,7 +19,7 @@ from backend.db.models import (
     JobRequisitionModel,
     MatchEvaluationModel,
 )
-from backend.db.session import async_session_factory
+from backend.db.session import async_session_scope
 from backend.schemas.cv import AnonymizedCandidate, ParsedCV
 from backend.schemas.interview import InterviewPlan
 from backend.schemas.job import JobDescription, JobRequirement
@@ -72,7 +72,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -88,7 +88,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -105,7 +105,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -170,7 +170,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -188,7 +188,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -204,7 +204,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -256,7 +256,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -272,7 +272,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -290,7 +290,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -330,7 +330,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -369,7 +369,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -385,7 +385,7 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)
 
     @staticmethod
@@ -411,5 +411,5 @@ class DatabaseRepository:
 
         if session:
             return await _op(session)
-        async with async_session_factory() as s:
+        async with async_session_scope() as s:
             return await _op(s)

@@ -4,8 +4,9 @@ FastAPI REST routes for CV ingestion, JD evaluation, semantic matching,
 Human-in-the-Loop (HITL) recruiter validation, and tailored interview guide generation.
 """
 
+import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -17,15 +18,24 @@ from backend.agents.llm_factory import create_llm_client
 from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
+from backend.db.models import (
+    CandidateModel,
+    InterviewPlanModel,
+    JobRequisitionModel,
+    MatchEvaluationModel,
+)
+from backend.db.repository import DatabaseRepository
 from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
-from backend.schemas.interview import InterviewPlan
-from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport
-from backend.schemas.match import MatchEvaluationResult, Recommendation
+from backend.schemas.interview import InterviewPlan, InterviewQuestion
+from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport, JobRequirement, RequirementCategory
+from backend.schemas.match import MatchEvaluationResult, Recommendation, RequirementMatch
 from backend.schemas.models_catalog import CATALOG_PROVIDERS, get_model_info, get_providers_catalog
 from backend.services.audit_exporter import AuditExporter
 from backend.services.ollama_service import OllamaService
 from backend.services.scoring_engine import ScoringEngine
 from backend.services.vector_store import VectorStoreService
+
+logger = logging.getLogger("recruitment_screening.api")
 
 router = APIRouter(prefix="/api/v1", tags=["Recruitment Screening"])
 
@@ -49,8 +59,80 @@ _ollama_service = OllamaService()
 
 
 # ---------------------------------------------------------------------------
+# Database Object Reconstruction Helpers
+# ---------------------------------------------------------------------------
+def _reconstruct_candidate_from_db(cand_model: CandidateModel) -> Tuple[ParsedCV, AnonymizedCandidate, int]:
+    parsed = ParsedCV.model_validate(cand_model.raw_cv_json)
+    anonymized = AnonymizedCandidate.model_validate(cand_model.anonymized_cv_json)
+    chunks_count = cand_model.chunks_indexed
+    return parsed, anonymized, chunks_count
+
+
+def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEvaluationResult:
+    matches = [RequirementMatch.model_validate(m) for m in eval_model.matches_json]
+    return MatchEvaluationResult(
+        id=UUID(eval_model.id),
+        candidate_id=UUID(eval_model.candidate_id),
+        job_id=UUID(eval_model.job_id),
+        overall_score=eval_model.overall_score,
+        must_have_score=eval_model.must_have_score,
+        nice_to_have_score=eval_model.nice_to_have_score,
+        must_have_gaps_count=eval_model.must_have_gaps_count,
+        recommendation=Recommendation(eval_model.recommendation),
+        hitl_validated=eval_model.hitl_validated,
+        recruiter_notes=eval_model.recruiter_notes,
+        citation_verification_score=eval_model.citation_verification_score,
+        requirement_matches=matches,
+    )
+
+
+def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
+    reqs = [
+        JobRequirement(
+            id=r.id,
+            title=r.title,
+            category=RequirementCategory(r.category),
+            weight=r.weight,
+            description=r.description,
+            minimum_years_experience=r.minimum_years_experience,
+        )
+        for r in (job_model.requirements or [])
+    ]
+    return JobDescription(
+        id=UUID(job_model.id),
+        title=job_model.title,
+        department=job_model.department,
+        seniority_level=job_model.seniority_level,
+        location=job_model.location,
+        work_model=job_model.work_model,
+        employment_type=job_model.employment_type,
+        requirements=reqs,
+        custom_sections=job_model.custom_sections_json or [],
+        unused_details=job_model.unused_details_json or [],
+    )
+
+
+def _reconstruct_interview_plan_from_db(plan_model: InterviewPlanModel) -> InterviewPlan:
+    questions = [InterviewQuestion.model_validate(q) for q in plan_model.questions_json]
+    return InterviewPlan(
+        id=UUID(plan_model.id),
+        candidate_id=UUID(plan_model.candidate_id),
+        job_id=UUID(plan_model.job_id),
+        total_estimated_minutes=plan_model.total_estimated_minutes,
+        questions=questions,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Request / Response Schemas
 # ---------------------------------------------------------------------------
+class CandidateListItem(BaseModel):
+    """Summary item for candidate pipeline listing."""
+    id: UUID = Field(description="Candidate identifier")
+    original_filename: Optional[str] = Field(default=None, description="Original uploaded filename")
+    skills: List[str] = Field(default_factory=list, description="Extracted skills")
+    chunks_indexed: int = Field(default=0, description="Vector chunks count")
+    created_at: Optional[str] = Field(default=None, description="ISO timestamp of upload")
 class CVUploadResponse(BaseModel):
     """Response returned upon parsing and anonymizing a candidate CV."""
     candidate_id: UUID = Field(description="Unique anonymized candidate ID")
@@ -150,13 +232,20 @@ class OllamaPullRequest(BaseModel):
     response_model=JobExtractionResult,
     summary="Fetch, parse, and decompose a Job Description from a web URL",
 )
-def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
+async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     """
     Retrieves the HTML content of the job posting URL, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
     try:
         result = _job_parser_agent.parse_job_url(request.url)
+        try:
+            await DatabaseRepository.save_job(
+                job=result.job_description,
+                source_url=request.url,
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist job to database: {db_err}")
         return result
     except ValueError as e:
         raise HTTPException(
@@ -175,13 +264,20 @@ def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     response_model=JobExtractionResult,
     summary="Parse and decompose raw pasted Job Description text",
 )
-def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
+async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     """
     Parses raw pasted job posting text, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
     try:
         result = _job_parser_agent.parse_job_text(request.text)
+        try:
+            await DatabaseRepository.save_job(
+                job=result.job_description,
+                raw_text=request.text,
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist job to database: {db_err}")
         return result
     except ValueError as e:
         raise HTTPException(
@@ -193,6 +289,7 @@ def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error parsing job description text: {str(e)}",
         )
+
 
 @router.post(
     "/cv/upload",
@@ -220,7 +317,18 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
         # 2. Index candidate chunks into ChromaDB for asymmetric RAG matching
         chunks_indexed = _vector_store.index_candidate(anonymized_candidate)
 
-        # 3. Cache instances in memory
+        # 3. Persist to relational database
+        try:
+            await DatabaseRepository.save_candidate(
+                parsed_cv=parsed_cv,
+                anonymized_candidate=anonymized_candidate,
+                chunks_indexed=chunks_indexed,
+                filename=file.filename,
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist candidate to database: {db_err}")
+
+        # 4. Cache instances in memory for fast lookup
         cid = anonymized_candidate.candidate_id
         _CANDIDATE_RAW_STORE[cid] = parsed_cv
         _CANDIDATE_ANONYMIZED_STORE[cid] = anonymized_candidate
@@ -263,12 +371,22 @@ async def export_cv(candidate_id: UUID) -> CVTaggedExport:
     """
     anonymized = _CANDIDATE_ANONYMIZED_STORE.get(candidate_id)
     parsed = _CANDIDATE_RAW_STORE.get(candidate_id)
+    chunks_count = _CANDIDATE_CHUNKS_STORE.get(candidate_id, 0)
+
+    # Fallback to database if not resident in memory
+    if not anonymized or not parsed:
+        cand_record = await DatabaseRepository.get_candidate(candidate_id)
+        if cand_record:
+            parsed, anonymized, chunks_count = _reconstruct_candidate_from_db(cand_record)
+            _CANDIDATE_RAW_STORE[candidate_id] = parsed
+            _CANDIDATE_ANONYMIZED_STORE[candidate_id] = anonymized
+            _CANDIDATE_CHUNKS_STORE[candidate_id] = chunks_count
+
     if not anonymized or not parsed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Candidate {candidate_id} not found in session cache.",
+            detail=f"Candidate {candidate_id} not found in database or session cache.",
         )
-    chunks_count = _CANDIDATE_CHUNKS_STORE.get(candidate_id, 0)
     return AuditExporter.build_cv_tagged_export(
         parsed_cv=parsed,
         anonymized_candidate=anonymized,
@@ -301,6 +419,16 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
     the weighted score (75% must-have / 25% nice-to-have), and assigns a recommendation tier.
     """
     candidate = _CANDIDATE_ANONYMIZED_STORE.get(request.candidate_id)
+
+    # Fallback to database if not in memory
+    if not candidate:
+        cand_record = await DatabaseRepository.get_candidate(request.candidate_id)
+        if cand_record:
+            parsed, candidate, chunks_count = _reconstruct_candidate_from_db(cand_record)
+            _CANDIDATE_RAW_STORE[request.candidate_id] = parsed
+            _CANDIDATE_ANONYMIZED_STORE[request.candidate_id] = candidate
+            _CANDIDATE_CHUNKS_STORE[request.candidate_id] = chunks_count
+
     if not candidate:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -313,6 +441,17 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
             candidate=candidate,
             job_description=request.job_description,
         )
+
+        # Persist job and evaluation report to database
+        try:
+            await DatabaseRepository.save_job(request.job_description)
+            await DatabaseRepository.save_evaluation(
+                eval_result=result,
+                candidate_id=request.candidate_id,
+                job_id=request.job_description.id,
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist evaluation to database: {db_err}")
 
         # Cache evaluation result
         _EVALUATION_STORE[result.id] = result
@@ -336,6 +475,14 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
     proceeding to interview generation.
     """
     evaluation = _EVALUATION_STORE.get(request.evaluation_id)
+
+    # Fallback to database
+    if not evaluation:
+        eval_record = await DatabaseRepository.get_evaluation(request.evaluation_id)
+        if eval_record:
+            evaluation = _reconstruct_evaluation_from_db(eval_record)
+            _EVALUATION_STORE[request.evaluation_id] = evaluation
+
     if not evaluation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -346,6 +493,15 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
     evaluation.recommendation = request.recruiter_decision
     evaluation.recruiter_notes = request.recruiter_notes
     evaluation.hitl_validated = True
+
+    try:
+        await DatabaseRepository.update_hitl_validation(
+            evaluation_id=request.evaluation_id,
+            decision=request.recruiter_decision.value if hasattr(request.recruiter_decision, "value") else str(request.recruiter_decision),
+            notes=request.recruiter_notes,
+        )
+    except Exception as db_err:
+        logger.warning(f"Failed to persist HITL validation to database: {db_err}")
 
     _EVALUATION_STORE[request.evaluation_id] = evaluation
     return evaluation
@@ -363,12 +519,24 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
     """
     candidate = _CANDIDATE_ANONYMIZED_STORE.get(request.candidate_id)
     if not candidate:
+        cand_record = await DatabaseRepository.get_candidate(request.candidate_id)
+        if cand_record:
+            _, candidate, _ = _reconstruct_candidate_from_db(cand_record)
+            _CANDIDATE_ANONYMIZED_STORE[request.candidate_id] = candidate
+
+    if not candidate:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Candidate {request.candidate_id} not found.",
         )
 
     evaluation = _EVALUATION_STORE.get(request.evaluation_id)
+    if not evaluation:
+        eval_record = await DatabaseRepository.get_evaluation(request.evaluation_id)
+        if eval_record:
+            evaluation = _reconstruct_evaluation_from_db(eval_record)
+            _EVALUATION_STORE[request.evaluation_id] = evaluation
+
     if not evaluation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -382,6 +550,14 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
             evaluation_result=evaluation,
             target_minutes=request.target_duration_minutes,
         )
+
+        try:
+            await DatabaseRepository.save_interview_plan(
+                plan=plan,
+                evaluation_id=request.evaluation_id,
+            )
+        except Exception as db_err:
+            logger.warning(f"Failed to persist interview plan to database: {db_err}")
 
         _INTERVIEW_PLAN_STORE[plan.id] = plan
         return plan
@@ -398,11 +574,84 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
     summary="Retrieve an existing evaluation report by ID",
 )
 async def get_evaluation(evaluation_id: UUID) -> MatchEvaluationResult:
-    """Fetches a cached evaluation report."""
+    """Fetches a cached or persisted evaluation report."""
     evaluation = _EVALUATION_STORE.get(evaluation_id)
+    if not evaluation:
+        eval_record = await DatabaseRepository.get_evaluation(evaluation_id)
+        if eval_record:
+            evaluation = _reconstruct_evaluation_from_db(eval_record)
+            _EVALUATION_STORE[evaluation_id] = evaluation
+
     if not evaluation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evaluation not found.")
     return evaluation
+
+
+# ---------------------------------------------------------------------------
+# Database Listing & Query Endpoints
+# ---------------------------------------------------------------------------
+@router.get(
+    "/candidates",
+    response_model=List[CandidateListItem],
+    summary="List all stored candidates in database",
+)
+async def list_candidates(limit: int = 100, offset: int = 0) -> List[CandidateListItem]:
+    """Returns candidate records stored in the persistent database."""
+    records = await DatabaseRepository.list_candidates(limit=limit, offset=offset)
+    items = []
+    for r in records:
+        skills = r.raw_cv_json.get("skills", []) if r.raw_cv_json else []
+        items.append(
+            CandidateListItem(
+                id=UUID(r.id),
+                original_filename=r.original_filename,
+                skills=skills,
+                chunks_indexed=r.chunks_indexed,
+                created_at=r.created_at.isoformat() if r.created_at else None,
+            )
+        )
+    return items
+
+
+@router.get(
+    "/jobs",
+    response_model=List[JobDescription],
+    summary="List all stored job requisitions in database",
+)
+async def list_jobs(limit: int = 50) -> List[JobDescription]:
+    """Returns all job requisitions stored in the database."""
+    job_records = await DatabaseRepository.list_jobs(limit=limit)
+    return [_reconstruct_job_from_db(j) for j in job_records]
+
+
+@router.get(
+    "/jobs/{job_id}/evaluations",
+    response_model=List[MatchEvaluationResult],
+    summary="List all candidate evaluations for a specific job",
+)
+async def list_job_evaluations(job_id: UUID) -> List[MatchEvaluationResult]:
+    """Returns all candidate evaluations computed for the specified job requisition."""
+    eval_records = await DatabaseRepository.list_evaluations_for_job(job_id)
+    return [_reconstruct_evaluation_from_db(e) for e in eval_records]
+
+
+@router.get(
+    "/interview/{plan_id}",
+    response_model=InterviewPlan,
+    summary="Retrieve an interview plan by ID from database",
+)
+async def get_interview_plan(plan_id: UUID) -> InterviewPlan:
+    """Returns an interview plan by primary ID."""
+    plan = _INTERVIEW_PLAN_STORE.get(plan_id)
+    if not plan:
+        plan_record = await DatabaseRepository.get_interview_plan(plan_id)
+        if plan_record:
+            plan = _reconstruct_interview_plan_from_db(plan_record)
+            _INTERVIEW_PLAN_STORE[plan_id] = plan
+
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview plan not found.")
+    return plan
 
 
 # ---------------------------------------------------------------------------

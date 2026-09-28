@@ -20,8 +20,16 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan manager: sets up observability on startup, cleans up on shutdown."""
+    """Application lifespan manager: sets up observability and database on startup, cleans up on shutdown."""
     logger.info("Initializing Agentic Recruitment Screening Backend...")
+
+    # Initialize relational database persistence
+    try:
+        from backend.db.session import init_db
+        await init_db()
+        logger.info("Relational database initialized.")
+    except Exception as db_err:
+        logger.error(f"Failed to initialize database: {db_err}")
 
     # Optional Arize Phoenix OpenTelemetry tracing setup (fast socket check to avoid hanging if offline)
     if settings.phoenix_collector_endpoint:

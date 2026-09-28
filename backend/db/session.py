@@ -4,6 +4,7 @@ Asynchronous database engine, session factory, and lifecycle initializer.
 Supports both local SQLite (sqlite+aiosqlite) and cloud PostgreSQL (postgresql+asyncpg).
 """
 
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 from typing import AsyncGenerator
@@ -65,6 +66,20 @@ def async_session_factory() -> async_sessionmaker[AsyncSession]:
             autoflush=False,
         )
     return _session_factory
+
+
+@asynccontextmanager
+async def async_session_scope() -> AsyncGenerator[AsyncSession, None]:
+    """Context manager for obtaining an async database session outside FastAPI dependency injection."""
+    factory = async_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 async def init_db() -> None:
