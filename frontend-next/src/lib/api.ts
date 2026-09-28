@@ -15,7 +15,10 @@ import {
   MatchEvaluationResult,
 } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE =
+  typeof window !== "undefined"
+    ? (process.env.NEXT_PUBLIC_API_URL || "")
+    : (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000");
 
 class ApiClient {
   private base: string;
@@ -30,32 +33,47 @@ class ApiClient {
   ): Promise<T> {
     const url = `${this.base}${endpoint}`;
     const headers = new Headers(options.headers || {});
-    if (!(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
 
-    const res = await fetch(url, {
-      ...options,
-      headers,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const signal = options.signal || controller.signal;
 
-    if (!res.ok) {
-      let errorDetail = `HTTP ${res.status} ${res.statusText}`;
-      try {
-        const errorJson = await res.json();
-        errorDetail = errorJson.detail || errorDetail;
-      } catch {
-        // fallback to status text
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal,
+        headers,
+      });
+
+      if (!res.ok) {
+        let errorDetail = `HTTP ${res.status} ${res.statusText}`;
+        try {
+          const errorJson = await res.json();
+          errorDetail = errorJson.detail || errorDetail;
+        } catch {
+          // fallback to status text
+        }
+        throw new Error(errorDetail);
       }
-      throw new Error(errorDetail);
-    }
 
-    return res.json();
+      return res.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   // Health
   async getHealth(): Promise<{ status: string; active_llm_provider: string; active_model: string }> {
-    return this.request("/health");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    try {
+      return await this.request("/health", { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   // Requisitions & Jobs
