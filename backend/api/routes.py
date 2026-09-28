@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.agents.interview_agent import InterviewAgent
@@ -19,6 +20,7 @@ from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
 from backend.services.batch_processor import BatchProcessorService
+from backend.services.event_stream import event_broadcaster
 from backend.db.models import (
     CandidateModel,
     InterviewPlanModel,
@@ -471,6 +473,34 @@ async def get_batch_job_status(batch_id: UUID) -> BatchJobStatusResponse:
         results=record.results_json or [],
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
+    )
+
+
+@router.get(
+    "/cv/batch/{batch_id}/stream",
+    summary="Real-time Server-Sent Events (SSE) stream for batch screening progress",
+    response_class=StreamingResponse,
+)
+async def stream_batch_events(batch_id: UUID) -> StreamingResponse:
+    """
+    Subscribes to live Server-Sent Events (SSE) for the specified batch job.
+    Streams batch start, per-file processing, per-file completion, and batch completion.
+    """
+    record = await DatabaseRepository.get_batch_job(batch_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Batch job {batch_id} not found.",
+        )
+
+    return StreamingResponse(
+        event_broadcaster.subscribe_batch_events(batch_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
