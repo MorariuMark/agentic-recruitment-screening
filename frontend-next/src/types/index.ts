@@ -47,6 +47,7 @@ export interface CandidateSummary {
   id: string;
   candidate_id?: string;
   masked_name: string;
+  original_filename?: string | null;
   email?: string;
   skills: string[];
   total_years_experience?: number | null;

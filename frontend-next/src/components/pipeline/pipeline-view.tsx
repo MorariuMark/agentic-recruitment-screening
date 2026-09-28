@@ -298,6 +298,13 @@ export function PipelineView({
                     ? getRecommendationBadge(evalData.recommendation)
                     : { label: "Unevaluated", className: "bg-slate-800 text-slate-400" };
 
+                  const displayName =
+                    candidate.masked_name && candidate.masked_name !== "[CANDIDATE_NAME]"
+                      ? candidate.masked_name
+                      : `Candidate-${candidate.id.slice(0, 6).toUpperCase()}${
+                          candidate.original_filename ? ` (${candidate.original_filename})` : ""
+                        }`;
+
                   return (
                     <tr
                       key={candidate.id}
@@ -307,7 +314,7 @@ export function PipelineView({
                       {/* Masked Profile */}
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
-                          {candidate.masked_name}
+                          {displayName}
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono mt-0.5">
                           ID: {candidate.id.slice(0, 8)}... • {candidate.chunks_indexed} vectors

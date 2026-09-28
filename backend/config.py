@@ -106,6 +106,12 @@ class Settings(BaseSettings):
         description="Async database connection string (e.g. postgresql+asyncpg://... or sqlite+aiosqlite:///...)",
     )
 
+    # Observability (Arize Phoenix)
+    phoenix_collector_endpoint: Optional[str] = Field(
+        default=None,
+        description="Arize Phoenix OpenTelemetry collector endpoint (e.g. http://127.0.0.1:6006/v1/traces)",
+    )
+
     @property
     def async_database_url(self) -> str:
         """Normalizes postgres:// and postgresql:// to postgresql+asyncpg:// for async SQLAlchemy."""
