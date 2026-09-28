@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { JobDescription, MatchEvaluationResult, Recommendation } from "@/types";
+import { useState, useEffect, useMemo } from "react";
+import { CandidateDetail, JobDescription, MatchEvaluationResult, Recommendation } from "@/types";
 import { api } from "@/lib/api";
 import { getRecommendationBadge } from "@/lib/utils";
 import {
@@ -9,7 +9,9 @@ import {
   Check,
   CheckCircle2,
   FileCheck2,
+  FileText,
   HelpCircle,
+  Highlighter,
   Loader2,
   Quote,
   ShieldCheck,
@@ -17,6 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ComplianceDossierModal } from "@/components/compliance/compliance-dossier-modal";
+import { DocumentViewer } from "@/components/evaluation/document-viewer";
 
 interface EvaluationViewProps {
   candidateId: string | null;
@@ -32,6 +35,7 @@ export function EvaluationView({
   onBackToPipeline,
 }: EvaluationViewProps) {
   const [evaluation, setEvaluation] = useState<MatchEvaluationResult | null>(null);
+  const [candidateDetail, setCandidateDetail] = useState<CandidateDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [decision, setDecision] = useState<"strong_match" | "borderline" | "reject">("strong_match");
@@ -39,6 +43,8 @@ export function EvaluationView({
   const [submittingHitl, setSubmittingHitl] = useState(false);
   const [hitlSuccess, setHitlSuccess] = useState(false);
   const [showComplianceModal, setShowComplianceModal] = useState(false);
+  const [showDocViewer, setShowDocViewer] = useState(true);
+  const [activeCitation, setActiveCitation] = useState<string | null>(null);
 
   const activeJob = jobs.find((j) => j.id === selectedJobId) || jobs[0];
 
@@ -47,14 +53,20 @@ export function EvaluationView({
 
     try {
       setLoading(true);
-      // Try to find if candidate was already evaluated for this job
-      const evals = await api.getJobEvaluations(activeJob.id);
+      const [evals, cand] = await Promise.all([
+        api.getJobEvaluations(activeJob.id),
+        api.getCandidate(candidateId).catch(() => null),
+      ]);
+      setCandidateDetail(cand);
+
       const existing = evals.find((e) => e.candidate_id === candidateId);
 
       if (existing) {
         setEvaluation(existing);
         setDecision(existing.recommendation);
         setNotes(existing.recruiter_notes || "");
+        const firstQuote = existing.requirement_matches.find((rm) => rm.citations?.length > 0)?.citations[0]?.quote;
+        if (firstQuote) setActiveCitation(firstQuote);
       } else {
         setEvaluation(null);
       }
@@ -73,15 +85,26 @@ export function EvaluationView({
     if (!candidateId || !activeJob) return;
     try {
       setEvaluating(true);
-      const result = await api.evaluateCandidate(candidateId, activeJob);
+      const [result, cand] = await Promise.all([
+        api.evaluateCandidate(candidateId, activeJob),
+        api.getCandidate(candidateId).catch(() => null),
+      ]);
       setEvaluation(result);
+      setCandidateDetail(cand);
       setDecision(result.recommendation);
+      const firstQuote = result.requirement_matches.find((rm) => rm.citations?.length > 0)?.citations[0]?.quote;
+      if (firstQuote) setActiveCitation(firstQuote);
     } catch (err: any) {
       alert(`Evaluation failed: ${err.message}`);
     } finally {
       setEvaluating(false);
     }
   };
+
+  const allCitations = useMemo(() => {
+    if (!evaluation) return [];
+    return evaluation.requirement_matches.flatMap((rm) => rm.citations || []);
+  }, [evaluation]);
 
   const handleSubmitHITL = async () => {
     if (!evaluation) return;
@@ -102,6 +125,93 @@ export function EvaluationView({
       setSubmittingHitl(false);
     }
   };
+
+  const renderHitlCard = () => (
+    <div className="p-5 rounded-xl border border-blue-500/30 bg-slate-900/60 space-y-4 shadow-xl">
+      <div className="flex items-center gap-2 text-blue-400 font-semibold text-xs uppercase tracking-wider">
+        <UserCheck className="w-4 h-4" />
+        <span>Human-in-the-Loop Gate</span>
+      </div>
+
+      <p className="text-xs text-slate-400">
+        EU AI Act Article 14 mandate: Recruiter must confirm or override algorithmic recommendation with auditable notes.
+      </p>
+
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-slate-300">
+          Recruiter Final Decision
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => setDecision("strong_match")}
+            className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
+              decision === "strong_match"
+                ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-semibold"
+                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            Strong Match
+          </button>
+          <button
+            type="button"
+            onClick={() => setDecision("borderline")}
+            className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
+              decision === "borderline"
+                ? "bg-amber-500/20 border-amber-500 text-amber-300 font-semibold"
+                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            Borderline
+          </button>
+          <button
+            type="button"
+            onClick={() => setDecision("reject")}
+            className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
+              decision === "reject"
+                ? "bg-rose-500/20 border-rose-500 text-rose-300 font-semibold"
+                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-slate-300">
+          Auditable Justification Notes <span className="text-rose-400">*</span>
+        </label>
+        <textarea
+          rows={4}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Record rationale for agreeing with or overriding the model evaluation..."
+          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500 leading-relaxed"
+        />
+      </div>
+
+      <button
+        onClick={handleSubmitHITL}
+        disabled={submittingHitl || !notes.trim()}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
+      >
+        {submittingHitl ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Check className="w-3.5 h-3.5" />
+        )}
+        <span>Record Recruiter Sign-Off</span>
+      </button>
+
+      {hitlSuccess && (
+        <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs text-center flex items-center justify-center gap-1.5 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>Decision persisted to immutable audit log!</span>
+        </div>
+      )}
+    </div>
+  );
 
   if (!candidateId) {
     return (
@@ -139,15 +249,26 @@ export function EvaluationView({
         </div>
 
         {evaluation && recBadge && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowDocViewer(!showDocViewer)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer shadow-sm ${
+                showDocViewer
+                  ? "bg-blue-950/60 border-blue-500/50 text-blue-300"
+                  : "bg-slate-900 border-slate-800 text-slate-400 hover:text-white"
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-400" />
+              <span>{showDocViewer ? "Hide Document" : "CV Document Inspector"}</span>
+            </button>
             <button
               onClick={() => setShowComplianceModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors cursor-pointer mr-2 shadow-sm hover:border-indigo-400/50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors cursor-pointer shadow-sm hover:border-indigo-400/50"
             >
               <FileCheck2 className="w-3.5 h-3.5 text-indigo-400" />
               <span>EU AI Act Dossier</span>
             </button>
-            <div className="text-right">
+            <div className="text-right pl-2 border-l border-slate-800">
               <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
                 Algorithmic Verdict
               </div>
@@ -196,9 +317,9 @@ export function EvaluationView({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column: Requirement Matches & Verbatim Citations */}
-          <div className="lg:col-span-2 space-y-4">
+        <div className={showDocViewer ? "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" : "grid grid-cols-1 lg:grid-cols-3 gap-6 items-start"}>
+          {/* Left Column: Requirements Matches */}
+          <div className={showDocViewer ? "lg:col-span-7 space-y-6" : "lg:col-span-2 space-y-4"}>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
                 <span>Evaluated Requirements ({evaluation.requirement_matches.length})</span>
@@ -206,13 +327,17 @@ export function EvaluationView({
                   CVS: {(evaluation.citation_verification_score * 100).toFixed(0)}%
                 </span>
               </h2>
+              {candidateDetail && (
+                <span className="text-xs text-slate-400 font-mono">
+                  CV: {candidateDetail.original_filename || "Attached"}
+                </span>
+              )}
             </div>
 
             <div className="space-y-3">
               {evaluation.requirement_matches.map((rm, idx) => {
                 const isMet = rm.status === "met";
                 const isPartial = rm.status === "partial";
-                const isNotMet = rm.status === "not_met";
 
                 return (
                   <div
@@ -250,31 +375,56 @@ export function EvaluationView({
                       {rm.reasoning}
                     </p>
 
-                    {/* Verbatim Citations Grounding */}
+                    {/* Verbatim Citations Grounding with click-to-highlight */}
                     {rm.citations && rm.citations.length > 0 && (
                       <div className="space-y-1.5 pt-1">
-                        <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                          <Quote className="w-3 h-3 text-blue-400" />
-                          <span>Verbatim CV Citations</span>
+                        <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Quote className="w-3 h-3 text-blue-400" />
+                            <span>Verbatim CV Citations ({rm.citations.length})</span>
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-sans">
+                            Click citation to illuminate in CV
+                          </span>
                         </div>
-                        {rm.citations.map((c, cIdx) => (
-                          <div
-                            key={cIdx}
-                            className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono space-y-1"
-                          >
-                            <div className="italic text-slate-300 leading-relaxed">
-                              &ldquo;{c.quote}&rdquo;
-                            </div>
-                            <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
-                              <span>Source: {c.source_section || "Experience Section"}</span>
-                              {c.verified && (
-                                <span className="text-emerald-400 font-sans font-medium flex items-center gap-1">
-                                  <Check className="w-3 h-3" /> Exact Substring Verified
+                        {rm.citations.map((c, cIdx) => {
+                          const isSelected = activeCitation === c.quote;
+                          return (
+                            <div
+                              key={cIdx}
+                              onClick={() => {
+                                setActiveCitation(c.quote);
+                                setShowDocViewer(true);
+                              }}
+                              className={`p-2.5 rounded-lg border text-[11px] font-mono space-y-1.5 transition-all cursor-pointer ${
+                                isSelected
+                                  ? "bg-amber-500/10 border-amber-500/50 shadow-md ring-1 ring-amber-500/40"
+                                  : "bg-slate-950 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div
+                                  className={`italic leading-relaxed ${
+                                    isSelected ? "text-amber-200 font-medium" : "text-slate-300"
+                                  }`}
+                                >
+                                  &ldquo;{c.quote}&rdquo;
+                                </div>
+                                <span className="text-[10px] text-blue-400 font-sans font-medium shrink-0 flex items-center gap-1 hover:underline">
+                                  <Highlighter className="w-3 h-3 text-amber-400" /> View in CV →
                                 </span>
-                              )}
+                              </div>
+                              <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800/60">
+                                <span>Source: {c.source_section || "Experience Section"}</span>
+                                {c.verified && (
+                                  <span className="text-emerald-400 font-sans font-medium flex items-center gap-1">
+                                    <Check className="w-3 h-3" /> Exact Substring Verified
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 
@@ -288,95 +438,25 @@ export function EvaluationView({
                 );
               })}
             </div>
+
+            {showDocViewer && renderHitlCard()}
           </div>
 
-          {/* Right Column: Recruiter HITL Decision Gate */}
-          <div className="space-y-4">
-            <div className="p-5 rounded-xl border border-blue-500/30 bg-slate-900/60 space-y-4 sticky top-20 shadow-xl">
-              <div className="flex items-center gap-2 text-blue-400 font-semibold text-xs uppercase tracking-wider">
-                <UserCheck className="w-4 h-4" />
-                <span>Human-in-the-Loop Gate</span>
-              </div>
-
-              <p className="text-xs text-slate-400">
-                EU AI Act Article 14 mandate: Recruiter must confirm or override algorithmic recommendation with auditable notes.
-              </p>
-
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-300">
-                  Recruiter Final Decision
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDecision("strong_match")}
-                    className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
-                      decision === "strong_match"
-                        ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-semibold"
-                        : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    Strong Match
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDecision("borderline")}
-                    className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
-                      decision === "borderline"
-                        ? "bg-amber-500/20 border-amber-500 text-amber-300 font-semibold"
-                        : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    Borderline
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDecision("reject")}
-                    className={`py-2 px-1 text-center rounded-lg text-xs font-medium border transition-colors ${
-                      decision === "reject"
-                        ? "bg-rose-500/20 border-rose-500 text-rose-300 font-semibold"
-                        : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-300">
-                  Auditable Justification Notes <span className="text-rose-400">*</span>
-                </label>
-                <textarea
-                  rows={4}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Record rationale for agreeing with or overriding the model evaluation..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500 leading-relaxed"
-                />
-              </div>
-
-              <button
-                onClick={handleSubmitHITL}
-                disabled={submittingHitl || !notes.trim()}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
-              >
-                {submittingHitl ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Check className="w-3.5 h-3.5" />
-                )}
-                <span>Record Recruiter Sign-Off</span>
-              </button>
-
-              {hitlSuccess && (
-                <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs text-center flex items-center justify-center gap-1.5 animate-in fade-in">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Decision persisted to immutable audit log!</span>
-                </div>
-              )}
+          {/* Right Column: Document Viewer or HITL Card */}
+          {showDocViewer ? (
+            <div className="lg:col-span-5 sticky top-20 h-[calc(100vh-140px)] min-h-[620px]">
+              <DocumentViewer
+                candidate={candidateDetail}
+                activeCitation={activeCitation}
+                allCitations={allCitations}
+                onClose={() => setShowDocViewer(false)}
+              />
             </div>
-          </div>
+          ) : (
+            <div className="lg:col-span-1 space-y-4 sticky top-20">
+              {renderHitlCard()}
+            </div>
+          )}
         </div>
       )}
 

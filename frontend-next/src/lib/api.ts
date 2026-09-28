@@ -5,6 +5,7 @@
 import {
   BatchJobStatus,
   CandidateComparisonReport,
+  CandidateDetail,
   CandidateSummary,
   ComplianceDossier,
   InterviewPlan,
@@ -97,6 +98,10 @@ class ApiClient {
   // Candidates & Batch
   async getCandidates(): Promise<CandidateSummary[]> {
     return this.request("/api/v1/candidates");
+  }
+
+  async getCandidate(candidateId: string): Promise<CandidateDetail> {
+    return this.request(`/api/v1/candidates/${candidateId}`);
   }
 
   async uploadSingleCV(file: File): Promise<any> {

@@ -80,3 +80,21 @@ def test_list_candidates_and_jobs_endpoints(client):
     res_jobs = client.get("/api/v1/jobs")
     assert res_jobs.status_code == 200
     assert isinstance(res_jobs.json(), list)
+
+
+def test_get_candidate_detail_endpoint(client):
+    """Verify GET /api/v1/candidates/{candidate_id} returns sanitized text and profile."""
+    # List candidates to pick an existing id
+    res_cands = client.get("/api/v1/candidates")
+    assert res_cands.status_code == 200
+    cands = res_cands.json()
+    if cands:
+        cid = cands[0]["id"]
+        res_detail = client.get(f"/api/v1/candidates/{cid}")
+        assert res_detail.status_code == 200
+        detail = res_detail.json()
+        assert detail["id"] == cid
+        assert "sanitized_text" in detail
+        assert "skills" in detail
+        assert "experiences" in detail
+

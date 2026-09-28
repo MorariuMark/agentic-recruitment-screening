@@ -63,6 +63,29 @@ export interface CandidateSummary {
   } | null;
 }
 
+export interface CandidateDetail {
+  id: string;
+  masked_name?: string | null;
+  original_filename?: string | null;
+  sanitized_text?: string | null;
+  skills: string[];
+  experiences: Array<Record<string, any>>;
+  educations: Array<Record<string, any>>;
+  total_years_experience?: number | null;
+  chunks_indexed: number;
+  created_at?: string | null;
+  latest_evaluation?: {
+    evaluation_id?: string;
+    overall_score: number;
+    must_have_score: number;
+    nice_to_have_score?: number;
+    recommendation: "strong_match" | "borderline" | "reject";
+    must_have_gaps_count: number;
+    citation_verification_score: number;
+    hitl_validated: boolean;
+  } | null;
+}
+
 export interface VerbatimCitation {
   quote: string;
   source_section?: string | null;

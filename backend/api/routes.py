@@ -149,6 +149,22 @@ class CandidateListItem(BaseModel):
     latest_evaluation: Optional[Dict[str, Any]] = Field(default=None, description="Latest match evaluation summary if available")
 
 
+class CandidateDetailResponse(BaseModel):
+    """Detailed candidate profile including sanitized CV text for document inspection."""
+    id: UUID = Field(description="Candidate identifier")
+    masked_name: Optional[str] = Field(default=None, description="Anonymized name or alias")
+    original_filename: Optional[str] = Field(default=None, description="Original uploaded filename")
+    sanitized_text: Optional[str] = Field(default=None, description="Complete sanitized text representation of the CV")
+    skills: List[str] = Field(default_factory=list, description="Extracted skills")
+    experiences: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted work experience records")
+    educations: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted academic credentials")
+    total_years_experience: Optional[float] = Field(default=None, description="Total detected years of experience")
+    chunks_indexed: int = Field(default=0, description="Vector chunks count")
+    created_at: Optional[str] = Field(default=None, description="ISO timestamp of upload")
+    latest_evaluation: Optional[Dict[str, Any]] = Field(default=None, description="Latest match evaluation summary if available")
+
+
+
 class CVUploadResponse(BaseModel):
     """Response returned upon parsing and anonymizing a candidate CV."""
     candidate_id: UUID = Field(description="Unique anonymized candidate ID")
@@ -995,6 +1011,71 @@ async def list_candidates(
             )
         )
     return items
+
+
+@router.get(
+    "/candidates/{candidate_id}",
+    response_model=CandidateDetailResponse,
+    summary="Get single candidate detail with sanitized CV text and structured profile",
+)
+async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
+    """Returns granular candidate profile including full sanitized text for document viewer."""
+    record = await DatabaseRepository.get_candidate(candidate_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {candidate_id} not found.",
+        )
+
+    raw = record.raw_cv_json or {}
+    anon = record.anonymized_cv_json or {}
+    skills = raw.get("skills") or anon.get("skills") or []
+    experiences = raw.get("experiences") or anon.get("experiences") or []
+    educations = raw.get("educations") or anon.get("educations") or []
+
+    total_yrs = raw.get("total_years_experience") or anon.get("total_years_experience")
+    if total_yrs is None and experiences:
+        total_yrs = float(len(experiences))
+
+    masked_name = (
+        record.full_name_redacted
+        or anon.get("masked_name")
+        or f"Candidate-{str(candidate_id)[:8]}"
+    )
+
+    latest_eval = None
+    if record.evaluations:
+        sorted_evals = sorted(
+            record.evaluations,
+            key=lambda x: str(getattr(x, "created_at", "")) or "",
+            reverse=True,
+        )
+        ev = sorted_evals[0]
+        latest_eval = {
+            "evaluation_id": ev.id,
+            "overall_score": ev.overall_score,
+            "must_have_score": ev.must_have_score,
+            "nice_to_have_score": ev.nice_to_have_score,
+            "recommendation": ev.recommendation,
+            "must_have_gaps_count": ev.must_have_gaps_count,
+            "citation_verification_score": ev.citation_verification_score,
+            "hitl_validated": ev.hitl_validated,
+        }
+
+    return CandidateDetailResponse(
+        id=UUID(record.id),
+        masked_name=masked_name,
+        original_filename=record.original_filename,
+        sanitized_text=record.sanitized_text,
+        skills=skills,
+        experiences=experiences,
+        educations=educations,
+        chunks_indexed=record.chunks_indexed,
+        total_years_experience=float(total_yrs) if total_yrs is not None else None,
+        created_at=record.created_at.isoformat() if record.created_at else None,
+        latest_evaluation=latest_eval,
+    )
+
 
 
 @router.get(
