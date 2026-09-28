@@ -100,11 +100,21 @@ class Settings(BaseSettings):
         description="SentenceTransformer embedding model name",
     )
 
-    # Arize Phoenix Observability
-    phoenix_collector_endpoint: Optional[str] = Field(
-        default=None,
-        description="Arize Phoenix collector endpoint for OpenTelemetry traces",
+    # Relational Database Persistence (SQLite or PostgreSQL)
+    database_url: str = Field(
+        default="sqlite+aiosqlite:///./data/screening.db",
+        description="Async database connection string (e.g. postgresql+asyncpg://... or sqlite+aiosqlite:///...)",
     )
+
+    @property
+    def async_database_url(self) -> str:
+        """Normalizes postgres:// and postgresql:// to postgresql+asyncpg:// for async SQLAlchemy."""
+        url = self.database_url
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
 
     model_config = SettingsConfigDict(
         env_file=".env",

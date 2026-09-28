@@ -12,7 +12,11 @@ ENV/
 # Environment Variables
 .env
 
-# Vector Store & Local Data (keep gitkeep files)
+# Database & Local Data
+*.db
+*.sqlite3
+data/*.db
+data/screening.db
 data/chroma_db*/*
 !data/chroma_db*/.gitkeep
 data/*chroma*/**
