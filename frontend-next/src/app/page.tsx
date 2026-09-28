@@ -3,6 +3,7 @@
 import { Shell } from "@/components/layout/shell";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
 import { RequisitionView } from "@/components/requisitions/requisition-view";
+import { ComparisonView } from "@/components/comparison/comparison-view";
 import { EvaluationView } from "@/components/evaluation/evaluation-view";
 import { InterviewView } from "@/components/interview/interview-view";
 import { SettingsView } from "@/components/settings/settings-view";
@@ -18,6 +19,8 @@ export default function Home() {
         setSelectedJobId,
         selectedCandidateId,
         setSelectedCandidateId,
+        comparisonCandidateIds,
+        setComparisonCandidateIds,
         refreshJobs,
       }) => {
         switch (activeTab) {
@@ -35,6 +38,10 @@ export default function Home() {
                   setSelectedCandidateId(id);
                   setActiveTab("interview");
                 }}
+                onOpenComparison={(ids) => {
+                  setComparisonCandidateIds(ids);
+                  setActiveTab("comparison");
+                }}
               />
             );
 
@@ -45,6 +52,24 @@ export default function Home() {
                 selectedJobId={selectedJobId}
                 onSelectJob={(id) => setSelectedJobId(id)}
                 onRefreshJobs={refreshJobs}
+              />
+            );
+
+          case "comparison":
+            return (
+              <ComparisonView
+                candidateIds={comparisonCandidateIds}
+                selectedJobId={selectedJobId}
+                jobs={jobs}
+                onBackToPipeline={() => setActiveTab("pipeline")}
+                onOpenEvaluation={(id) => {
+                  setSelectedCandidateId(id);
+                  setActiveTab("evaluation");
+                }}
+                onOpenInterview={(id) => {
+                  setSelectedCandidateId(id);
+                  setActiveTab("interview");
+                }}
               />
             );
 

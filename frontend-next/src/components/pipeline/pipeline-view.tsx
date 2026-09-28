@@ -7,6 +7,7 @@ import { formatPercent, getRecommendationBadge } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowUpDown,
+  BarChart3,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -16,10 +17,12 @@ import {
   Filter,
   Loader2,
   RefreshCw,
+  Scale,
   Search,
   Sparkles,
   Upload,
   UserCheck,
+  Users2,
   XCircle,
 } from "lucide-react";
 
@@ -29,6 +32,7 @@ interface PipelineViewProps {
   onSelectCandidate: (candidateId: string) => void;
   onOpenEvaluation: (candidateId: string) => void;
   onOpenInterview: (candidateId: string) => void;
+  onOpenComparison?: (candidateIds: string[]) => void;
 }
 
 export function PipelineView({
@@ -37,6 +41,7 @@ export function PipelineView({
   onSelectCandidate,
   onOpenEvaluation,
   onOpenInterview,
+  onOpenComparison,
 }: PipelineViewProps) {
   const [candidates, setCandidates] = useState<CandidateSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,7 +57,22 @@ export function PipelineView({
     lastEvent: string;
   } | null>(null);
 
+  const [selectedForComparison, setSelectedForComparison] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const toggleCandidateSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedForComparison((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((item) => item !== id);
+      }
+      if (prev.length >= 4) {
+        alert("You can compare up to 4 candidates simultaneously.");
+        return prev;
+      }
+      return [...prev, id];
+    });
+  };
 
   const fetchCandidates = async () => {
     try {
@@ -283,6 +303,9 @@ export function PipelineView({
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-900/80 border-b border-slate-800 text-slate-400 font-medium">
                 <tr>
+                  <th className="py-3 px-3 w-8 text-center">
+                    <span className="sr-only">Compare Select</span>
+                  </th>
                   <th className="py-3 px-4">Candidate Profile</th>
                   <th className="py-3 px-4">Experience</th>
                   <th className="py-3 px-4">Core Skills</th>
@@ -305,12 +328,29 @@ export function PipelineView({
                           candidate.original_filename ? ` (${candidate.original_filename})` : ""
                         }`;
 
+                  const isChecked = selectedForComparison.includes(candidate.id);
+
                   return (
                     <tr
                       key={candidate.id}
-                      className="hover:bg-slate-800/30 transition-colors group cursor-pointer"
+                      className={`hover:bg-slate-800/30 transition-colors group cursor-pointer ${
+                        isChecked ? "bg-blue-600/10" : ""
+                      }`}
                       onClick={() => onSelectCandidate(candidate.id)}
                     >
+                      {/* Comparison Checkbox */}
+                      <td
+                        className="py-3.5 px-3 text-center"
+                        onClick={(e) => toggleCandidateSelect(candidate.id, e)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {}}
+                          className="rounded border-slate-700 bg-slate-900 text-blue-600 cursor-pointer"
+                        />
+                      </td>
+
                       {/* Masked Profile */}
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
@@ -418,6 +458,30 @@ export function PipelineView({
           </div>
         )}
       </div>
+
+      {/* Floating Comparison Action Bar */}
+      {selectedForComparison.length >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/95 border border-blue-500/40 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom duration-200">
+          <div className="flex items-center gap-2 text-xs font-semibold text-white">
+            <Users2 className="w-4 h-4 text-blue-400" />
+            <span>{selectedForComparison.length} Candidates Selected</span>
+          </div>
+          <div className="h-4 w-px bg-slate-800" />
+          <button
+            onClick={() => onOpenComparison && onOpenComparison(selectedForComparison)}
+            className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Compare Head-to-Head</span>
+          </button>
+          <button
+            onClick={() => setSelectedForComparison([])}
+            className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }

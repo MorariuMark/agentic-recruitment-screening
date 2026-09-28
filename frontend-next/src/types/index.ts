@@ -151,3 +151,41 @@ export interface LLMSettings {
   fallback_enabled: boolean;
   fallback_chain: string[];
 }
+
+export interface RequirementComparisonCell {
+  status: "met" | "partial" | "not_met";
+  score: number;
+  reasoning: string;
+  citation_quote?: string | null;
+}
+
+export interface RequirementComparisonRow {
+  requirement_id: string;
+  title: string;
+  category: RequirementCategory;
+  weight: number;
+  candidate_cells: Record<string, RequirementComparisonCell>;
+}
+
+export interface CandidateComparisonSummaryItem {
+  candidate_id: string;
+  masked_name: string;
+  original_filename?: string | null;
+  overall_score: number;
+  must_have_score: number;
+  nice_to_have_score: number;
+  recommendation: Recommendation;
+  must_have_gaps_count: number;
+  citation_verification_score: number;
+  hitl_validated: boolean;
+}
+
+export interface CandidateComparisonReport {
+  job_id: string;
+  job_title: string;
+  candidates: CandidateComparisonSummaryItem[];
+  matrix: RequirementComparisonRow[];
+  top_recommended_id?: string | null;
+  comparative_analysis: string;
+}
+

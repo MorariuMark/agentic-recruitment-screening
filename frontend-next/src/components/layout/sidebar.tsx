@@ -8,9 +8,10 @@ import {
   Settings2,
   ShieldAlert,
   Users2,
+  Scale,
 } from "lucide-react";
 
-export type NavTab = "pipeline" | "requisitions" | "evaluation" | "interview" | "settings";
+export type NavTab = "pipeline" | "requisitions" | "comparison" | "evaluation" | "interview" | "settings";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -39,6 +40,12 @@ export function Sidebar({
       icon: Briefcase,
       badge: jobCount > 0 ? jobCount : undefined,
       description: "Job descriptions & criteria",
+    },
+    {
+      id: "comparison" as NavTab,
+      label: "Comparison Matrix",
+      icon: Scale,
+      description: "Side-by-side benchmarking",
     },
     {
       id: "evaluation" as NavTab,

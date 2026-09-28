@@ -4,6 +4,7 @@
 
 import {
   BatchJobStatus,
+  CandidateComparisonReport,
   CandidateSummary,
   InterviewPlan,
   JobDescription,
@@ -191,6 +192,20 @@ class ApiClient {
         evaluation_id: evaluationId,
         recruiter_decision: recruiterDecision,
         recruiter_notes: recruiterNotes,
+      }),
+    });
+  }
+
+  // Multi-Candidate Comparison Matrix
+  async compareCandidates(
+    candidateIds: string[],
+    jobId: string
+  ): Promise<CandidateComparisonReport> {
+    return this.request("/api/v1/match/compare", {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_ids: candidateIds,
+        job_id: jobId,
       }),
     });
   }

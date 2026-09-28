@@ -31,7 +31,7 @@ from backend.db.repository import DatabaseRepository
 from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan, InterviewQuestion
 from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport, JobRequirement, RequirementCategory
-from backend.schemas.match import MatchEvaluationResult, Recommendation, RequirementMatch
+from backend.schemas.match import MatchEvaluationResult, MatchStatus, Recommendation, RequirementMatch
 from backend.schemas.models_catalog import CATALOG_PROVIDERS, get_model_info, get_providers_catalog
 from backend.services.audit_exporter import AuditExporter
 from backend.services.ollama_service import OllamaService
@@ -181,6 +181,53 @@ class MatchEvaluateRequest(BaseModel):
     """Request payload to evaluate an indexed candidate against a job description."""
     candidate_id: UUID = Field(description="UUID of previously uploaded candidate")
     job_description: JobDescription = Field(description="Job description and atomic criteria")
+
+
+class CandidateCompareRequest(BaseModel):
+    """Request payload to compare multiple candidates side-by-side for a job requisition."""
+    candidate_ids: List[UUID] = Field(min_length=2, max_length=4, description="2 to 4 candidates to compare")
+    job_id: UUID = Field(description="Job requisition UUID to compare against")
+
+
+class RequirementComparisonCell(BaseModel):
+    """Evaluation result of a single candidate on a single requirement."""
+    status: MatchStatus
+    score: float
+    reasoning: str
+    citation_quote: Optional[str] = None
+
+
+class RequirementComparisonRow(BaseModel):
+    """Matrix row for an atomic requirement comparing all evaluated candidates."""
+    requirement_id: str
+    title: str
+    category: RequirementCategory
+    weight: float
+    candidate_cells: Dict[str, RequirementComparisonCell]  # candidate_id (str) -> RequirementComparisonCell
+
+
+class CandidateComparisonSummaryItem(BaseModel):
+    """Candidate high-level metrics for comparison banner."""
+    candidate_id: UUID
+    masked_name: str
+    original_filename: Optional[str] = None
+    overall_score: float
+    must_have_score: float
+    nice_to_have_score: float
+    recommendation: Recommendation
+    must_have_gaps_count: int
+    citation_verification_score: float
+    hitl_validated: bool
+
+
+class CandidateComparisonReport(BaseModel):
+    """Comprehensive comparison report across multiple candidates."""
+    job_id: UUID
+    job_title: str
+    candidates: List[CandidateComparisonSummaryItem]
+    matrix: List[RequirementComparisonRow]
+    top_recommended_id: Optional[UUID] = None
+    comparative_analysis: str
 
 
 class HITLValidationRequest(BaseModel):
@@ -655,6 +702,152 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
 
     _EVALUATION_STORE[request.evaluation_id] = evaluation
     return evaluation
+
+
+@router.post(
+    "/match/compare",
+    response_model=CandidateComparisonReport,
+    summary="Compare 2 to 4 candidates side-by-side against a job requisition",
+)
+async def compare_candidates(payload: CandidateCompareRequest) -> CandidateComparisonReport:
+    """
+    Executes a side-by-side comparative analysis of 2 to 4 candidates evaluated against
+    the same job requisition. Yields head-to-head metrics, requirement fulfillment matrix,
+    and algorithmic ranking.
+    """
+    job_record = await DatabaseRepository.get_job(payload.job_id)
+    if not job_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job requisition {payload.job_id} not found.",
+        )
+    job_desc = _reconstruct_job_from_db(job_record)
+
+    candidates_summary_items: List[CandidateComparisonSummaryItem] = []
+    evaluations_by_candidate: Dict[str, MatchEvaluationResult] = {}
+
+    existing_eval_records = await DatabaseRepository.list_evaluations_for_job(payload.job_id)
+    existing_eval_map = {
+        UUID(e.candidate_id): _reconstruct_evaluation_from_db(e)
+        for e in existing_eval_records
+    }
+
+    for cid in payload.candidate_ids:
+        cid_str = str(cid)
+        cand_record = await DatabaseRepository.get_candidate(cid)
+        if not cand_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Candidate {cid} not found in database.",
+            )
+
+        anon_name = cand_record.full_name_redacted or (cand_record.anonymized_cv_json or {}).get("masked_name") or f"Candidate-{cid_str[:6].upper()}"
+        if anon_name == "[CANDIDATE_NAME]":
+            anon_name = f"Candidate-{cid_str[:6].upper()}"
+
+        eval_result = existing_eval_map.get(cid)
+        if not eval_result:
+            _, anon_cand, _ = _reconstruct_candidate_from_db(cand_record)
+            eval_result = _matching_agent.match_candidate(
+                candidate=anon_cand,
+                job_description=job_desc,
+            )
+            try:
+                await DatabaseRepository.save_evaluation(
+                    eval_result=eval_result,
+                    candidate_id=cid,
+                    job_id=job_desc.id,
+                )
+            except Exception as db_err:
+                logger.warning(f"Failed to save comparison evaluation: {db_err}")
+
+        evaluations_by_candidate[cid_str] = eval_result
+
+        candidates_summary_items.append(
+            CandidateComparisonSummaryItem(
+                candidate_id=cid,
+                masked_name=anon_name,
+                original_filename=cand_record.original_filename,
+                overall_score=eval_result.overall_score,
+                must_have_score=eval_result.must_have_score,
+                nice_to_have_score=eval_result.nice_to_have_score,
+                recommendation=eval_result.recommendation,
+                must_have_gaps_count=eval_result.must_have_gaps_count,
+                citation_verification_score=eval_result.citation_verification_score,
+                hitl_validated=eval_result.hitl_validated,
+            )
+        )
+
+    # Build Requirement Matrix
+    matrix_rows: List[RequirementComparisonRow] = []
+    for req in job_desc.requirements:
+        cell_map: Dict[str, RequirementComparisonCell] = {}
+        for cid in payload.candidate_ids:
+            cid_str = str(cid)
+            cand_eval = evaluations_by_candidate.get(cid_str)
+            match = next((m for m in (cand_eval.requirement_matches if cand_eval else []) if m.requirement_id == req.id), None)
+            if match:
+                quote = match.citations[0].quote if match.citations else None
+                cell_map[cid_str] = RequirementComparisonCell(
+                    status=match.status,
+                    score=match.score,
+                    reasoning=match.reasoning,
+                    citation_quote=quote,
+                )
+            else:
+                cell_map[cid_str] = RequirementComparisonCell(
+                    status=MatchStatus.NOT_MET,
+                    score=0.0,
+                    reasoning="Requirement not evaluated",
+                    citation_quote=None,
+                )
+
+        matrix_rows.append(
+            RequirementComparisonRow(
+                requirement_id=req.id,
+                title=req.title,
+                category=req.category,
+                weight=req.weight,
+                candidate_cells=cell_map,
+            )
+        )
+
+    # Rank candidates: 0 must-have gaps first, then highest must-have score, then overall score
+    sorted_candidates = sorted(
+        candidates_summary_items,
+        key=lambda c: (
+            -c.must_have_gaps_count,
+            c.must_have_score,
+            c.overall_score,
+        ),
+        reverse=True,
+    )
+
+    top_cand = sorted_candidates[0] if sorted_candidates else None
+    top_id = top_cand.candidate_id if top_cand else None
+
+    if top_cand and len(sorted_candidates) > 1:
+        runner_up = sorted_candidates[1]
+        analysis = (
+            f"Candidate {top_cand.masked_name} leads the cohort with an overall match score of "
+            f"{top_cand.overall_score:.1f}% and {top_cand.must_have_gaps_count} must-have gaps, "
+            f"outperforming {runner_up.masked_name} ({runner_up.overall_score:.1f}% overall, "
+            f"{runner_up.must_have_gaps_count} gaps). Verified citation coverage stands at "
+            f"{top_cand.citation_verification_score * 100:.0f}%."
+        )
+    elif top_cand:
+        analysis = f"Candidate {top_cand.masked_name} achieved an overall match of {top_cand.overall_score:.1f}%."
+    else:
+        analysis = "No candidates compared."
+
+    return CandidateComparisonReport(
+        job_id=payload.job_id,
+        job_title=job_desc.title,
+        candidates=candidates_summary_items,
+        matrix=matrix_rows,
+        top_recommended_id=top_id,
+        comparative_analysis=analysis,
+    )
 
 
 @router.post(

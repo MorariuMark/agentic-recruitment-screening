@@ -15,6 +15,8 @@ interface ShellProps {
     setSelectedJobId: (id: string | null) => void;
     selectedCandidateId: string | null;
     setSelectedCandidateId: (id: string | null) => void;
+    comparisonCandidateIds: string[];
+    setComparisonCandidateIds: (ids: string[]) => void;
     refreshJobs: () => Promise<void>;
   }) => React.ReactNode;
 }
@@ -24,6 +26,7 @@ export function Shell({ children }: ShellProps) {
   const [jobs, setJobs] = useState<JobDescription[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [comparisonCandidateIds, setComparisonCandidateIds] = useState<string[]>([]);
   const [candidateCount, setCandidateCount] = useState<number>(0);
 
   const refreshJobs = async () => {
@@ -79,6 +82,8 @@ export function Shell({ children }: ShellProps) {
             setSelectedJobId,
             selectedCandidateId,
             setSelectedCandidateId,
+            comparisonCandidateIds,
+            setComparisonCandidateIds,
             refreshJobs,
           })}
         </main>
