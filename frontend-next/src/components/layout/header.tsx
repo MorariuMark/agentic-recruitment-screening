@@ -32,12 +32,23 @@ export function Header({
 
   useEffect(() => {
     let isMounted = true;
+
+    // Failsafe timer: transition out of 'checking' state within 4s if network hangs
+    const failsafe = setTimeout(() => {
+      if (isMounted) {
+        setBackendStatus((prev) => (prev === "checking" ? "offline" : prev));
+        setActiveModel((prev) => (prev === "Detecting..." ? "Offline" : prev));
+      }
+    }, 4000);
+
     async function checkHealth() {
       try {
         const health = await api.getHealth();
         if (isMounted) {
-          setBackendStatus("online");
-          setActiveModel(`${health.active_llm_provider}:${health.active_model}`);
+          setBackendStatus(health.status === "ok" ? "online" : "offline");
+          const provider = health.active_llm_provider || "llm";
+          const model = health.active_model || "ready";
+          setActiveModel(`${provider}:${model}`);
         }
       } catch {
         if (isMounted) {
@@ -51,6 +62,7 @@ export function Header({
     const interval = setInterval(checkHealth, 15000);
     return () => {
       isMounted = false;
+      clearTimeout(failsafe);
       clearInterval(interval);
     };
   }, []);

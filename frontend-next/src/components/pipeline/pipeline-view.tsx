@@ -161,14 +161,19 @@ export function PipelineView({
   };
 
   const filteredCandidates = candidates.filter((c) => {
+    const name = (c.masked_name || "").toLowerCase();
+    const skills = Array.isArray(c.skills) ? c.skills : [];
+    const query = searchQuery.toLowerCase();
+
     const matchesSearch =
-      c.masked_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.skills.some((s) => s.toLowerCase().includes(searchQuery.toLowerCase()));
+      name.includes(query) ||
+      skills.some((s) => typeof s === "string" && s.toLowerCase().includes(query));
 
     if (!matchesSearch) return false;
     if (filterRecommendation === "ALL") return true;
 
-    return c.latest_evaluation?.recommendation === filterRecommendation.toLowerCase();
+    const rec = (c.latest_evaluation?.recommendation || "").toLowerCase();
+    return rec === filterRecommendation.toLowerCase();
   });
 
   return (
