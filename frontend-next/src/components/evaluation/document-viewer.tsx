@@ -37,7 +37,54 @@ export function DocumentViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const activeQuoteRef = useRef<HTMLSpanElement>(null);
 
-  const rawText = candidate?.sanitized_text || "No sanitized document text available.";
+  const rawText = useMemo(() => {
+    if (candidate?.sanitized_text && candidate.sanitized_text.trim().length > 0) {
+      return candidate.sanitized_text;
+    }
+    if (!candidate) return "No candidate document loaded.";
+
+    // Fallback synthesis from structured candidate details
+    const parts: string[] = [];
+    const name = candidate.masked_name || candidate.original_filename || `Candidate-${candidate.id.slice(0, 6)}`;
+    parts.push(`# ${name}`);
+
+    if (candidate.parsed_cv?.summary) {
+      parts.push(`## Professional Summary\n${candidate.parsed_cv.summary}`);
+    }
+
+    if (candidate.skills && candidate.skills.length > 0) {
+      parts.push(`## Technical Skills\n${candidate.skills.join(", ")}`);
+    }
+
+    if (candidate.experiences && candidate.experiences.length > 0) {
+      parts.push("## Professional Experience");
+      candidate.experiences.forEach((exp: any) => {
+        const title = exp.job_title || "Role";
+        const company = exp.company_name || "Company";
+        const start = exp.start_date || "";
+        const end = exp.end_date || "Present";
+        const dateStr = start ? ` (${start} - ${end})` : "";
+        parts.push(`### ${title} at ${company}${dateStr}`);
+        const descs = Array.isArray(exp.work_description) ? exp.work_description : exp.work_description ? [exp.work_description] : [];
+        descs.forEach((d: string) => parts.push(`- ${d}`));
+        if (exp.skills_used && exp.skills_used.length > 0) {
+          parts.push(`Technologies: ${exp.skills_used.join(", ")}`);
+        }
+      });
+    }
+
+    if (candidate.educations && candidate.educations.length > 0) {
+      parts.push("## Education");
+      candidate.educations.forEach((edu: any) => {
+        const deg = edu.degree_title || edu.degree_name || "Degree";
+        const inst = edu.institution_name || "Institution";
+        const year = edu.graduation_year ? ` (${edu.graduation_year})` : "";
+        parts.push(`- ${deg}, ${inst}${year}`);
+      });
+    }
+
+    return parts.length > 1 ? parts.join("\n\n") : "No sanitized document text available.";
+  }, [candidate]);
 
   // Auto-scroll to active citation whenever it changes
   useEffect(() => {
@@ -196,10 +243,10 @@ export function DocumentViewer({
 
   const fontSizeClass =
     fontSize === "base"
-      ? "text-sm"
+      ? "text-[15px] leading-relaxed"
       : fontSize === "lg"
-      ? "text-base"
-      : "text-xs";
+      ? "text-base leading-relaxed"
+      : "text-sm leading-relaxed";
 
   return (
     <div className="flex flex-col h-full bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-2xl backdrop-blur-sm">
@@ -309,7 +356,7 @@ export function DocumentViewer({
       {/* Document Text Body */}
       <div
         ref={containerRef}
-        className={`flex-1 overflow-y-auto p-5 font-mono select-text space-y-1 ${fontSizeClass}`}
+        className={`flex-1 overflow-y-auto p-5 font-sans text-slate-200 select-text space-y-1.5 ${fontSizeClass}`}
       >
         {renderedContent}
       </div>

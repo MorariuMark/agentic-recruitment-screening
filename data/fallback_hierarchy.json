@@ -1,0 +1,38 @@
+[
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b"
+  },
+  {
+    "provider": "groq",
+    "model": "qwen/qwen3.8-27b"
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-flash-latest"
+  },
+  {
+    "provider": "agnes",
+    "model": "agnes-2.5-flash"
+  },
+  {
+    "provider": "agnes",
+    "model": "agnes-3.0-flash"
+  },
+  {
+    "provider": "openrouter",
+    "model": "meta-llama/llama-3.3-70b-instruct"
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash"
+  },
+  {
+    "provider": "nvidia_nim",
+    "model": "meta/llama-3.2-11b-vision-instruct"
+  },
+  {
+    "provider": "nvidia_nim",
+    "model": "meta/llama-3.1-8b-instruct"
+  }
+]

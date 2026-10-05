@@ -60,6 +60,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     logger.info("Shutting down Agentic Recruitment Screening Backend...")
+    try:
+        from backend.db.session import _engine
+        if _engine is not None:
+            await _engine.dispose()
+            logger.info("Database connection engine disposed cleanly.")
+    except Exception as e:
+        logger.warning(f"Error disposing database engine on shutdown: {e}")
 
 
 app = FastAPI(
@@ -72,6 +79,24 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+@app.middleware("http")
+async def add_private_network_headers(request: Request, call_next):
+    """Ensures Private Network Access (PNA) and local cross-origin requests never get blocked by Chromium."""
+    origin = request.headers.get("origin")
+    is_local_origin = bool(origin and ("localhost" in origin or "127.0.0.1" in origin))
+
+    if request.method == "OPTIONS":
+        response = await call_next(request)
+        if is_local_origin or request.headers.get("access-control-request-private-network"):
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+
+    response = await call_next(request)
+    if is_local_origin:
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

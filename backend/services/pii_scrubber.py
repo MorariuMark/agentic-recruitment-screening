@@ -153,14 +153,20 @@ class PIIScrubber:
         # 3. Scrub projects
         anonymized_projects = []
         for proj in getattr(parsed_cv, "projects", []):
+            raw_bullets = (
+                proj.description
+                if isinstance(proj.description, list)
+                else ([str(proj.description)] if proj.description else [])
+            )
             scrubbed_bullets = [
                 self.scrub_text(
-                    bullet,
+                    str(bullet),
                     candidate_name=candidate_name,
                     candidate_phone=candidate_phone,
                     candidate_email=candidate_email,
                 )[0]
-                for bullet in proj.description
+                for bullet in raw_bullets
+                if bullet and str(bullet).strip()
             ]
             anonymized_url = (
                 self.scrub_text(proj.project_url)[0] if proj.project_url else None
@@ -211,6 +217,18 @@ class PIIScrubber:
         for pat in getattr(parsed_cv, "patents", []):
             anonymized_patents.append(pat.model_copy())
 
+        # 6.5 Scrub miscellaneous items
+        anonymized_misc = [
+            self.scrub_text(
+                item,
+                candidate_name=candidate_name,
+                candidate_phone=candidate_phone,
+                candidate_email=candidate_email,
+            )[0]
+            for item in getattr(parsed_cv, "miscellaneous", [])
+            if item and item.strip()
+        ]
+
         # 7. Construct and return the AnonymizedCandidate model
         return AnonymizedCandidate(
             candidate_id=uuid4(),
@@ -224,6 +242,7 @@ class PIIScrubber:
             anonymized_patents=anonymized_patents,
             logistics=getattr(parsed_cv, "logistics", None),
             anonymized_custom_sections=anonymized_custom,
+            anonymized_miscellaneous=anonymized_misc,
             sanitized_text=sanitized_text,
             demographic_data=demographic_audit,
         )

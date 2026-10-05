@@ -643,6 +643,7 @@ with st.sidebar:
 
             prov_keys = list(CATALOG_PROVIDERS.keys())
             prov_labels = {
+                "agnes": "Agnes AI",
                 "groq": "Groq Cloud LPU",
                 "openrouter": "OpenRouter",
                 "nvidia_nim": "NVIDIA NIM",
@@ -841,6 +842,10 @@ with tab_cv:
 
         # Baseline mock and multilingual profiles
         sample_options.update({
+            "Bid Manager with French - Camille Beaumont (EN/FR)": "data/mock_cvs/camille_beaumont_bid_manager_atos.txt",
+            "Embedded SW Engineer ADAS - Nguyen Minh Khoa (EN)": "data/mock_cvs/nguyen_minh_khoa_hella_embedded_sw.txt",
+            "Warehouse Material Handler - Tyler James Kowalski (EN)": "data/mock_cvs/tyler_kowalski_magna_material_handler.txt",
+            "Embedded Systems & IoT Engineer - Marcus Vance (EN)": "data/mock_cvs/marcus_vance_embedded_systems_engineer.txt",
             "Strong AI Platform Engineer (EN)": "data/mock_cvs/strong_ai_engineer.txt",
             "Borderline Junior Developer (EN)": "data/mock_cvs/borderline_junior_developer.txt",
             "Unrelated Domain - Accountant (EN)": "data/mock_cvs/reject_unrelated_candidate.txt",
@@ -1546,6 +1551,7 @@ with tab_settings:
         active_model = "openai/gpt-oss-20b"
         active_compat = "auto"
         keys_status = {
+            "agnes": bool(os.environ.get("AGNES_API_KEY")),
             "groq": bool(os.environ.get("GROQ_API_KEY")),
             "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
             "nvidia_nim": bool(os.environ.get("NVIDIA_NIM_API_KEY")),

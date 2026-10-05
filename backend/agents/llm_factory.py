@@ -6,6 +6,7 @@ and local Ollama with structured Pydantic outputs and dynamic runtime switching.
 
 import json
 import logging
+import os
 import re
 import time
 from abc import ABC, abstractmethod
@@ -56,6 +57,33 @@ def clean_and_parse_json(raw_content: str) -> Dict[str, Any]:
 class BaseLLMClient(ABC):
     """Abstract interface for all LLM inference clients."""
 
+    def __init__(self) -> None:
+        self.last_usage: Optional[Dict[str, int]] = None
+
+    def _capture_usage(self, response: Any, prompt: str, output: str) -> Dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage:
+            p = getattr(usage, "prompt_tokens", 0) or 0
+            c = getattr(usage, "completion_tokens", 0) or 0
+            t = getattr(usage, "total_tokens", 0) or (p + c)
+            if t > 0:
+                self.last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": t}
+                return self.last_usage
+
+        usage_meta = getattr(response, "usage_metadata", None)
+        if usage_meta:
+            p = getattr(usage_meta, "prompt_token_count", 0) or 0
+            c = getattr(usage_meta, "candidates_token_count", 0) or 0
+            t = getattr(usage_meta, "total_token_count", 0) or (p + c)
+            if t > 0:
+                self.last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": t}
+                return self.last_usage
+
+        p = max(1, len(prompt) // 4)
+        c = max(1, len(str(output)) // 4)
+        self.last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
+        return self.last_usage
+
     @abstractmethod
     def generate_text(
         self,
@@ -76,6 +104,102 @@ class BaseLLMClient(ABC):
     ) -> T:
         """Generate and parse structured JSON into a Pydantic model."""
         pass
+
+
+
+class AgnesClient(BaseLLMClient):
+    """Client for Agnes AI via OpenAI-compatible endpoints."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        compatibility_mode: Optional[str] = None,
+    ) -> None:
+        from openai import OpenAI
+
+        self.api_key = api_key or settings.agnes_api_key
+        if not self.api_key:
+            raise ValueError("AGNES_API_KEY must be provided or set in environment variables.")
+        self.base_url = base_url or settings.agnes_base_url
+        self.model = model or settings.agnes_model
+        self.compatibility_mode = compatibility_mode or settings.compatibility_mode
+
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=30.0,
+            max_retries=1,
+        )
+
+    def generate_text(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.1,
+    ) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+        )
+        content = response.choices[0].message.content or ""
+        self._capture_usage(response, prompt, content)
+        return content
+
+    def generate_structured(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.0,
+    ) -> T:
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
+        augmented_system = (
+            f"{system_prompt or ''}\n\n"
+            f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
+        ).strip()
+
+        messages = [
+            {"role": "system", "content": augmented_system},
+            {"role": "user", "content": prompt},
+        ]
+
+        use_json_object = self.compatibility_mode in ("json_object", "auto")
+
+        try:
+            kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if use_json_object:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            response = self.client.chat.completions.create(**kwargs)
+            raw_content = response.choices[0].message.content or "{}"
+            self._capture_usage(response, prompt, raw_content)
+            parsed_dict = clean_and_parse_json(raw_content)
+            return response_model.model_validate(parsed_dict)
+        except Exception as err:
+            if use_json_object and self.compatibility_mode == "auto":
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                )
+                raw_content = response.choices[0].message.content or "{}"
+                self._capture_usage(response, prompt, raw_content)
+                parsed_dict = clean_and_parse_json(raw_content)
+                return response_model.model_validate(parsed_dict)
+            raise err
+
 
 
 class OpenRouterClient(BaseLLMClient):
@@ -132,7 +256,7 @@ class OpenRouterClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
         augmented_system = (
             f"{system_prompt or ''}\n\n"
             f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
@@ -221,7 +345,7 @@ class GroqClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
         augmented_system = (
             f"{system_prompt or ''}\n\n"
             f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
@@ -300,7 +424,7 @@ class NvidiaNimClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
         augmented_system = (
             f"{system_prompt or ''}\n\n"
             f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
@@ -391,7 +515,7 @@ class GeminiClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
         augmented_system = (
             f"{system_prompt or ''}\n\n"
             f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
@@ -471,7 +595,7 @@ class OllamaClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), indent=2)
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
         augmented_system = (
             f"{system_prompt or ''}\n\n"
             f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
@@ -502,7 +626,14 @@ def create_llm_client(
 ) -> BaseLLMClient:
     """Instantiate an explicit LLM client for a specific provider."""
     selected = provider.lower()
-    if selected == "groq":
+    if selected == "agnes":
+        return AgnesClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            compatibility_mode=compatibility_mode,
+        )
+    elif selected == "groq":
         return GroqClient(api_key=api_key, model=model, compatibility_mode=compatibility_mode)
     elif selected == "openrouter":
         return OpenRouterClient(
@@ -534,8 +665,81 @@ def create_llm_client(
     else:
         raise ValueError(
             f"Unsupported LLM provider '{selected}'. "
-            f"Choose 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'."
+            f"Choose 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'."
         )
+
+
+_FALLBACK_CHAIN_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data",
+    "fallback_hierarchy.json",
+)
+_CUSTOM_FALLBACK_CHAIN: Optional[List[Dict[str, str]]] = None
+
+
+def load_custom_fallback_chain() -> Optional[List[Dict[str, str]]]:
+    """Loads user-defined custom fallback hierarchy from disk if present."""
+    global _CUSTOM_FALLBACK_CHAIN
+    if os.path.exists(_FALLBACK_CHAIN_FILE):
+        try:
+            with open(_FALLBACK_CHAIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    _CUSTOM_FALLBACK_CHAIN = data
+                    logger.info("Loaded custom LLM fallback hierarchy (%d tiers).", len(data))
+                    return _CUSTOM_FALLBACK_CHAIN
+        except Exception as e:
+            logger.warning("Failed loading fallback hierarchy file: %s", e)
+    return _CUSTOM_FALLBACK_CHAIN
+
+
+def save_custom_fallback_chain(chain: Optional[List[Dict[str, str]]]) -> None:
+    """Persists or clears user-defined custom fallback hierarchy."""
+    global _CUSTOM_FALLBACK_CHAIN
+    _CUSTOM_FALLBACK_CHAIN = chain
+    try:
+        os.makedirs(os.path.dirname(_FALLBACK_CHAIN_FILE), exist_ok=True)
+        if chain is not None:
+            with open(_FALLBACK_CHAIN_FILE, "w", encoding="utf-8") as f:
+                json.dump(chain, f, indent=2)
+            logger.info("Saved custom LLM fallback hierarchy (%d tiers) to disk.", len(chain))
+        else:
+            if os.path.exists(_FALLBACK_CHAIN_FILE):
+                os.remove(_FALLBACK_CHAIN_FILE)
+            logger.info("Cleared custom LLM fallback hierarchy; reverted to automatic multi-tier failover.")
+    except Exception as e:
+        logger.warning("Failed saving fallback hierarchy file: %s", e)
+
+
+def get_custom_fallback_chain() -> Optional[List[Dict[str, str]]]:
+    """Returns the currently active user-defined fallback hierarchy, if configured."""
+    global _CUSTOM_FALLBACK_CHAIN
+    if _CUSTOM_FALLBACK_CHAIN is None:
+        load_custom_fallback_chain()
+    return _CUSTOM_FALLBACK_CHAIN
+
+
+# Auto-load persisted fallback hierarchy on module startup
+load_custom_fallback_chain()
+
+
+def _get_fallback_primary_model(prov: str) -> str:
+    m = getattr(settings, f"{prov}_model", None)
+    if m:
+        return m
+    if prov == "agnes":
+        return "agnes-2.5-flash"
+    elif prov == "groq":
+        return "openai/gpt-oss-20b"
+    elif prov == "nvidia_nim":
+        return "meta/llama-3.2-11b-vision-instruct"
+    elif prov == "gemini":
+        return "gemini-flash-latest"
+    elif prov == "openrouter":
+        return "openrouter/free"
+    elif prov == "ollama":
+        return "qwen3.5:2b-q4_K_M"
+    return "default"
 
 
 def get_last_fallback_event() -> Optional[Dict[str, Any]]:
@@ -600,8 +804,8 @@ class DynamicLLMClient(BaseLLMClient):
     def get_fallback_chain(self) -> List[Tuple[str, str, BaseLLMClient]]:
         """
         Builds the ordered sequence of candidate targets (provider, model, client)
-        starting with the primary user configuration, followed by intra-provider alternatives,
-        and finally cross-provider fallbacks with verified credentials.
+        starting with the primary user configuration, followed by user-defined custom hierarchy
+        or automatic multi-tier alternatives.
         """
         chain: List[Tuple[str, str, BaseLLMClient]] = []
         seen_targets = set()
@@ -629,25 +833,36 @@ class DynamicLLMClient(BaseLLMClient):
                 seen_targets.add(target_key)
                 chain.append((prov.lower(), mod, cli))
 
-        # 1. Primary configured model
-        primary_prov = settings.llm_provider.lower()
-        primary_model = getattr(settings, f"{primary_prov}_model", None)
-        if not primary_model:
-            if primary_prov == "groq":
-                primary_model = "openai/gpt-oss-20b"
-            elif primary_prov == "nvidia_nim":
-                primary_model = "meta/llama-3.2-11b-vision-instruct"
-            elif primary_prov == "gemini":
-                primary_model = "gemini-flash-latest"
-            elif primary_prov == "openrouter":
-                primary_model = "openrouter/free"
-            elif primary_prov == "ollama":
-                primary_model = "qwen3.5:2b-q4_K_M"
+        # Check for user-defined custom fallback hierarchy first
+        custom = get_custom_fallback_chain()
+        if custom and len(custom) > 0:
+            primary_prov = settings.llm_provider.lower()
+            primary_model = _get_fallback_primary_model(primary_prov)
 
+            # Ensure current primary model is Tier 1
+            add_candidate(primary_prov, primary_model)
+
+            # Append custom sequence configured by the user
+            for target in custom:
+                t_prov = (target.get("provider") or "").lower()
+                t_mod = target.get("model")
+                if not t_prov or not t_mod:
+                    continue
+                t_key = getattr(settings, f"{t_prov}_api_key", None)
+                t_url = getattr(settings, f"{t_prov}_base_url", None)
+                add_candidate(t_prov, t_mod, key=t_key, url=t_url)
+
+            if chain:
+                return chain
+
+        # 1. Primary configured model (Default automatic chain)
+        primary_prov = settings.llm_provider.lower()
+        primary_model = _get_fallback_primary_model(primary_prov)
         add_candidate(primary_prov, primary_model)
 
         # 2. Intra-provider backup models for primary provider
         intra_fallbacks = {
+            "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
             "groq": ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"],
             "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.3-70b-instruct"],
             "gemini": ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"],
@@ -657,8 +872,8 @@ class DynamicLLMClient(BaseLLMClient):
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
             add_candidate(primary_prov, fallback_mod)
 
-        # 3. Cross-provider fallbacks (ordered by speed and reliability)
-        provider_priority = ["groq", "openrouter", "gemini", "nvidia_nim", "ollama"]
+        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> OpenRouter -> NVIDIA -> Ollama)
+        provider_priority = ["groq", "gemini", "agnes", "openrouter", "nvidia_nim", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue
@@ -666,14 +881,18 @@ class DynamicLLMClient(BaseLLMClient):
             if p == "groq" and settings.groq_api_key:
                 add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_api_key)
                 add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_api_key)
-            elif p == "nvidia_nim" and settings.nvidia_nim_api_key:
-                add_candidate("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct", key=settings.nvidia_nim_api_key)
-                add_candidate("nvidia_nim", "meta/llama-3.1-8b-instruct", key=settings.nvidia_nim_api_key)
             elif p == "gemini" and settings.gemini_api_key:
                 add_candidate("gemini", settings.gemini_model or "gemini-flash-latest", key=settings.gemini_api_key)
                 add_candidate("gemini", "gemini-2.0-flash", key=settings.gemini_api_key)
+            elif p == "agnes" and settings.agnes_api_key:
+                add_candidate("agnes", settings.agnes_model or "agnes-2.5-flash", key=settings.agnes_api_key)
+                add_candidate("agnes", "agnes-2.5-flash", key=settings.agnes_api_key)
+                add_candidate("agnes", "agnes-3.0-flash", key=settings.agnes_api_key)
             elif p == "openrouter" and settings.openrouter_api_key:
                 add_candidate("openrouter", settings.openrouter_model or "openrouter/free", key=settings.openrouter_api_key)
+            elif p == "nvidia_nim" and settings.nvidia_nim_api_key:
+                add_candidate("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct", key=settings.nvidia_nim_api_key)
+                add_candidate("nvidia_nim", "meta/llama-3.1-8b-instruct", key=settings.nvidia_nim_api_key)
             elif p == "ollama":
                 # Quick probe to see if local Ollama is responding
                 if _is_local_port_open("127.0.0.1", 11434):
@@ -697,12 +916,31 @@ class DynamicLLMClient(BaseLLMClient):
         attempt_history: List[str] = []
 
         for idx, (prov, mod, client) in enumerate(chain):
+            t0 = time.perf_counter()
             try:
                 result = client.generate_text(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
                 )
+                lat_ms = (time.perf_counter() - t0) * 1000.0
+                usage = getattr(client, "last_usage", None) or {}
+                p_tok = usage.get("prompt_tokens") or max(1, len(prompt) // 4)
+                c_tok = usage.get("completion_tokens") or max(1, len(result) // 4)
+                t_tok = usage.get("total_tokens") or (p_tok + c_tok)
+
+                from backend.services.token_tracker import token_tracker
+                self._last_usage = token_tracker.record_usage(
+                    provider=prov,
+                    model=mod,
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    action=getattr(self, "_current_action", "general"),
+                    latency_ms=lat_ms,
+                    status="success" if idx == 0 else "failover",
+                )
+
                 if idx > 0:
                     _LAST_FALLBACK_EVENT = {
                         "timestamp": time.time(),
@@ -756,6 +994,7 @@ class DynamicLLMClient(BaseLLMClient):
         attempt_history: List[str] = []
 
         for idx, (prov, mod, client) in enumerate(chain):
+            t0 = time.perf_counter()
             try:
                 result = client.generate_structured(
                     prompt=prompt,
@@ -763,6 +1002,24 @@ class DynamicLLMClient(BaseLLMClient):
                     system_prompt=system_prompt,
                     temperature=temperature,
                 )
+                lat_ms = (time.perf_counter() - t0) * 1000.0
+                usage = getattr(client, "last_usage", None) or {}
+                p_tok = usage.get("prompt_tokens") or max(1, len(prompt) // 4)
+                c_tok = usage.get("completion_tokens") or max(1, len(str(result)) // 4)
+                t_tok = usage.get("total_tokens") or (p_tok + c_tok)
+
+                from backend.services.token_tracker import token_tracker
+                self._last_usage = token_tracker.record_usage(
+                    provider=prov,
+                    model=mod,
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    action=getattr(self, "_current_action", "general"),
+                    latency_ms=lat_ms,
+                    status="success" if idx == 0 else "failover",
+                )
+
                 if idx > 0:
                     _LAST_FALLBACK_EVENT = {
                         "timestamp": time.time(),
@@ -799,6 +1056,16 @@ class DynamicLLMClient(BaseLLMClient):
             f"All LLM models in fallback chain failed for schema '{response_model.__name__}'. "
             f"Attempted: {'; '.join(attempt_history)}. Last error: {last_error}"
         ) from last_error
+
+    def get_last_usage(self) -> Optional[Any]:
+        """Returns the token usage info for the most recent successful LLM call."""
+        from backend.services.token_tracker import token_tracker
+        return getattr(self, "_last_usage", None) or token_tracker.get_last_usage()
+
+    def set_action_context(self, action: str) -> None:
+        """Sets action tag (e.g. 'candidate_evaluation', 'cv_extraction', 'job_parsing') for usage logs."""
+        self._current_action = action
+
 
 
 def get_llm_client(

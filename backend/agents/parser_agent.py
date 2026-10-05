@@ -53,15 +53,20 @@ Guidelines:
 3. Education: Extract degrees, fields of study, institutions, graduation years, GPA / grades (e.g. '3.9/4.0', '9.85/10'), honors (e.g. 'Magna Cum Laude', 'First Class Honours'), thesis titles, and exchange programs (e.g. 'Erasmus+').
 4. Skills: Aggregate all technical, methodological, and soft skills into a flat list. Do NOT extract single common English words (like 'go', 'can', 'teams') as skills unless explicitly listed in a skills section.
 5. Certifications: List any professional licenses, certificates, driving licenses, or accredited courses.
-6. Projects: Extract all technical, academic, personal, or open-source projects into projects:
-   - project_name, description, technologies, start_date, end_date, project_url.
+6. Projects & Portfolio: You MUST extract all technical, academic, personal, client, or open-source projects into `projects`:
+   - project_name: Title or name of the project.
+   - description: CRITICAL: You MUST extract the comprehensive, relevant description of the project (problem solved, architecture, candidate's key implementation contributions, features, business/technical impact, and outcomes). Extract this as a list of descriptive bullet points or sentences. NEVER leave description empty if the CV has any explanatory sentences, bullet points, or paragraphs explaining the project!
+   - technologies: Tools, libraries, frameworks, languages, and databases used.
+   - start_date, end_date: Dates or timeline if mentioned.
+   - project_url: GitHub repository, demo, or portfolio link.
 7. Languages: Extract ALL spoken and written languages and their CEFR proficiencies (Native, C2, C1, B2, B1, A2, A1, Fluent, Intermediate). In multi-column Europass tables, extract every column language and its level.
 8. Publications & Patents: Extract any academic papers or preprints into publications, and any filed or granted intellectual property into patents.
 9. Logistics & Availability: Extract notice period (e.g. 'Immediate', '1 month'), earliest start date, relocation willingness, travel percentage, salary expectations, work permits/authorizations, and security clearances into logistics.
-10. Custom Sections (Fallback for unmapped categories): Extract ANY other sections with professional or community relevance into custom_sections (e.g. Volunteering, Awards, Conferences, Extracurriculars).
-11. Summary: Include the professional bio, objective, or 'about me' if present.
-12. Unused Details: Identify purely personal or demographic items (date of birth, place of birth, nationality, gender, marital status) and place them into unused_details.
-13. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
+10. Exhaustive Extraction & Custom Sections: Extract ALL information without exception. Never skip or ignore any text or section. If certain information seems out of scope, unusual, or peripheral at first glance (e.g., personal hobbies, sports, creative/artistic interests, volunteer work, student associations, hackathons, non-technical awards, community service, memberships, conferences, workshops, personal references, disclosures, administrative notes, side projects), extract them! Place distinct named extra sections into `custom_sections` (with section_title such as 'Volunteering', 'Honors & Awards', 'Interests & Hobbies', 'Memberships', 'Conferences & Workshops', 'Extracurricular Activities', etc.).
+11. Miscellaneous / Other Information: Place all other facts, unmapped details, hobbies, or unusual information that does not fit into the standard categories into `miscellaneous` (list of strings). Make sure that NO detail, note, or remark in the candidate's CV is ignored or overlooked!
+12. Summary: Include the professional bio, objective, or 'about me' if present.
+13. Unused Details: Identify purely personal or demographic items (date of birth, place of birth, nationality, gender, marital status) and place them into unused_details.
+14. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
 
 
 def normalize_extracted_text(text: str) -> str:
@@ -405,11 +410,16 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
     # -------------------------------------------------------------------------
     existing_sec_titles = {s.section_title.strip().lower() for s in parsed_cv.custom_sections if s.section_title}
     custom_section_patterns = [
-        ("Volunteering", r"\b(VOLUNTEERING|VOLUNTEER WORK|VOLUNTEER EXPERIENCE)\b"),
-        ("Honors & Awards", r"\b(HONORS & AWARDS|AWARDS & HONORS|HONOURS AND AWARDS|AWARDS)\b"),
+        ("Volunteering", r"\b(VOLUNTEERING|VOLUNTEER WORK|VOLUNTEER EXPERIENCE|COMMUNITY SERVICE)\b"),
+        ("Honors & Awards", r"\b(HONORS & AWARDS|AWARDS & HONORS|HONOURS AND AWARDS|AWARDS|HONORS)\b"),
         ("Publications", r"\b(PUBLICATIONS|RESEARCH PAPERS)\b"),
         ("Conferences & Hackathons", r"\b(CONFERENCES & HACKATHONS|HACKATHONS|CONFERENCES)\b"),
         ("Extracurricular Activities", r"\b(EXTRACURRICULAR ACTIVITIES|EXTRACURRICULAR|COMMUNITY INVOLVEMENT)\b"),
+        ("Interests & Hobbies", r"\b(HOBBIES & INTERESTS|INTERESTS & HOBBIES|HOBBIES|INTERESTS|PERSONAL INTERESTS|ACTIVITIES & INTERESTS|PASSIONS)\b"),
+        ("Memberships & Affiliations", r"\b(MEMBERSHIPS & AFFILIATIONS|PROFESSIONAL MEMBERSHIPS|MEMBERSHIPS|AFFILIATIONS|ASSOCIATIONS)\b"),
+        ("Workshops & Training", r"\b(WORKSHOPS & TRAINING|WORKSHOPS & SEMINARS|SEMINARS & WORKSHOPS|WORKSHOPS|SEMINARS|TRAINING & COURSES)\b"),
+        ("References", r"\b(REFERENCES|REFEREES|RECOMMENDATIONS)\b"),
+        ("Miscellaneous / Other Information", r"\b(OTHER INFORMATION|MISCELLANEOUS|ADDITIONAL INFORMATION|OTHER DETAILS|ANNEXES)\b"),
     ]
     for sec_title, pat in custom_section_patterns:
         if sec_title.lower() in existing_sec_titles:
@@ -633,25 +643,145 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
                 parsed_cv.contact_info.linkedin_url = f"https://linkedin.com/in/{li_handle.group(1)}"
 
     # -------------------------------------------------------------------------
-    # 6.5 AUDIT & ENRICH PROJECTS
+    # 6.5 AUDIT & ENRICH PROJECTS & DESCRIPTIONS
     # -------------------------------------------------------------------------
+    # A. Recover any projects mapped into custom_sections by the LLM
+    if parsed_cv.custom_sections:
+        remaining_custom = []
+        for sec in parsed_cv.custom_sections:
+            title_lower = sec.section_title.strip().lower()
+            if any(kw in title_lower for kw in ["project", "portfolio"]):
+                # This custom section actually contains projects
+                for item in sec.items:
+                    item_str = str(item).strip()
+                    if not item_str:
+                        continue
+                    pm = re.match(r"^([A-Za-z0-9\s\-_]{3,40}?)\s*[:–\-—]\s*(.*)$", item_str, re.DOTALL)
+                    if pm:
+                        p_name = pm.group(1).strip()
+                        p_desc = pm.group(2).strip()
+                        existing_names = {p.project_name.lower() for p in parsed_cv.projects}
+                        if p_name.lower() not in existing_names:
+                            parsed_cv.projects.append(
+                                Project(
+                                    project_name=p_name,
+                                    description=[p_desc] if p_desc else [],
+                                )
+                            )
+                    else:
+                        existing_names = {p.project_name.lower() for p in parsed_cv.projects}
+                        if item_str[:30].lower() not in existing_names:
+                            parsed_cv.projects.append(
+                                Project(
+                                    project_name=item_str[:40].strip(),
+                                    description=[item_str],
+                                )
+                            )
+            else:
+                remaining_custom.append(sec)
+        parsed_cv.custom_sections = remaining_custom
+
+    # B. If no projects were parsed, extract projects section from raw_text
     if not parsed_cv.projects:
-        proj_sec_m = re.search(r"(?:^|\n)\s*(?:PROJECTS|TECHNICAL PROJECTS)[\s\S]*?(?=(?:LANGUAGE|VOLUNTEERING|PUBLICATIONS|$))", raw_text, re.IGNORECASE)
+        proj_sec_m = re.search(
+            r"(?:^|\n)\s*(?:PROJECTS\s*(?:&|AND)?\s*PORTFOLIO|TECHNICAL PROJECTS|KEY PROJECTS|PERSONAL PROJECTS|RELEVANT PROJECTS|SELECTED PROJECTS|PORTFOLIO|PROJECTS)[\s\S]*?(?=(?:EDUCATION|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|SKILLS|LANGUAGE|VOLUNTEERING|VOLUNTEER|PUBLICATIONS|CERTIFICATIONS|INTERESTS|HONORS|$))",
+            raw_text,
+            re.IGNORECASE,
+        )
         if proj_sec_m:
             sec_text = proj_sec_m.group(0)
-            for m in re.finditer(r"\[\s*([0-9\/\.\-]+|\w+)\s*[–\-—\?]\s*([0-9\/\.\-]+|\w+)\s*\]\s*\n+([^\n\r:]+)", sec_text):
-                s_date = m.group(1).strip()
-                e_date = m.group(2).strip()
-                p_name = m.group(3).strip()
-                p_clean = re.sub(r"^[^\w]+|[^\w]+$", "", re.sub(r"[^\x20-\x7E\u00C0-\u024F]", " ", p_name)).strip()
-                if p_clean and len(p_clean) > 3:
-                    parsed_cv.projects.append(
-                        Project(
-                            project_name=p_clean,
-                            start_date=s_date,
-                            end_date=e_date,
+            matches = list(re.finditer(r"\[\s*([0-9\/\.\-]+|\w+)\s*[–\-—\?]\s*([0-9\/\.\-]+|\w+)\s*\]\s*\n+([^\n\r:]+)", sec_text))
+            if matches:
+                for idx, m in enumerate(matches):
+                    s_date = m.group(1).strip()
+                    e_date = m.group(2).strip()
+                    p_name = m.group(3).strip()
+                    p_clean = re.sub(r"^[^\w]+|[^\w]+$", "", re.sub(r"[^\x20-\x7E\u00C0-\u024F]", " ", p_name)).strip()
+
+                    chunk_start = m.end()
+                    chunk_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(sec_text)
+                    proj_body = sec_text[chunk_start:chunk_end]
+
+                    bullets = []
+                    techs = []
+                    url = None
+                    for line in proj_body.splitlines():
+                        line_clean = line.strip()
+                        if not line_clean:
+                            continue
+                        url_m = re.search(r"https?://\S+|github\.com/\S+", line_clean)
+                        if url_m and not url:
+                            url = url_m.group(0).rstrip(".,)")
+                        tech_m = re.match(r"^(?:Technologies|Tech stack|Tools|Built with|Environment)[:\s]+(.*)$", line_clean, re.IGNORECASE)
+                        if tech_m:
+                            tech_str = tech_m.group(1).strip()
+                            techs.extend([t.strip() for t in re.split(r"[,;|•]", tech_str) if t.strip()])
+                        else:
+                            clean_bullet = re.sub(r"^[•\-\*–+]\s*", "", line_clean).strip()
+                            if len(clean_bullet) > 5:
+                                bullets.append(clean_bullet)
+
+                    if p_clean and len(p_clean) > 2:
+                        parsed_cv.projects.append(
+                            Project(
+                                project_name=p_clean,
+                                description=bullets,
+                                technologies=techs,
+                                start_date=s_date,
+                                end_date=e_date,
+                                project_url=url,
+                            )
                         )
-                    )
+
+    # C. Audit, enrich, and guarantee description for EVERY project in parsed_cv.projects
+    for proj in parsed_cv.projects:
+        raw_desc = proj.description if isinstance(proj.description, list) else ([str(proj.description)] if proj.description else [])
+        clean_desc = [re.sub(r"^[•\-\*–+]\s*", "", str(d)).strip() for d in raw_desc if d and str(d).strip()]
+        proj.description = clean_desc
+
+        # If description is missing or empty, search raw_text for the project name and extract its bullet points/description
+        if not proj.description or len(proj.description) == 0:
+            esc_name = re.escape(proj.project_name.strip()[:30])
+            p_find = re.search(rf"(?:^|\n)[^\w\n]*{esc_name}[^\n]*\n([\s\S]{{10,1200}}?)(?=(?:\n\s*\[\s*[0-9]|\n\s*[A-Z\s]{{4,}}|\n\s*•|\n\s*Project|\Z))", raw_text, re.IGNORECASE)
+            if p_find:
+                found_text = p_find.group(1)
+                recovered_bullets = []
+                for line in found_text.splitlines():
+                    line_s = line.strip()
+                    if not line_s or len(line_s) < 5:
+                        continue
+                    if re.match(r"^(?:EDUCATION|WORK EXPERIENCE|PROFESSIONAL EXPERIENCE|SKILLS|LANGUAGES|CERTIFICATIONS)", line_s, re.IGNORECASE):
+                        break
+                    t_match = re.match(r"^(?:Technologies|Tech stack|Tools|Built with)[:\s]+(.*)$", line_s, re.IGNORECASE)
+                    if t_match and not proj.technologies:
+                        proj.technologies = [t.strip() for t in re.split(r"[,;|•]", t_match.group(1)) if t.strip()]
+                        continue
+                    u_match = re.search(r"https?://\S+|github\.com/\S+", line_s)
+                    if u_match and not proj.project_url:
+                        proj.project_url = u_match.group(0).rstrip(".,)")
+                        continue
+
+                    cleaned_line = re.sub(r"^[•\-\*–+]\s*", "", line_s).strip()
+                    if len(cleaned_line) > 5 and not re.match(r"^[0-9\/\.\-\s–]+$", cleaned_line):
+                        recovered_bullets.append(cleaned_line)
+                if recovered_bullets:
+                    proj.description = recovered_bullets[:8]
+
+        # Extract technologies if missing from description text
+        if not proj.technologies and proj.description:
+            for d in proj.description:
+                t_match = re.search(r"(?:Technologies|Tech stack|Tools|Built with)[:\s]+([^\.\n]+)", d, re.IGNORECASE)
+                if t_match:
+                    proj.technologies = [t.strip() for t in re.split(r"[,;|•]", t_match.group(1)) if t.strip()]
+                    break
+
+        # Extract project_url if missing from description
+        if not proj.project_url and proj.description:
+            for d in proj.description:
+                u_match = re.search(r"(https?://[^\s\)]+|github\.com/[^\s\)]+)", d)
+                if u_match:
+                    proj.project_url = u_match.group(1).rstrip(".,)")
+                    break
 
     # -------------------------------------------------------------------------
     # 7. AUDIT & ENRICH LOGISTICS & AVAILABILITY
@@ -731,6 +861,55 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
                                 status=status,
                             )
                         )
+
+    # -------------------------------------------------------------------------
+    # 9. AUDIT & ENRICH MISCELLANEOUS & OUT-OF-SCOPE DETAILS (NO DETAIL OVERLOOKED)
+    # -------------------------------------------------------------------------
+    existing_misc = {m.strip().lower() for m in parsed_cv.miscellaneous if m}
+
+    # a) Collect peripheral or unmapped items from custom sections into miscellaneous
+    for sec in parsed_cv.custom_sections:
+        for item in sec.items:
+            clean_item = item.strip()
+            if clean_item and clean_item.lower() not in existing_misc:
+                tagged_entry = f"[{sec.section_title}] {clean_item}"
+                if tagged_entry.lower() not in existing_misc:
+                    parsed_cv.miscellaneous.append(tagged_entry)
+                    existing_misc.add(tagged_entry.lower())
+                    existing_misc.add(clean_item.lower())
+
+    # b) Check for inline hobbies / interests declaration (e.g. "Interests: Chess, hiking, robotics")
+    inline_interest_m = re.search(r"(?:Interests|Hobbies|Personal interests|Passions)[:\s]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if inline_interest_m:
+        interest_text = inline_interest_m.group(1).strip()
+        if interest_text and interest_text.lower() not in existing_misc:
+            entry = f"[Interests & Hobbies] {interest_text}"
+            if entry.lower() not in existing_misc:
+                parsed_cv.miscellaneous.append(entry)
+                existing_misc.add(entry.lower())
+                existing_misc.add(interest_text.lower())
+
+    # c) Check for inline other / additional information blocks
+    inline_other_m = re.search(r"(?:Other information|Additional information|Miscellaneous|Other details)[:\s]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if inline_other_m:
+        other_val = inline_other_m.group(1).strip()
+        if other_val and other_val.lower() not in existing_misc:
+            entry = f"[Additional Information] {other_val}"
+            if entry.lower() not in existing_misc:
+                parsed_cv.miscellaneous.append(entry)
+                existing_misc.add(entry.lower())
+                existing_misc.add(other_val.lower())
+
+    # d) If miscellaneous has items but custom_sections does not have a Miscellaneous section, add one
+    sec_titles_set = {s.section_title.strip().lower() for s in parsed_cv.custom_sections}
+    if parsed_cv.miscellaneous and not any("miscellaneous" in st or "other" in st for st in sec_titles_set):
+        parsed_cv.custom_sections.append(
+            CustomSection(
+                section_title="Miscellaneous / Other Information",
+                items=list(parsed_cv.miscellaneous),
+                is_relevant=True,
+            )
+        )
 
     return parsed_cv
 

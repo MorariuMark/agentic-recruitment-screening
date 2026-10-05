@@ -1,0 +1,71 @@
+{
+  "title": "Senior Cloud & DevOps Engineer",
+  "department": "Infrastructure & Cloud Platforms",
+  "seniority_level": "Senior",
+  "location": "Bucharest, Romania / Hybrid",
+  "work_model": "Hybrid",
+  "employment_type": "Full-time",
+  "languages": [
+    "English",
+    "Romanian"
+  ],
+  "requirements": [
+    {
+      "id": "req_k8s_containerization",
+      "category": "must_have",
+      "weight": 5.0,
+      "title": "Kubernetes & Docker Orchestration",
+      "description": "Production experience managing Kubernetes clusters (EKS/GKE), Helm charts, and containerized microservices.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_iac_terraform",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Infrastructure as Code with Terraform",
+      "description": "Demonstrated hands-on experience provisioning multi-cloud infrastructure via Terraform / OpenTofu.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_cicd_pipelines",
+      "category": "must_have",
+      "weight": 3.0,
+      "title": "CI/CD Pipeline Automation",
+      "description": "Building and maintaining automated deployment pipelines using GitHub Actions, GitLab CI, or ArgoCD.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_aws_gcp_cloud",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Cloud Provider Architecture (AWS or GCP)",
+      "description": "Deep architecture knowledge of AWS (VPC, IAM, RDS, S3) or GCP core services.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_monitoring_prometheus_grafana",
+      "category": "nice_to_have",
+      "weight": 2.0,
+      "title": "Observability with Prometheus & Grafana",
+      "description": "Experience configuring Prometheus metrics collection, Grafana dashboards, and distributed tracing.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_golang_python_scripting",
+      "category": "nice_to_have",
+      "weight": 2.0,
+      "title": "Automation Scripting (Python or Go)",
+      "description": "Scripting capabilities in Python or Golang for infrastructure automation and CLI tools.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_soft_incident_mgmt",
+      "category": "soft_skill",
+      "weight": 1.5,
+      "title": "Incident Management & Post-Mortems",
+      "description": "Strong communication during on-call incidents and ability to write blameless post-mortems.",
+      "minimum_years_experience": null
+    }
+  ],
+  "raw_text": "# Senior Cloud & DevOps Engineer\n\n**Department:** Infrastructure & Cloud Platforms  \n**Seniority:** Senior  \n**Location:** Bucharest, Romania / Hybrid  \n**Work model:** Hybrid  \n**Employment type:** Full-time  \n**Languages:** English, Romanian\n\n## Company Overview\n\nNovaStack Solutions is an enterprise IT services partner delivering cloud migration, platform engineering, and AI-enabled operations to clients across the EMEA region. Our internal Platform group owns the golden path: landing zones, developer tooling, and production observability used by 40+ delivery squads.\n\n## About the Role\n\nWe are looking for a Senior Cloud & DevOps Engineer to join the Infrastructure & Cloud Platforms team. You will design, automate, and operate our multi-cloud Kubernetes estate, own the CI/CD toolchain, and raise the bar on reliability, cost-efficiency, and security for every workload we run.\n\n## Responsibilities\n\n- Design, deploy, and operate production Kubernetes clusters (AWS EKS / Google GKE) for internal and client-facing workloads.\n- Build and maintain infrastructure as code modules in Terraform / OpenTofu, enforcing tagging, policy, and cost guardrails.\n- Own CI/CD pipelines (GitHub Actions, GitLab CI, ArgoCD) from commit to production, including progressive delivery strategies.\n- Implement golden-path developer platforms: self-service environments, scaffolding, secrets management, and artifact registries.\n- Define and improve observability: Prometheus metrics, Grafana dashboards, centralized logging, and distributed tracing.\n- Drive incident response, on-call rotations, root-cause analysis, and blameless post-mortems.\n- Partner with Security on cloud posture management, IAM hardening, and vulnerability remediation SLAs.\n- Mentor mid-level engineers and contribute to architecture decision records (ADRs).\n\n## Minimum Qualifications\n\n- 5+ years of professional experience in DevOps, SRE, or Platform Engineering roles.\n- 4+ years of hands-on Kubernetes administration in production.\n- 3+ years of Terraform (or OpenTofu) in multi-environment setups.\n- Strong knowledge of at least one major cloud provider (AWS or GCP).\n- Experience with Linux systems, networking fundamentals (DNS, TLS, HTTP), and GitOps workflows.\n- Working proficiency in English (written and spoken).\n\n## Nice to Have\n\n- Certifications: CKA/CKAD, AWS Solutions Architect Associate/Professional, or GCP equivalent.\n- Experience with service mesh (Istio/Linkerd), Kyverno/OPA policies, or Karpenter/Cluster Autoscaler tuning.\n- Scripting in Python or Go for automation and internal tooling.\n- Exposure to FinOps practices and cloud cost optimization.\n\n## Soft Skills\n\n- Calm and structured communication during production incidents.\n- Ownership mindset: you follow through from detection to prevention.\n- Ability to write clear documentation and blameless post-mortems.\n\n## What We Offer\n\n- Hybrid work model (Bucharest office, 2 days/week on site) with flexible core hours.\n- Annual learning budget for certifications and conferences.\n- Private medical insurance, meal cards, and wellbeing allowance.\n- Modern laptop, home-office budget, and a genuine greenfield tooling landscape.\n- Career path towards Staff/Principal Engineer or Platform Team Lead.\n\n## How to Apply\n\nSend your CV and a short note about the most complex platform you have built. We review applications on a rolling basis and aim to respond within 5 business days."
+}

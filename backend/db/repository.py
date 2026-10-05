@@ -4,6 +4,7 @@ Asynchronous persistence repository providing CRUD operations for Candidates,
 Job Requisitions, Semantic Evaluations, Interview Plans, and Audit Logs.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID, uuid4
 
@@ -46,24 +47,35 @@ class DatabaseRepository:
             raw_dict = parsed_cv.model_dump(mode="json")
             anon_dict = anonymized_candidate.model_dump(mode="json")
 
+            raw_contact = raw_dict.get("contact_info") or {}
+            c_name = raw_contact.get("full_name")
+            if not c_name and filename:
+                c_name = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+            name_to_save = c_name or f"Candidate-{cid_str[:8].upper()}"
+
+            now = datetime.now(timezone.utc)
             if existing:
                 existing.original_filename = filename or existing.original_filename
+                existing.full_name_redacted = name_to_save
                 existing.raw_cv_json = raw_dict
                 existing.anonymized_cv_json = anon_dict
                 existing.sanitized_text = anonymized_candidate.sanitized_text
                 existing.demographics_json = anonymized_candidate.demographic_data
                 existing.chunks_indexed = chunks_indexed
+                existing.updated_at = now
                 record = existing
             else:
                 record = CandidateModel(
                     id=cid_str,
                     original_filename=filename,
-                    full_name_redacted="[CANDIDATE_NAME]",
+                    full_name_redacted=name_to_save,
                     raw_cv_json=raw_dict,
                     anonymized_cv_json=anon_dict,
                     sanitized_text=anonymized_candidate.sanitized_text,
                     demographics_json=anonymized_candidate.demographic_data,
                     chunks_indexed=chunks_indexed,
+                    created_at=now,
+                    updated_at=now,
                 )
                 s.add(record)
 
@@ -103,6 +115,27 @@ class DatabaseRepository:
             stmt = select(CandidateModel).order_by(desc(CandidateModel.updated_at)).offset(offset).limit(limit)
             result = await s.execute(stmt)
             return list(result.scalars().all())
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
+    async def delete_candidate(
+        candidate_id: Union[UUID, str],
+        session: Optional[AsyncSession] = None,
+    ) -> bool:
+        """Deletes a candidate by primary UUID, cascading to evaluations and interview plans."""
+        cid_str = str(candidate_id)
+
+        async def _op(s: AsyncSession) -> bool:
+            record = await s.get(CandidateModel, cid_str)
+            if not record:
+                return False
+            await s.delete(record)
+            await s.commit()
+            return True
 
         if session:
             return await _op(session)

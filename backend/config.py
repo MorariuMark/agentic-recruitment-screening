@@ -16,16 +16,30 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = True
 
-    # Active LLM Provider: 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'
-    llm_provider: Literal["groq", "openrouter", "nvidia_nim", "gemini", "ollama"] = Field(
+    # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'
+    llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama"] = Field(
         default="groq",
-        description="Active LLM backend provider ('groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama')",
+        description="Active LLM backend provider ('agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama')",
     )
 
     # Global structured output compatibility mode: 'auto', 'json_object', 'schema_prompt'
     compatibility_mode: Literal["auto", "json_object", "schema_prompt"] = Field(
         default="auto",
         description="Structured JSON compatibility strategy",
+    )
+
+    # Agnes AI Settings
+    agnes_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for Agnes AI (platform.agnes-ai.com)",
+    )
+    agnes_base_url: str = Field(
+        default="https://apihub.agnes-ai.com/v1",
+        description="Base URL for Agnes AI OpenAI endpoint",
+    )
+    agnes_model: str = Field(
+        default="agnes-2.5-flash",
+        description="Agnes AI model identifier",
     )
 
     # OpenRouter Settings

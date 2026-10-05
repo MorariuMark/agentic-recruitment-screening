@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Antigravity Talent AI | Enterprise Recruitment Screening Platform",
+  title: "Atos Screening AI | Enterprise Recruitment Platform",
   description:
     "Autonomous B2B talent screening engine with high-volume CV parsing, asymmetric RAG verification, and auditable human-in-the-loop decision gating.",
 };

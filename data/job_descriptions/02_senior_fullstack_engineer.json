@@ -1,0 +1,71 @@
+{
+  "title": "Senior Full-Stack Engineer",
+  "department": "Digital Product Engineering",
+  "seniority_level": "Senior",
+  "location": "Remote, Romania",
+  "work_model": "Remote",
+  "employment_type": "Full-time",
+  "languages": [
+    "English",
+    "Romanian"
+  ],
+  "requirements": [
+    {
+      "id": "req_typescript_react",
+      "category": "must_have",
+      "weight": 5.0,
+      "title": "TypeScript & React Frontend Expertise",
+      "description": "Building complex, accessible SPAs with React, TypeScript, state management, and component libraries.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_backend_node_dotnet",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Backend APIs (Node.js or .NET)",
+      "description": "Designing and shipping REST/GraphQL services with Node.js (NestJS) or .NET, including auth and validation layers.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_sql_design",
+      "category": "must_have",
+      "weight": 3.5,
+      "title": "Relational Data Modeling & SQL",
+      "description": "Strong SQL skills, schema design, indexing strategies, and query optimization on PostgreSQL.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_testing_quality",
+      "category": "must_have",
+      "weight": 3.0,
+      "title": "Automated Testing Culture",
+      "description": "Unit, integration, and end-to-end testing with Jest/Vitest, Playwright or Cypress; comfortable with TDD practices.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_cloud_deploy",
+      "category": "nice_to_have",
+      "weight": 2.0,
+      "title": "Cloud Deployment Exposure",
+      "description": "Deploying and debugging applications on AWS/Azure using containers and managed services.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_ai_tooling",
+      "category": "nice_to_have",
+      "weight": 2.0,
+      "title": "AI-Assisted Development & LLM Features",
+      "description": "Practical use of AI coding assistants and/or integrating LLM APIs (RAG, streaming chat) into product features.",
+      "minimum_years_experience": 1
+    },
+    {
+      "id": "req_soft_product_mindset",
+      "category": "soft_skill",
+      "weight": 1.5,
+      "title": "Product Ownership & Collaboration",
+      "description": "Proactive communication with product and design, pragmatic scoping, and mentoring of junior engineers.",
+      "minimum_years_experience": null
+    }
+  ],
+  "raw_text": "# Senior Full-Stack Engineer\n\n**Department:** Digital Product Engineering  \n**Seniority:** Senior  \n**Location:** Remote, Romania  \n**Work model:** Remote  \n**Employment type:** Full-time  \n**Languages:** English, Romanian\n\n## Company Overview\n\nNovaStack Solutions builds enterprise-grade digital products for banking, retail, and telecom clients. Our product squads are cross-functional, outcome-driven, and fully remote-first, shipping weekly to production environments used by millions of end users.\n\n## About the Role\n\nAs a Senior Full-Stack Engineer you will own features end to end: from UI polish and accessibility, through API design and data modeling, to deployment and monitoring. You will shape engineering standards, review code, and act as a technical counterpart to Product and Design.\n\n## Responsibilities\n\n- Deliver user-facing features across the entire stack (React/TypeScript frontend, Node.js or .NET backend, PostgreSQL).\n- Design clean, versioned REST/GraphQL APIs with proper authN/authZ, validation, and error contracts.\n- Optimize frontend performance (bundle size, rendering, caching) and backend query performance.\n- Write and enforce automated test suites; participate in CI quality gates and code reviews.\n- Collaborate in discovery sessions, translate business rules into technical designs, and estimate delivery scope realistically.\n- Instrument features with logging, metrics, and error tracking (Sentry/OpenTelemetry).\n- Mentor mid-level developers and drive refactoring of legacy modules.\n\n## Minimum Qualifications\n\n- 5+ years of professional software engineering experience, with at least 3 years full-stack delivery.\n- Expert-level TypeScript and React; solid understanding of the DOM, browser performance, and accessibility (WCAG).\n- Production experience with Node.js/NestJS or .NET Web API.\n- Strong PostgreSQL skills including migrations and query tuning.\n- Experience with Git workflows, code review, and trunk-based or GitFlow branching.\n- English proficiency for daily written and spoken communication.\n\n## Nice to Have\n\n- Experience with Next.js, React Query/TanStack, or micro-frontend architectures.\n- Familiarity with message brokers (RabbitMQ/Kafka) and event-driven patterns.\n- Exposure to AI features: vector databases, embeddings, or LLM API integration.\n- Contributions to open source or a public portfolio (GitHub, blog, talks).\n\n## Soft Skills\n\n- Strong product mindset: you challenge requirements when they do not serve users.\n- Clear, asynchronous-first communication in a fully remote team.\n- Willingness to mentor and to learn from feedback.\n\n## What We Offer\n\n- 100% remote work within Romania, with optional co-working budget.\n- Flexible working hours with overlap window 11:00-15:00 EET.\n- yearly budget for courses, books, and certifications.\n- Private medical insurance, mental-health platform access, and paid sabbatical after 4 years.\n- Hardware of your choice and a home-office setup allowance.\n\n## How to Apply\n\nApply with your CV and, optionally, links to projects or repositories that best represent your work. First round is a 45-minute technical conversation; second round is a practical pairing session."
+}

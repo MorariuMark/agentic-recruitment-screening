@@ -245,3 +245,75 @@ def test_enriched_audit_export():
     assert pub_item.status.value == "visible"
     assert len(pub_item.value) == 1
     assert pub_item.value[0]["title"] == "Novel Graph Neural Networks"
+
+
+def test_miscellaneous_and_out_of_scope_extraction_and_semantic_retrieval(tmp_path):
+    """Verify that out-of-scope details (hobbies, volunteer, extra notes) are extracted and indexed for semantic search."""
+    raw_text = """
+    Alex Mercer
+    Email: alex.mercer@example.com Phone: +1 555 123 4567
+
+    WORK EXPERIENCE
+    Software Engineer at DataCorp
+    [ 2020 - Present ]
+    • Built data pipelines.
+
+    VOLUNTEERING
+    • Volunteer first responder and certified paramedic with Red Cross disaster relief.
+
+    INTERESTS & HOBBIES
+    • Competitive tournament chess player, FIDE rating 1950.
+    • Mountain climbing and high-altitude endurance trekking.
+
+    ADDITIONAL INFORMATION
+    • Organizer for local PyData meetup community.
+    """
+
+    parsed = ParsedCV(
+        contact_info=ContactInfo(full_name="Alex Mercer", email="alex.mercer@example.com"),
+        experiences=[
+            WorkExperience(
+                job_title="Software Engineer",
+                company_name="DataCorp",
+                work_description=["Built data pipelines."],
+            )
+        ],
+        raw_text=raw_text,
+    )
+
+    enriched = audit_and_enrich_cv(parsed, raw_text)
+
+    # 1. Verify custom sections and miscellaneous capture out-of-scope details
+    sec_titles = [s.section_title for s in enriched.custom_sections]
+    assert any("Volunteering" in st for st in sec_titles)
+    assert any("Interests" in st for st in sec_titles)
+
+    # 2. Verify miscellaneous list contains the peripheral details
+    misc_text = " ".join(enriched.miscellaneous)
+    assert "Red Cross" in misc_text or any("Red Cross" in " ".join(s.items) for s in enriched.custom_sections)
+    assert "chess" in misc_text.lower() or any("chess" in " ".join(s.items).lower() for s in enriched.custom_sections)
+
+    # 3. Verify PII scrubbing and ChromaDB indexing for semantic search
+    scrubber = PIIScrubber()
+    anonymized = scrubber.anonymize_cv(enriched)
+
+    vstore = VectorStoreService(persist_directory=str(tmp_path / "chroma_misc"))
+    indexed_count = vstore.index_candidate(anonymized)
+    assert indexed_count > 1  # 1 experience + custom sections + miscellaneous
+
+    # 4. Semantic search should find candidate when querying for chess or disaster relief
+    chess_query_results = vstore.query_candidate_chunks(
+        anonymized.candidate_id,
+        "Competitive chess problem solving and strategy",
+        n_results=3,
+    )
+    assert len(chess_query_results) > 0
+    assert any("chess" in r["text"].lower() for r in chess_query_results)
+
+    relief_query_results = vstore.query_candidate_chunks(
+        anonymized.candidate_id,
+        "Emergency medical paramedic or disaster relief volunteering",
+        n_results=3,
+    )
+    assert len(relief_query_results) > 0
+    assert any("red cross" in r["text"].lower() or "volunteer" in r["text"].lower() for r in relief_query_results)

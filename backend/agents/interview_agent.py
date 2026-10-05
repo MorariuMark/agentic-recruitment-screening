@@ -62,10 +62,16 @@ class InterviewAgent:
             category = req.category.value if req else "unknown"
 
             citations_text = "; ".join([f'"{c.quote}"' for c in match.citations]) or "No citations"
+            clarification_line = f"  Clarification Screening Question: {match.clarification_question}\n" if getattr(match, "clarification_question", None) else ""
+            transferable_line = f"  Transferable Competency: {match.transferable_skill} (probe candidate's ability to adapt equivalent tech)\n" if getattr(match, "transferable_skill", None) else ""
+            doubt_line = "  Benefit of the Doubt: Yes (ambiguous phrasing in CV; candidate claims must be probed verbally)\n" if getattr(match, "benefit_of_doubt", False) else ""
             breakdown_lines.append(
                 f"- Requirement '{title}' [{category}] (ID: {match.requirement_id}):\n"
                 f"  Status: {match.status.value.upper()} (Score: {match.score})\n"
                 f"  Reasoning: {match.reasoning}\n"
+                f"{clarification_line}"
+                f"{transferable_line}"
+                f"{doubt_line}"
                 f"  Citations: {citations_text}\n"
                 f"  Gap Analysis: {match.gap_analysis or 'None'}"
             )

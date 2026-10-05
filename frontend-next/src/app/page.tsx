@@ -8,7 +8,11 @@ import { EvaluationView } from "@/components/evaluation/evaluation-view";
 import { InterviewView } from "@/components/interview/interview-view";
 import { SettingsView } from "@/components/settings/settings-view";
 
+import { useState } from "react";
+
 export default function Home() {
+  const [evaluationAutoRun, setEvaluationAutoRun] = useState<boolean>(false);
+
   return (
     <Shell>
       {({
@@ -22,84 +26,94 @@ export default function Home() {
         comparisonCandidateIds,
         setComparisonCandidateIds,
         refreshJobs,
-      }) => {
-        switch (activeTab) {
-          case "pipeline":
-            return (
-              <PipelineView
-                selectedJobId={selectedJobId}
-                jobs={jobs}
-                onSelectCandidate={(id) => setSelectedCandidateId(id)}
-                onOpenEvaluation={(id) => {
-                  setSelectedCandidateId(id);
-                  setActiveTab("evaluation");
-                }}
-                onOpenInterview={(id) => {
-                  setSelectedCandidateId(id);
-                  setActiveTab("interview");
-                }}
-                onOpenComparison={(ids) => {
-                  setComparisonCandidateIds(ids);
-                  setActiveTab("comparison");
-                }}
-              />
-            );
+        refreshCandidates,
+      }) => (
+        <div className="relative w-full h-full">
+          <div className={activeTab === "pipeline" ? "block" : "hidden"}>
+            <PipelineView
+              selectedJobId={selectedJobId}
+              jobs={jobs}
+              onSelectCandidate={(id) => setSelectedCandidateId(id)}
+              onSelectJob={(id) => setSelectedJobId(id)}
+              onRefreshCandidates={refreshCandidates}
+              onOpenEvaluation={(id, targetJobId, autoRun) => {
+                setSelectedCandidateId(id);
+                const effectiveJobId = targetJobId || selectedJobId || (jobs[0]?.id ?? null);
+                if (effectiveJobId) {
+                  setSelectedJobId(effectiveJobId);
+                }
+                setEvaluationAutoRun(Boolean(autoRun));
+                setActiveTab("evaluation");
+              }}
+              onOpenInterview={(id) => {
+                setSelectedCandidateId(id);
+                setActiveTab("interview");
+              }}
+              onOpenComparison={(ids) => {
+                setComparisonCandidateIds(ids);
+                setActiveTab("comparison");
+              }}
+              onOpenSettings={() => setActiveTab("settings")}
+            />
+          </div>
 
-          case "requisitions":
-            return (
-              <RequisitionView
-                jobs={jobs}
-                selectedJobId={selectedJobId}
-                onSelectJob={(id) => setSelectedJobId(id)}
-                onRefreshJobs={refreshJobs}
-              />
-            );
+          <div className={activeTab === "requisitions" ? "block" : "hidden"}>
+            <RequisitionView
+              jobs={jobs}
+              selectedJobId={selectedJobId}
+              onSelectJob={(id) => setSelectedJobId(id)}
+              onRefreshJobs={refreshJobs}
+            />
+          </div>
 
-          case "comparison":
-            return (
-              <ComparisonView
-                candidateIds={comparisonCandidateIds}
-                selectedJobId={selectedJobId}
-                jobs={jobs}
-                onBackToPipeline={() => setActiveTab("pipeline")}
-                onOpenEvaluation={(id) => {
-                  setSelectedCandidateId(id);
-                  setActiveTab("evaluation");
-                }}
-                onOpenInterview={(id) => {
-                  setSelectedCandidateId(id);
-                  setActiveTab("interview");
-                }}
-              />
-            );
+          <div className={activeTab === "evaluation" ? "block" : "hidden"}>
+            <EvaluationView
+              candidateId={selectedCandidateId}
+              selectedJobId={selectedJobId}
+              jobs={jobs}
+              autoRun={evaluationAutoRun}
+              onResetAutoRun={() => setEvaluationAutoRun(false)}
+              onSelectCandidate={(id) => setSelectedCandidateId(id)}
+              onSelectJob={(id) => setSelectedJobId(id)}
+              onBackToPipeline={() => setActiveTab("pipeline")}
+            />
+          </div>
 
-          case "evaluation":
-            return (
-              <EvaluationView
-                candidateId={selectedCandidateId}
-                selectedJobId={selectedJobId}
-                jobs={jobs}
-                onBackToPipeline={() => setActiveTab("pipeline")}
-              />
-            );
+          <div className={activeTab === "comparison" ? "block" : "hidden"}>
+            <ComparisonView
+              candidateIds={comparisonCandidateIds}
+              selectedJobId={selectedJobId}
+              jobs={jobs}
+              onBackToPipeline={() => setActiveTab("pipeline")}
+              onOpenEvaluation={(id) => {
+                setSelectedCandidateId(id);
+                setActiveTab("evaluation");
+              }}
+              onOpenInterview={(id) => {
+                setSelectedCandidateId(id);
+                setActiveTab("interview");
+              }}
+              onSelectCandidateIds={(ids) => setComparisonCandidateIds(ids)}
+              onSelectJob={(id) => setSelectedJobId(id)}
+            />
+          </div>
 
-          case "interview":
-            return (
-              <InterviewView
-                candidateId={selectedCandidateId}
-                selectedJobId={selectedJobId}
-                jobs={jobs}
-                onBackToPipeline={() => setActiveTab("pipeline")}
-              />
-            );
+          <div className={activeTab === "interview" ? "block" : "hidden"}>
+            <InterviewView
+              candidateId={selectedCandidateId}
+              selectedJobId={selectedJobId}
+              jobs={jobs}
+              onSelectCandidate={(id) => setSelectedCandidateId(id)}
+              onSelectJob={(id) => setSelectedJobId(id)}
+              onBackToPipeline={() => setActiveTab("pipeline")}
+            />
+          </div>
 
-          case "settings":
-            return <SettingsView />;
-
-          default:
-            return null;
-        }
-      }}
+          <div className={activeTab === "settings" ? "block" : "hidden"}>
+            <SettingsView />
+          </div>
+        </div>
+      )}
     </Shell>
   );
 }

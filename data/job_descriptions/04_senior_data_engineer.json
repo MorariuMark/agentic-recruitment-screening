@@ -1,0 +1,71 @@
+{
+  "title": "Senior Data Engineer",
+  "department": "Data Platform & Analytics",
+  "seniority_level": "Senior",
+  "location": "Bucharest, Romania / Hybrid",
+  "work_model": "Hybrid",
+  "employment_type": "Full-time",
+  "languages": [
+    "English",
+    "Romanian"
+  ],
+  "requirements": [
+    {
+      "id": "req_sql_advanced",
+      "category": "must_have",
+      "weight": 4.5,
+      "title": "Advanced SQL & Dimensional Modeling",
+      "description": "Expert SQL plus star/snowflake schema design, slowly changing dimensions, and data quality testing.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_orchestration_airflow",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Workflow Orchestration",
+      "description": "Production experience orchestrating complex DAGs with Apache Airflow, Dagster, or Prefect.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_batch_streaming",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Batch & Streaming Pipelines",
+      "description": "Building ELT/ETL batch pipelines and streaming pipelines with Kafka, Spark Structured Streaming, or Flink.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_cloud_warehouse",
+      "category": "must_have",
+      "weight": 3.5,
+      "title": "Cloud Data Warehouse / Lakehouse",
+      "description": "Hands-on with Snowflake, BigQuery, Databricks, or Redshift, including cost and performance tuning.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_python_iac",
+      "category": "must_have",
+      "weight": 3.0,
+      "title": "Python & Data Infrastructure as Code",
+      "description": "Python for data tooling plus infrastructure as code (Terraform) and CI/CD for data pipelines.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_dbt_semantic",
+      "category": "nice_to_have",
+      "weight": 2.5,
+      "title": "dbt & Semantic Layers",
+      "description": "Experience with dbt models, tests, documentation, and semantic/metrics layers (dbt MetricFlow, LookML).",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_soft_data_governance",
+      "category": "soft_skill",
+      "weight": 1.5,
+      "title": "Data Literacy & Stakeholder Support",
+      "description": "Ability to translate analyst and business needs into reliable data products and to evangelize data quality.",
+      "minimum_years_experience": null
+    }
+  ],
+  "raw_text": "# Senior Data Engineer\n\n**Department:** Data Platform & Analytics  \n**Seniority:** Senior  \n**Location:** Bucharest, Romania / Hybrid  \n**Work model:** Hybrid  \n**Employment type:** Full-time  \n**Languages:** English, Romanian\n\n## Company Overview\n\nNovaStack Solutions operates a central Data Platform serving analytics, data science, and AI teams across the organization. We process billions of events per month and power executive dashboards, ML feature stores, and customer-facing data products.\n\n## About the Role\n\nAs a Senior Data Engineer you will own critical parts of our lakehouse: ingestion from dozens of sources, transformation layers, and reliable delivery to consumers. You will champion data quality, documentation, and cost awareness while mentoring the team.\n\n## Responsibilities\n\n- Design and maintain scalable batch and streaming ingestion pipelines from APIs, databases, and event buses.\n- Build and optimize transformation layers (dbt / Spark) with tests, lineage, and SLA monitoring.\n- Model data for analytics and ML consumption: dimensional models, feature tables, and aggregates.\n- Orchestrate workflows in Airflow/Dagster with retry, alerting, and idempotency guarantees.\n- Manage Snowflake/BigQuery performance: clustering, warehouse sizing, and cost governance.\n- Implement data contracts, schema evolution handling, and observability (freshness, volume, null-rate checks).\n- Partner with Analytics and AI teams to deliver trustworthy, well-documented datasets.\n\n## Minimum Qualifications\n\n- 5+ years of data engineering or analytics engineering experience.\n- Expert-level SQL and strong Python.\n- 3+ years orchestrating production pipelines (Airflow or equivalent).\n- Experience with a cloud data platform (Snowflake, BigQuery, Databricks, or Redshift).\n- Familiarity with data versioning, CI/CD for data, and Git-based workflows.\n- English proficiency for cross-team collaboration.\n\n## Nice to Have\n\n- dbt adoption experience (modular projects, macros, unit tests).\n- Kafka/Flink streaming in production.\n- Knowledge of GDPR/privacy requirements and PII handling patterns.\n- Exposure to ML feature engineering and feature stores.\n\n## Soft Skills\n\n- Pragmatic prioritization between speed and rigor.\n- Strong written documentation habits.\n- Coaching mindset for mid-level engineers and analysts.\n\n## What We Offer\n\n- Hybrid work in Bucharest (3 days on site) with flexible scheduling.\n- Annual budget for trainings, conferences, and certifications.\n- Private medical insurance, meal cards, and pension contribution.\n- A modern data stack with greenfield migration projects already funded.\n- Clear progression path to Staff Data Engineer or Data Platform Lead.\n\n## How to Apply\n\nSend your CV and, if possible, a link to a data project, blog post, or open-source contribution that shows how you think about data reliability."
+}

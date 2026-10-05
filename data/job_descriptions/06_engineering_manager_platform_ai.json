@@ -1,0 +1,71 @@
+{
+  "title": "Engineering Manager - Platform & AI Enablement",
+  "department": "Engineering Management",
+  "seniority_level": "Lead",
+  "location": "Bucharest, Romania / Hybrid",
+  "work_model": "Hybrid",
+  "employment_type": "Full-time",
+  "languages": [
+    "English",
+    "Romanian"
+  ],
+  "requirements": [
+    {
+      "id": "req_people_management",
+      "category": "must_have",
+      "weight": 5.0,
+      "title": "People Leadership & Team Development",
+      "description": "2+ years managing engineers: hiring, 1:1s, performance reviews, career frameworks, and team health ownership.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_platform_engineering_background",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Platform / DevOps Engineering Background",
+      "description": "Prior hands-on experience with CI/CD, Kubernetes, IaC, and developer platforms sufficient to earn technical credibility.",
+      "minimum_years_experience": 5
+    },
+    {
+      "id": "req_delivery_execution",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Delivery & Roadmap Management",
+      "description": "Running quarterly planning, removing blockers, and delivering multi-team roadmaps with measurable outcomes.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_ai_enablement_vision",
+      "category": "must_have",
+      "weight": 3.5,
+      "title": "AI Enablement Strategy",
+      "description": "Defining how engineering teams adopt AI tooling (coding assistants, internal LLM services) safely and productively.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_stakeholder_mgmt",
+      "category": "must_have",
+      "weight": 3.0,
+      "title": "Stakeholder & Executive Communication",
+      "description": "Translating technical status into business risk and trade-offs for C-level and product leadership.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_metrics_engineering",
+      "category": "nice_to_have",
+      "weight": 2.5,
+      "title": "Engineering Metrics & Reliability Ownership",
+      "description": "Using DORA/SPACE metrics, SLOs, and incident data to drive continuous improvement rather than surveillance.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_soft_coaching",
+      "category": "soft_skill",
+      "weight": 2.0,
+      "title": "Coaching & Psychological Safety",
+      "description": "Empathetic coaching style, conflict resolution skills, and a track record of creating safe, accountable teams.",
+      "minimum_years_experience": null
+    }
+  ],
+  "raw_text": "# Engineering Manager - Platform & AI Enablement\n\n**Department:** Engineering Management  \n**Seniority:** Lead  \n**Location:** Bucharest, Romania / Hybrid  \n**Work model:** Hybrid  \n**Employment type:** Full-time  \n**Languages:** English, Romanian\n\n## Company Overview\n\nNovaStack Solutions is scaling its internal Platform group, which provides cloud infrastructure, developer experience, and AI enablement services to more than 150 engineers. Leadership here is coaching-first: managers stay close to the work while owning outcomes, not tickets.\n\n## About the Role\n\nWe are looking for an Engineering Manager for the Platform & AI Enablement team. You will lead 7-10 engineers spanning DevOps, developer tooling, and internal AI services, owning both the people side and the roadmap of the golden path that every product squad builds on.\n\n## Responsibilities\n\n- Lead, coach, and grow a team of 7-10 platform engineers; run 1:1s, career development plans, and performance cycles.\n- Own the team roadmap: prioritization, quarterly OKRs, and predictable delivery of platform capabilities.\n- Partner with Product and Enterprise Architecture to translate strategy into technical milestones.\n- Establish healthy delivery practices: lightweight process, clear definitions of done, and continuous improvement retrospectives.\n- Drive the AI enablement program: roll-out and governance of coding assistants, internal LLM gateway, and usage policy.\n- Own reliability outcomes (SLOs, incident trends) and foster blameless post-mortem culture.\n- Hire aggressively: job design, screening, structured interviews, and onboarding.\n- Report progress and risk transparently to the Head of Engineering and stakeholders.\n\n## Minimum Qualifications\n\n- 2+ years of formal people management in a software engineering organization, teams of 5+.\n- 5+ years of prior hands-on engineering experience, ideally in platform, DevOps, or backend roles.\n- Track record of delivering cross-team roadmaps on time with measurable outcomes.\n- Experience introducing AI/developer tooling programs with adoption metrics.\n- Excellent written and spoken English; comfortable facilitating meetings and writing decision documents.\n\n## Nice to Have\n\n- Experience in regulated industries (finance, telecom) with audit requirements.\n- Familiarity with DORA metrics, SLO frameworks, and incident management processes (ITIL or SRE practices).\n- Background in scaling a platform team through rapid headcount growth.\n- Technical certifications (CKA, AWS/GCP) are a plus but not required.\n\n## Soft Skills\n\n- Coaching-first leadership; you grow people rather than route around them.\n- Strong conflict resolution and stakeholder management.\n- Pragmatic optimism: you balance ambition with team sustainability.\n\n## What We Offer\n\n- Hybrid work in Bucharest (2 days on site) with flexible hours.\n- Management training budget and executive coaching.\n- Competitive salary plus annual bonus tied to team OKRs.\n- Private medical insurance, meal cards, and additional parental support.\n- Meaningful scope: your decisions shape how 150+ engineers work every day.\n\n## How to Apply\n\nSend your CV with a short summary of a team you grew or a roadmap you turned around, including what you learned from what did not go as planned."
+}

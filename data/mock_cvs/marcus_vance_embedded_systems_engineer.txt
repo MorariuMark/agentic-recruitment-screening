@@ -1,0 +1,61 @@
+MARCUS VANCE
+Embedded Systems & IoT Software Engineer
+Hanover, Germany / Remote • +49 170 000 0000 • marcus.vance.dev@email.com • linkedin.com/in/marcus-vance • github.com/marcusvance
+
+PROFESSIONAL SUMMARY
+Embedded Systems and Software Engineer with 4+ years of experience designing firmware, telemetry pipelines, and low-power sensor networks for connected automotive and industrial systems. Proven expertise integrating edge data acquisition with CAN bus networks and cloud-connected telematics platforms. Deep background in C/C++, FreeRTOS, BLE/RF, and Python data pipelines aligned with automotive reliability and ISO 26262/ASPICE process environments.
+
+TECHNICAL SKILLS
+- Embedded Software & Firmware: C, Modern C++ (C++17/20), Python, Embedded Linux, FreeRTOS, Zephyr RTOS, POSIX
+- Hardware & Microcontrollers: ARM Cortex-M0+/M4/M33 (STM32, NRF52/53 series), ESP32, TI SimpleLink, Edge TPU
+- Automotive & Field Busses: CAN 2.0B / CAN FD, LIN, SPI, I2C, UART, Modbus
+- IoT & Telemetry Protocols: BLE 5.x, Bluetooth Mesh, MQTT, HTTP/REST, CoAP, LoRaWAN, Protobuf
+- Testing & Tools: Saleae Logic Analyzers, Rohde & Schwarz Oscilloscopes, Vector CANoe (Basic), J-Link, Git, CMake, Docker, CI/CD (GitHub Actions)
+- Standards & Processes: ASPICE, ISO 26262 (Functional Safety awareness), MISRA C/C++, Agile / Scrum
+
+PROFESSIONAL EXPERIENCE
+
+Embedded Systems Software Engineer | Sensata Technologies — Hanover, Germany
+March 2024 – Present
+- Architected and maintained ultra-low-power C firmware for smart tire pressure and temperature monitoring systems (TPMS/TMS) operating on ARM Cortex-M33 platforms.
+- Designed an event-driven energy-harvesting power management scheme, cutting quiescent current draw to < 2.1 µA and extending in-tire battery longevity past 6 years.
+- Integrated custom SPI/I2C drivers for high-g MEMS accelerometers to detect rotational frequency, tread deformation patterns, and vehicle loading state.
+- Collaborated with global telematics teams across Germany and Portugal to standardize tire data serialization over Bluetooth Low Energy (BLE) and CAN FD gateways.
+- Established an automated hardware-in-the-loop (HIL) regression suite with Python and PyVISA, shortening firmware release validation cycles from 4 days to 6 hours.
+
+Junior Firmware & Telematics Developer | ACTIA Nordic — Malmö, Sweden
+August 2022 – February 2024
+- Implemented low-level sensor drivers and protocol stacks in C for commercial vehicle telematic gateway units (TGUs).
+- Engineered a robust circular flash logging algorithm with wear leveling for offline vehicle telemetry, buffering up to 100,000 driving events during cellular outages.
+- Implemented MISRA-C:2012 compliance checks into the Jenkins CI pipeline, cutting static analysis defect rates by 38% prior to QA handoff.
+- Participated in sprint planning, sprint retrospectives, and cross-functional peer reviews within an ASPICE Level 2 certified workflow.
+
+Working Student / Embedded Software Intern | Continental Tires R&D — Hanover, Germany
+October 2021 – July 2022
+- Built an internal diagnostic dashboard in Python (Flask, Dash) to visualize live CAN and BLE telemetry from test vehicles equipped with developmental sensorized tires.
+- Assisted senior systems engineers with RF field-testing, measuring signal attenuation through heavy-duty rubber compounds across multiple rim configurations.
+- Created reproducible automated unit tests using Ceedling/Unity for bare-metal microcontroller routines.
+
+KEY ENGINEERING PROJECTS
+
+EdgeML Predictive Tire Wear Estimator (Independent Open Source)
+Technologies: C++, TensorFlow Lite for Microcontrollers, Python
+- Trained a 1D-CNN using accelerometer datasets to predict tire surface degradation and tread depth within 0.4 mm error margins.
+- Quantized the neural net to int8 precision and executed inference on an nRF52840 SoC with sub-18 ms execution times and minimal memory footprint (< 24 KB RAM).
+
+Distributed CAN FD Sensor Gateway
+Technologies: C, FreeRTOS, STM32, Ethernet, MQTT
+- Built a multi-channel CAN FD to Ethernet gateway processing up to 4,000 frames/sec without buffer overruns, parsing incoming J1939 messages and streaming telemetry over MQTT.
+
+EDUCATION
+
+Master of Science in Embedded & Cyber-Physical Systems
+Leibniz University Hannover, Germany | Graduated: 2023
+Thesis: Dynamic Tire-Road Interaction Modeling via Edge-Processed Triaxial MEMS Accelerometers
+
+Bachelor of Science in Electrical and Computer Engineering
+Technical University of Munich (TUM), Germany | Graduated: 2021
+
+LANGUAGES & CERTIFICATIONS
+- Languages: English (Bilingual / Fluent, C2), German (Professional Working, C1)
+- Certifications: Certified Functional Safety Specialist (ISO 26262 Overview), Professional Scrum Developer I (PSD I)

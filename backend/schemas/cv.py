@@ -6,7 +6,7 @@ Data contracts for candidate CV parsing and de-biased anonymization.
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class ContactInfo(BaseModel):
@@ -92,6 +92,34 @@ class Project(BaseModel):
     end_date: Optional[str] = Field(default=None, description="End date if mentioned")
     project_url: Optional[str] = Field(default=None, description="GitHub repository or project demo URL")
 
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, v):
+        if isinstance(v, str):
+            lines = [l.strip().lstrip("•-*–+ ").strip() for l in v.splitlines() if l.strip()]
+            return lines if lines else ([v.strip()] if v.strip() else [])
+        if isinstance(v, list):
+            res = []
+            for item in v:
+                if isinstance(item, str) and item.strip():
+                    cleaned = item.strip().lstrip("•-*–+ ").strip()
+                    if cleaned:
+                        res.append(cleaned)
+                elif item:
+                    res.append(str(item).strip())
+            return res
+        return []
+
+    @field_validator("technologies", mode="before")
+    @classmethod
+    def normalize_technologies(cls, v):
+        if isinstance(v, str):
+            import re
+            return [t.strip() for t in re.split(r"[,;|•]", v) if t.strip()]
+        if isinstance(v, list):
+            return [str(t).strip() for t in v if str(t).strip()]
+        return []
+
 
 class LanguageSkill(BaseModel):
     """Language proficiency entry."""
@@ -119,7 +147,8 @@ class ParsedCV(BaseModel):
     publications: List[Publication] = Field(default_factory=list, description="List of research publications")
     patents: List[Patent] = Field(default_factory=list, description="List of patents")
     logistics: Optional[LogisticalInfo] = Field(default=None, description="Availability and logistical information")
-    custom_sections: List[CustomSection] = Field(default_factory=list, description="Fallback extracted relevant sections (Awards, Publications, Volunteer, etc.)")
+    custom_sections: List[CustomSection] = Field(default_factory=list, description="Dedicated custom sections extracted from CV (Awards, Publications, Volunteer, Hobbies, etc.)")
+    miscellaneous: List[str] = Field(default_factory=list, description="All miscellaneous, unmapped, or out-of-scope details, facts, hobbies, interests, activities, memberships, side notes, or observations extracted so no detail is ignored or overlooked")
     unused_details: List[str] = Field(default_factory=list, description="Extracted non-technical details not used in matching (demographics, personal info, administrative items)")
     raw_text: str = Field(default="", description="Original extracted text")
 
@@ -137,6 +166,7 @@ class AnonymizedCandidate(BaseModel):
     anonymized_patents: List[Patent] = Field(default_factory=list, description="Anonymized patents")
     logistics: Optional[LogisticalInfo] = Field(default=None, description="Sanitized candidate logistics")
     anonymized_custom_sections: List[CustomSection] = Field(default_factory=list, description="Fallback custom relevant sections scrubbed of PII")
+    anonymized_miscellaneous: List[str] = Field(default_factory=list, description="PII-scrubbed miscellaneous and out-of-scope details ready for semantic vector search")
     sanitized_text: str = Field(default="", description="Sanitized text")
     demographic_data: dict = Field(default_factory=dict, description="Isolated demographic factors kept strictly for fairness audit, never passed to the LLM")
 

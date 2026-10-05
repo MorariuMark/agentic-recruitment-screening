@@ -216,3 +216,20 @@ class BatchJobModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class TokenUsageLogModel(Base):
+    """Tracks token consumption, prompt/completion token distribution, latency, and model metrics."""
+    __tablename__ = "token_usage_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False, default="general", index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(50), default="success")  # success, failover, error
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+

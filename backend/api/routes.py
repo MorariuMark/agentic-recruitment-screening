@@ -4,6 +4,7 @@ FastAPI REST routes for CV ingestion, JD evaluation, semantic matching,
 Human-in-the-Loop (HITL) recruiter validation, and tailored interview guide generation.
 """
 
+import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -34,6 +35,7 @@ from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan, InterviewQuestion
 from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport, JobRequirement, RequirementCategory
 from backend.schemas.match import MatchEvaluationResult, MatchStatus, Recommendation, RequirementMatch
+from backend.schemas.token_usage import TokenUsageAnalytics, TokenUsageInfo
 from backend.schemas.models_catalog import CATALOG_PROVIDERS, get_model_info, get_providers_catalog
 from backend.services.audit_exporter import AuditExporter
 from backend.services.ollama_service import OllamaService
@@ -80,7 +82,42 @@ def _reconstruct_candidate_from_db(cand_model: CandidateModel) -> Tuple[ParsedCV
 
 
 def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEvaluationResult:
-    matches = [RequirementMatch.model_validate(m) for m in eval_model.matches_json]
+    matches: List[RequirementMatch] = []
+    for m in eval_model.matches_json:
+        rm = RequirementMatch.model_validate(m)
+        req_id_lower = rm.requirement_id.lower()
+        reasoning_lower = rm.reasoning.lower()
+
+        # Retroactive normalizer: if an existing evaluation marked interpretive items as NOT_MET
+        if rm.status == MatchStatus.NOT_MET and (
+            any(kw in req_id_lower for kw in ["night", "shift", "shifts", "attention", "detail", "learning", "growth", "fast_paced", "relocat", "travel"])
+            or any(kw in reasoning_lower for kw in ["night shift", "attention to detail", "eagerness to learn", "learn and grow"])
+        ):
+            rm.status = MatchStatus.CLARIFICATION_NEEDED
+            rm.is_objective = False
+            rm.score = 0.5
+            if not rm.clarification_question:
+                if "shift" in req_id_lower:
+                    rm.clarification_question = "Are you available and willing to work rotating or night shifts as required? [Yes / No]"
+                elif "detail" in req_id_lower:
+                    rm.clarification_question = "Can you confirm your ability to uphold strict attention to detail in procedural execution? [Yes / No]"
+                elif "learn" in req_id_lower or "growth" in req_id_lower:
+                    rm.clarification_question = "Are you committed to continuous learning and eager to develop new technical skills in a fast-paced environment? [Yes / No]"
+                else:
+                    rm.clarification_question = f"Can you confirm your readiness for '{rm.requirement_id}'? [Yes / No]"
+            rm.gap_analysis = f"Interpretive / logistical detail requiring confirmation on application form or screening call: {rm.clarification_question}"
+
+        matches.append(rm)
+
+    clarification_count = sum(1 for m in matches if m.status == MatchStatus.CLARIFICATION_NEEDED)
+    objective_must_have_gaps = sum(
+        1 for m in matches if m.status == MatchStatus.NOT_MET and getattr(m, "is_objective", True)
+    )
+
+    rec = Recommendation(eval_model.recommendation)
+    if rec == Recommendation.REJECT and objective_must_have_gaps == 0 and eval_model.overall_score >= 45.0:
+        rec = Recommendation.BORDERLINE
+
     return MatchEvaluationResult(
         id=UUID(eval_model.id),
         candidate_id=UUID(eval_model.candidate_id),
@@ -88,8 +125,9 @@ def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEv
         overall_score=eval_model.overall_score,
         must_have_score=eval_model.must_have_score,
         nice_to_have_score=eval_model.nice_to_have_score,
-        must_have_gaps_count=eval_model.must_have_gaps_count,
-        recommendation=Recommendation(eval_model.recommendation),
+        must_have_gaps_count=objective_must_have_gaps,
+        clarification_count=clarification_count,
+        recommendation=rec,
         hitl_validated=eval_model.hitl_validated,
         recruiter_notes=eval_model.recruiter_notes,
         citation_verification_score=eval_model.citation_verification_score,
@@ -120,6 +158,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
         requirements=reqs,
         custom_sections=job_model.custom_sections_json or [],
         unused_details=job_model.unused_details_json or [],
+        raw_text=job_model.raw_text or "",
     )
 
 
@@ -162,6 +201,8 @@ class CandidateDetailResponse(BaseModel):
     chunks_indexed: int = Field(default=0, description="Vector chunks count")
     created_at: Optional[str] = Field(default=None, description="ISO timestamp of upload")
     latest_evaluation: Optional[Dict[str, Any]] = Field(default=None, description="Latest match evaluation summary if available")
+    parsed_cv: Optional[Dict[str, Any]] = Field(default=None, description="Raw structured CV data")
+    anonymized_candidate: Optional[Dict[str, Any]] = Field(default=None, description="Sanitized candidate profile")
 
 
 
@@ -253,6 +294,7 @@ class HITLValidationRequest(BaseModel):
     evaluation_id: UUID = Field(description="UUID of the MatchEvaluationResult")
     recruiter_decision: Recommendation = Field(description="Final recruiter decision tier")
     recruiter_notes: str = Field(description="Auditable justification for the decision or override")
+    updated_matches: Optional[List[RequirementMatch]] = Field(default=None, description="Optional updated requirement matches if clarifications were resolved")
 
 
 class InterviewGenerateRequest(BaseModel):
@@ -273,6 +315,11 @@ class JobTextParseRequest(BaseModel):
     text: str = Field(description="Raw text content of the job description posting")
 
 
+class FallbackHierarchyRequest(BaseModel):
+    """Request payload to customize the sequence of LLM fallback candidates."""
+    chain: List[Dict[str, Any]] = Field(description="Ordered list of {'provider': str, 'model': str} fallback targets")
+
+
 class LLMSettingsResponse(BaseModel):
     """Response payload containing active LLM configuration and complete provider/model catalog."""
     active_provider: str = Field(description="Currently active LLM provider")
@@ -282,12 +329,13 @@ class LLMSettingsResponse(BaseModel):
     api_keys_configured: Dict[str, bool] = Field(description="Status of configured API keys per provider")
     fallback_enabled: bool = Field(default=True, description="Whether multi-tier automatic failover is active")
     fallback_chain: List[str] = Field(default_factory=list, description="Sequence of fallback (provider:model) candidates")
+    custom_fallback_chain: Optional[List[Dict[str, Any]]] = Field(default=None, description="User-customized fallback sequence")
     last_fallback_event: Optional[Dict[str, Any]] = Field(default=None, description="Metadata of most recent failover event")
 
 
 class LLMUpdateRequest(BaseModel):
     """Request payload to dynamically update the active LLM provider and model."""
-    provider: str = Field(description="Provider identifier (groq, openrouter, nvidia_nim, gemini, ollama)")
+    provider: str = Field(description="Provider identifier (agnes, groq, openrouter, nvidia_nim, gemini, ollama)")
     model: str = Field(description="Target model identifier")
     compatibility_mode: str = Field(default="auto", description="Structured output compatibility mode")
     api_key: Optional[str] = Field(default=None, description="Optional new API key for the target provider")
@@ -339,7 +387,7 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
     try:
-        result = _job_parser_agent.parse_job_url(request.url)
+        result = await asyncio.to_thread(_job_parser_agent.parse_job_url, request.url)
         try:
             await DatabaseRepository.save_job(
                 job=result.job_description,
@@ -371,7 +419,7 @@ async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
     try:
-        result = _job_parser_agent.parse_job_text(request.text)
+        result = await asyncio.to_thread(_job_parser_agent.parse_job_text, request.text)
         try:
             await DatabaseRepository.save_job(
                 job=result.job_description,
@@ -410,13 +458,17 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
 
         # 1. Parse structured CV and generate anonymized candidate profile
-        parsed_cv, anonymized_candidate = _parser_agent.parse_and_anonymize(
+        parsed_cv, anonymized_candidate = await asyncio.to_thread(
+            _parser_agent.parse_and_anonymize,
             source=content_bytes,
             filename=file.filename,
         )
 
         # 2. Index candidate chunks into ChromaDB for asymmetric RAG matching
-        chunks_indexed = _vector_store.index_candidate(anonymized_candidate)
+        chunks_indexed = await asyncio.to_thread(
+            _vector_store.index_candidate,
+            anonymized_candidate,
+        )
 
         # 3. Persist to relational database
         try:
@@ -442,6 +494,7 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             chunks_indexed=chunks_indexed,
         )
     except ScannedPDFException as e:
+        logger.warning(f"Single CV upload scanned PDF rejected '{getattr(file, 'filename', 'unknown')}': {e}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
@@ -449,11 +502,13 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
     except HTTPException:
         raise
     except ValueError as e:
+        logger.warning(f"Single CV upload invalid input '{getattr(file, 'filename', 'unknown')}': {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        logger.exception(f"Unexpected error processing single CV '{getattr(file, 'filename', 'unknown')}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing candidate CV: {str(e)}",
@@ -651,8 +706,9 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
         )
 
     try:
-        # Run matching agent pipeline
-        result = _matching_agent.match_candidate(
+        # Run matching agent pipeline in worker thread to prevent event loop blocking
+        result = await asyncio.to_thread(
+            _matching_agent.match_candidate,
             candidate=candidate,
             job_description=request.job_description,
         )
@@ -709,7 +765,18 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
     evaluation.recruiter_notes = request.recruiter_notes
     evaluation.hitl_validated = True
 
+    if request.updated_matches:
+        evaluation.requirement_matches = request.updated_matches
+        evaluation.clarification_count = sum(1 for m in request.updated_matches if m.status == MatchStatus.CLARIFICATION_NEEDED)
+        evaluation.must_have_gaps_count = sum(1 for m in request.updated_matches if m.status == MatchStatus.NOT_MET and getattr(m, "is_objective", True))
+
     try:
+        if request.updated_matches:
+            await DatabaseRepository.save_evaluation(
+                eval_result=evaluation,
+                candidate_id=evaluation.candidate_id,
+                job_id=evaluation.job_id,
+            )
         await DatabaseRepository.update_hitl_validation(
             evaluation_id=request.evaluation_id,
             decision=request.recruiter_decision.value if hasattr(request.recruiter_decision, "value") else str(request.recruiter_decision),
@@ -745,12 +812,13 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
     evaluations_by_candidate: Dict[str, MatchEvaluationResult] = {}
 
     existing_eval_records = await DatabaseRepository.list_evaluations_for_job(payload.job_id)
-    existing_eval_map = {
-        UUID(e.candidate_id): _reconstruct_evaluation_from_db(e)
-        for e in existing_eval_records
-    }
+    existing_eval_map: Dict[str, MatchEvaluationResult] = {}
+    for e in existing_eval_records:
+        cid_key = str(e.candidate_id)
+        reconstructed = _reconstruct_evaluation_from_db(e)
+        existing_eval_map[cid_key] = reconstructed
 
-    for cid in payload.candidate_ids:
+    async def _resolve_candidate_evaluation(cid: UUID):
         cid_str = str(cid)
         cand_record = await DatabaseRepository.get_candidate(cid)
         if not cand_record:
@@ -759,14 +827,19 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
                 detail=f"Candidate {cid} not found in database.",
             )
 
-        anon_name = cand_record.full_name_redacted or (cand_record.anonymized_cv_json or {}).get("masked_name") or f"Candidate-{cid_str[:6].upper()}"
+        anon_name = (
+            cand_record.full_name_redacted
+            or (cand_record.anonymized_cv_json or {}).get("masked_name")
+            or f"Candidate-{cid_str[:6].upper()}"
+        )
         if anon_name == "[CANDIDATE_NAME]":
             anon_name = f"Candidate-{cid_str[:6].upper()}"
 
-        eval_result = existing_eval_map.get(cid)
+        eval_result = existing_eval_map.get(cid_str)
         if not eval_result:
             _, anon_cand, _ = _reconstruct_candidate_from_db(cand_record)
-            eval_result = _matching_agent.match_candidate(
+            eval_result = await asyncio.to_thread(
+                _matching_agent.match_candidate,
                 candidate=anon_cand,
                 job_description=job_desc,
             )
@@ -779,8 +852,16 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
             except Exception as db_err:
                 logger.warning(f"Failed to save comparison evaluation: {db_err}")
 
+        return cid, cid_str, cand_record, anon_name, eval_result
+
+    resolved_candidates = await asyncio.gather(
+        *(_resolve_candidate_evaluation(cid) for cid in payload.candidate_ids)
+    )
+
+    for cid, cid_str, cand_record, anon_name, eval_result in resolved_candidates:
         evaluations_by_candidate[cid_str] = eval_result
 
+        cvs_score = eval_result.citation_verification_score if eval_result.citation_verification_score is not None else 1.0
         candidates_summary_items.append(
             CandidateComparisonSummaryItem(
                 candidate_id=cid,
@@ -791,7 +872,7 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
                 nice_to_have_score=eval_result.nice_to_have_score,
                 recommendation=eval_result.recommendation,
                 must_have_gaps_count=eval_result.must_have_gaps_count,
-                citation_verification_score=eval_result.citation_verification_score,
+                citation_verification_score=cvs_score,
                 hitl_validated=eval_result.hitl_validated,
             )
         )
@@ -846,12 +927,13 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
 
     if top_cand and len(sorted_candidates) > 1:
         runner_up = sorted_candidates[1]
+        cvs_pct = (top_cand.citation_verification_score if top_cand.citation_verification_score is not None else 1.0) * 100
         analysis = (
             f"Candidate {top_cand.masked_name} leads the cohort with an overall match score of "
             f"{top_cand.overall_score:.1f}% and {top_cand.must_have_gaps_count} must-have gaps, "
             f"outperforming {runner_up.masked_name} ({runner_up.overall_score:.1f}% overall, "
             f"{runner_up.must_have_gaps_count} gaps). Verified citation coverage stands at "
-            f"{top_cand.citation_verification_score * 100:.0f}%."
+            f"{cvs_pct:.0f}%."
         )
     elif top_cand:
         analysis = f"Candidate {top_cand.masked_name} achieved an overall match of {top_cand.overall_score:.1f}%."
@@ -899,13 +981,42 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
             _EVALUATION_STORE[request.evaluation_id] = evaluation
 
     if not evaluation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Evaluation {request.evaluation_id} not found.",
-        )
+        # Fallback: check if an evaluation already exists for this candidate and job
+        try:
+            eval_records = await DatabaseRepository.list_evaluations_for_job(request.job_description.id)
+            cand_eval = next((e for e in eval_records if e.candidate_id == str(request.candidate_id)), None)
+            if cand_eval:
+                evaluation = _reconstruct_evaluation_from_db(cand_eval)
+        except Exception as check_err:
+            logger.warning(f"Could not retrieve candidate evaluations: {check_err}")
+
+    if not evaluation:
+        # Auto-evaluate candidate against job description so interview guide can always be synthesized
+        try:
+            evaluation = await asyncio.to_thread(
+                _matching_agent.match_candidate,
+                candidate=candidate,
+                job_description=request.job_description,
+            )
+            try:
+                await DatabaseRepository.save_evaluation(
+                    eval_result=evaluation,
+                    candidate_id=request.candidate_id,
+                    job_id=request.job_description.id,
+                )
+            except Exception as save_err:
+                logger.warning(f"Failed to persist auto-evaluation: {save_err}")
+            _EVALUATION_STORE[evaluation.id] = evaluation
+        except Exception as eval_err:
+            logger.error(f"Auto-evaluation failed during interview generation: {eval_err}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Evaluation {request.evaluation_id} not found and auto-evaluation failed: {eval_err}",
+            )
 
     try:
-        plan = _interview_agent.generate_interview_plan(
+        plan = await asyncio.to_thread(
+            _interview_agent.generate_interview_plan,
             candidate=candidate,
             job_description=request.job_description,
             evaluation_result=evaluation,
@@ -915,7 +1026,7 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
         try:
             await DatabaseRepository.save_interview_plan(
                 plan=plan,
-                evaluation_id=request.evaluation_id,
+                evaluation_id=evaluation.id,
             )
         except Exception as db_err:
             logger.warning(f"Failed to persist interview plan to database: {db_err}")
@@ -958,7 +1069,7 @@ async def get_evaluation(evaluation_id: UUID) -> MatchEvaluationResult:
 )
 async def list_candidates(
     job_id: Optional[UUID] = None,
-    limit: int = 100,
+    limit: int = 1000,
     offset: int = 0,
 ) -> List[CandidateListItem]:
     """Returns candidate records stored in the persistent database with scoring breakdown."""
@@ -970,7 +1081,17 @@ async def list_candidates(
         skills = raw.get("skills", [])
 
         # Demographics / alias
-        masked_name = r.full_name_redacted or anon.get("masked_name") or f"Candidate-{r.id[:8]}"
+        raw_contact = raw.get("contact_info") or {}
+        real_name = raw_contact.get("full_name")
+        if r.full_name_redacted and r.full_name_redacted != "[CANDIDATE_NAME]":
+            masked_name = r.full_name_redacted
+        elif real_name and real_name != "[CANDIDATE_NAME]":
+            masked_name = real_name
+        elif r.original_filename:
+            fn_alias = r.original_filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+            masked_name = f"{fn_alias} (Candidate-{r.id[:6].upper()})"
+        else:
+            masked_name = f"Candidate-{r.id[:8].upper()}"
 
         # Total experience
         total_yrs = raw.get("total_years_experience") or anon.get("total_years_experience")
@@ -1037,11 +1158,17 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
     if total_yrs is None and experiences:
         total_yrs = float(len(experiences))
 
-    masked_name = (
-        record.full_name_redacted
-        or anon.get("masked_name")
-        or f"Candidate-{str(candidate_id)[:8]}"
-    )
+    raw_contact = raw.get("contact_info") or {}
+    real_name = raw_contact.get("full_name")
+    if record.full_name_redacted and record.full_name_redacted != "[CANDIDATE_NAME]":
+        masked_name = record.full_name_redacted
+    elif real_name and real_name != "[CANDIDATE_NAME]":
+        masked_name = real_name
+    elif record.original_filename:
+        fn_alias = record.original_filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+        masked_name = f"{fn_alias} (Candidate-{str(candidate_id)[:6].upper()})"
+    else:
+        masked_name = f"Candidate-{str(candidate_id)[:8].upper()}"
 
     latest_eval = None
     if record.evaluations:
@@ -1062,11 +1189,39 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
             "hitl_validated": ev.hitl_validated,
         }
 
+    sanitized_text = record.sanitized_text or ""
+    if not sanitized_text.strip():
+        parts = []
+        if masked_name:
+            parts.append(f"# {masked_name}")
+        if raw.get("summary"):
+            parts.append(f"## Professional Summary\n{raw['summary']}")
+        if skills:
+            parts.append("## Technical Skills\n" + ", ".join(skills))
+        if experiences:
+            parts.append("## Professional Experience")
+            for exp in experiences:
+                title = exp.get("job_title", "Role")
+                company = exp.get("company_name", "Company")
+                parts.append(f"### {title} at {company}")
+                for desc in exp.get("work_description", []):
+                    parts.append(f"- {desc}")
+                skills_used = exp.get("skills_used") or []
+                if skills_used:
+                    parts.append(f"Technologies: {', '.join(skills_used)}")
+        if educations:
+            parts.append("## Education")
+            for edu in educations:
+                deg = edu.get("degree_title") or edu.get("degree_name", "Degree")
+                inst = edu.get("institution_name", "Institution")
+                parts.append(f"- {deg}, {inst}")
+        sanitized_text = "\n\n".join(parts)
+
     return CandidateDetailResponse(
         id=UUID(record.id),
         masked_name=masked_name,
         original_filename=record.original_filename,
-        sanitized_text=record.sanitized_text,
+        sanitized_text=sanitized_text,
         skills=skills,
         experiences=experiences,
         educations=educations,
@@ -1074,8 +1229,46 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
         total_years_experience=float(total_yrs) if total_yrs is not None else None,
         created_at=record.created_at.isoformat() if record.created_at else None,
         latest_evaluation=latest_eval,
+        parsed_cv=raw,
+        anonymized_candidate=anon,
     )
 
+
+@router.delete(
+    "/candidates/{candidate_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a candidate and all associated data",
+)
+async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
+    """
+    Deletes candidate profile, relational evaluations/interview plans,
+    and removes vector chunks from ChromaDB and memory caches.
+    """
+    cid_str = str(candidate_id)
+    deleted = await DatabaseRepository.delete_candidate(candidate_id)
+    in_memory = (
+        candidate_id in _CANDIDATE_RAW_STORE
+        or candidate_id in _CANDIDATE_ANONYMIZED_STORE
+    )
+    if not deleted and not in_memory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {candidate_id} not found.",
+        )
+
+    # Remove from ChromaDB vector store
+    await asyncio.to_thread(_vector_store.delete_candidate, candidate_id)
+
+    # Clear memory caches
+    _CANDIDATE_RAW_STORE.pop(candidate_id, None)
+    _CANDIDATE_ANONYMIZED_STORE.pop(candidate_id, None)
+    _CANDIDATE_CHUNKS_STORE.pop(candidate_id, None)
+
+    return {
+        "status": "deleted",
+        "candidate_id": cid_str,
+        "message": f"Candidate {cid_str} successfully deleted.",
+    }
 
 
 @router.get(
@@ -1162,7 +1355,9 @@ async def get_interview_plan(plan_id: UUID) -> InterviewPlan:
 # ---------------------------------------------------------------------------
 def _get_active_model_for_provider(provider: str) -> str:
     prov = provider.lower()
-    if prov == "groq":
+    if prov == "agnes":
+        return settings.agnes_model
+    elif prov == "groq":
         return settings.groq_model
     elif prov == "openrouter":
         return settings.openrouter_model
@@ -1181,14 +1376,40 @@ def _get_active_model_for_provider(provider: str) -> str:
     summary="Fetch current LLM provider, active model, and complete catalog",
 )
 async def get_llm_settings() -> LLMSettingsResponse:
-    """Returns the full catalog of models with rate limits and active configuration."""
+    """Returns the full catalog of models with rate limits, active configuration, and fallback hierarchy."""
     catalog_dict = {
         pid: pinfo.model_dump() for pid, pinfo in CATALOG_PROVIDERS.items()
     }
-    from backend.agents.llm_factory import DynamicLLMClient, get_last_fallback_event
+    from backend.agents.llm_factory import (
+        DynamicLLMClient,
+        get_last_fallback_event,
+        get_custom_fallback_chain,
+    )
 
     dyn = DynamicLLMClient()
     chain_labels = [f"{p}:{m}" for p, m, _ in dyn.get_fallback_chain()]
+    raw_custom = get_custom_fallback_chain()
+
+    enriched_custom = None
+    if raw_custom:
+        enriched_custom = []
+        for item in raw_custom:
+            p_id = (item.get("provider") or "").lower()
+            m_id = item.get("model") or ""
+            p_info = CATALOG_PROVIDERS.get(p_id)
+            model_info = None
+            if p_info:
+                for m in p_info.models:
+                    if m.id == m_id:
+                        model_info = m
+                        break
+            enriched_custom.append({
+                "provider": p_id,
+                "model": m_id,
+                "name": model_info.name if model_info else m_id,
+                "free": model_info.free if model_info else False,
+                "rate_limits": model_info.rate_limits if model_info else None,
+            })
 
     return LLMSettingsResponse(
         active_provider=settings.llm_provider,
@@ -1196,6 +1417,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
         compatibility_mode=settings.compatibility_mode,
         providers_catalog=catalog_dict,
         api_keys_configured={
+            "agnes": bool(settings.agnes_api_key),
             "groq": bool(settings.groq_api_key),
             "openrouter": bool(settings.openrouter_api_key),
             "nvidia_nim": bool(settings.nvidia_nim_api_key),
@@ -1204,6 +1426,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
         },
         fallback_enabled=True,
         fallback_chain=chain_labels,
+        custom_fallback_chain=enriched_custom,
         last_fallback_event=get_last_fallback_event(),
     )
 
@@ -1225,7 +1448,13 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
     settings.llm_provider = prov
     settings.compatibility_mode = payload.compatibility_mode
 
-    if prov == "groq":
+    if prov == "agnes":
+        settings.agnes_model = payload.model
+        if payload.api_key:
+            settings.agnes_api_key = payload.api_key.strip()
+        if payload.base_url:
+            settings.agnes_base_url = payload.base_url.strip()
+    elif prov == "groq":
         settings.groq_model = payload.model
         if payload.api_key:
             settings.groq_api_key = payload.api_key.strip()
@@ -1259,6 +1488,36 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
 
 
 @router.post(
+    "/settings/llm/fallback-chain",
+    response_model=LLMSettingsResponse,
+    summary="Save user-defined fallback failover hierarchy",
+)
+async def update_fallback_chain(payload: FallbackHierarchyRequest) -> LLMSettingsResponse:
+    """Configures the user's custom prioritized multi-tier fallback sequence."""
+    from backend.agents.llm_factory import save_custom_fallback_chain
+    clean_chain = []
+    for item in payload.chain:
+        p = (item.get("provider") or "").lower()
+        m = item.get("model") or ""
+        if p in CATALOG_PROVIDERS and m:
+            clean_chain.append({"provider": p, "model": m})
+    save_custom_fallback_chain(clean_chain if clean_chain else None)
+    return await get_llm_settings()
+
+
+@router.post(
+    "/settings/llm/fallback-chain/reset",
+    response_model=LLMSettingsResponse,
+    summary="Reset fallback hierarchy to automatic cascading failover",
+)
+async def reset_fallback_chain() -> LLMSettingsResponse:
+    """Restores the default automatic multi-tier failover hierarchy."""
+    from backend.agents.llm_factory import save_custom_fallback_chain
+    save_custom_fallback_chain(None)
+    return await get_llm_settings()
+
+
+@router.post(
     "/settings/llm/clear-fallback",
     summary="Clear or dismiss the last failover event metadata",
 )
@@ -1268,6 +1527,14 @@ async def clear_fallback_endpoint() -> Dict[str, str]:
     clear_last_fallback_event()
     return {"status": "ok", "message": "Fallback notification cleared."}
 
+
+@router.post(
+    "/settings/llm/test",
+    response_model=LLMTestResponse,
+    summary="Test connection and measure latency for a given provider/model (alias)",
+)
+async def test_llm_connection_alias(payload: LLMTestRequest) -> LLMTestResponse:
+    return await test_llm_connection(payload)
 
 
 @router.post(
@@ -1320,6 +1587,34 @@ async def test_llm_connection(payload: LLMTestRequest) -> LLMTestResponse:
             latency_ms=latency_ms,
             error_message=str(err),
         )
+
+
+# ---------------------------------------------------------------------------
+# Token Usage & Model Performance Analytics Endpoints (Agnes AI Inspired)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/analytics/token-usage",
+    response_model=TokenUsageAnalytics,
+    summary="Get aggregated token usage statistics, model comparisons, and activity heatmap",
+)
+async def get_token_usage_analytics(
+    time_range: str = Query("all", pattern="^(today|7d|30d|month|all)$")
+) -> TokenUsageAnalytics:
+    """Returns platform token statistics, model consumption comparisons, activity calendar, and trends."""
+    from backend.services.token_tracker import token_tracker
+    return token_tracker.get_analytics(time_range=time_range)
+
+
+@router.post(
+    "/analytics/token-usage/reset",
+    summary="Reset and clear all token usage logs",
+)
+async def reset_token_usage_analytics() -> Dict[str, str]:
+    """Clears all historical token usage logs."""
+    from backend.services.token_tracker import token_tracker
+    token_tracker.reset_usage_data()
+    return {"status": "ok", "message": "Token usage analytics successfully reset."}
+
 
 
 # ---------------------------------------------------------------------------
@@ -1406,12 +1701,25 @@ async def get_compliance_dossier(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Evaluation {evaluation_id} not found in database.",
             )
-        # Attempt to persist memory evaluation
+        # Attempt to persist memory candidate and evaluation
         cand_mem = _CANDIDATE_ANONYMIZED_STORE.get(eval_mem.candidate_id) if hasattr(eval_mem, "candidate_id") else None
+        raw_mem = _CANDIDATE_RAW_STORE.get(eval_mem.candidate_id) if hasattr(eval_mem, "candidate_id") else None
         if cand_mem:
             cand_record = await DatabaseRepository.get_candidate(cand_mem.candidate_id)
-        else:
-            cand_record = None
+            if not cand_record:
+                if raw_mem:
+                    await DatabaseRepository.save_candidate(
+                        parsed_cv=raw_mem,
+                        anonymized_candidate=cand_mem,
+                    )
+            try:
+                await DatabaseRepository.save_evaluation(
+                    eval_result=eval_mem,
+                    candidate_id=eval_mem.candidate_id,
+                    job_id=eval_mem.job_id,
+                )
+            except Exception as save_err:
+                logger.warning(f"Could not persist in-memory evaluation for dossier: {save_err}")
         eval_record = await DatabaseRepository.get_evaluation(evaluation_id)
 
     if not eval_record:
@@ -1421,6 +1729,14 @@ async def get_compliance_dossier(
         )
 
     cand_record = await DatabaseRepository.get_candidate(eval_record.candidate_id)
+    if not cand_record:
+        raw_mem = _CANDIDATE_RAW_STORE.get(UUID(eval_record.candidate_id))
+        anon_mem = _CANDIDATE_ANONYMIZED_STORE.get(UUID(eval_record.candidate_id))
+        if raw_mem and anon_mem:
+            cand_record = await DatabaseRepository.save_candidate(
+                parsed_cv=raw_mem,
+                anonymized_candidate=anon_mem,
+            )
     if not cand_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

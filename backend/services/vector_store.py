@@ -3,7 +3,7 @@ backend/services/vector_store.py
 ChromaDB vector store manager for local embeddings and asymmetric semantic retrieval.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 import chromadb
@@ -93,13 +93,10 @@ class VectorStoreService:
             try:
                 existing = self.candidate_collection.get(
                     where={"candidate_id": cid_str},
-                    limit=1,
+                    include=[],
                 )
                 if existing and existing.get("ids") and len(existing["ids"]) > 0:
-                    total_existing = self.candidate_collection.get(
-                        where={"candidate_id": cid_str},
-                    )
-                    return len(total_existing.get("ids", []))
+                    return len(existing["ids"])
             except Exception:
                 pass
         documents: List[str] = []
@@ -193,9 +190,9 @@ class VectorStoreService:
             })
             ids.append(f"candidate_{candidate.candidate_id}_certifications")
 
-        # 5. Add custom fallback sections chunks
+        # 5. Add custom fallback sections chunks (index all sections including out-of-scope/miscellaneous)
         for s_idx, sec in enumerate(getattr(candidate, "anonymized_custom_sections", [])):
-            if not sec.is_relevant or not sec.items:
+            if not sec.items:
                 continue
             sec_content = f"{sec.section_title}: " + "; ".join(sec.items)
             documents.append(sec_content)
@@ -208,6 +205,22 @@ class VectorStoreService:
                 "bullet_index": 0,
             })
             ids.append(f"candidate_{candidate.candidate_id}_sec_{s_idx}")
+
+        # 5.5 Add miscellaneous and out-of-scope detail chunks for semantic search
+        for m_idx, misc_item in enumerate(getattr(candidate, "anonymized_miscellaneous", [])):
+            if not misc_item or not misc_item.strip():
+                continue
+            misc_doc = f"Miscellaneous / Additional Candidate Information: {misc_item.strip()}"
+            documents.append(misc_doc)
+            metadatas.append({
+                "candidate_id": str(candidate.candidate_id),
+                "type": "miscellaneous",
+                "job_title": "Miscellaneous / Other Information",
+                "company_name": "Additional Candidate Data",
+                "experience_index": m_idx,
+                "bullet_index": 0,
+            })
+            ids.append(f"candidate_{candidate.candidate_id}_misc_{m_idx}")
 
         # 6. Add education chunks
         for edu_idx, edu in enumerate(getattr(candidate, "anonymized_education", [])):
@@ -318,20 +331,15 @@ class VectorStoreService:
         Returns:
             List of matching chunks with document text, score/distance, and metadata.
         """
-        # 1. Guard against querying an empty collection
-        total_available = self.candidate_collection.count()
-        if total_available == 0:
+        # 1. Query ChromaDB filtered strictly by candidate_id to prevent cross-candidate data leakage
+        try:
+            results = self.candidate_collection.query(
+                query_texts=[query_text],
+                where={"candidate_id": str(candidate_id)},
+                n_results=n_results,
+            )
+        except Exception:
             return []
-
-        # 2. Cap n_results to the available count to prevent ChromaDB boundary errors
-        limit = min(n_results, total_available)
-
-        # 3. Query ChromaDB filtered strictly by candidate_id to prevent cross-candidate data leakage
-        results = self.candidate_collection.query(
-            query_texts=[query_text],
-            where={"candidate_id": str(candidate_id)},
-            n_results=limit,
-        )
 
         # 4. Unpack ChromaDB's 2D batch response structure into a clean list of dictionaries
         formatted: List[Dict[str, Any]] = []
@@ -348,6 +356,21 @@ class VectorStoreService:
                 })
 
         return formatted
+
+    def delete_candidate(self, candidate_id: Union[UUID, str]) -> int:
+        """Deletes all chunks belonging to a specific candidate from ChromaDB."""
+        cid_str = str(candidate_id)
+        try:
+            existing = self.candidate_collection.get(
+                where={"candidate_id": cid_str},
+                include=[],
+            )
+            if existing and existing.get("ids") and len(existing["ids"]) > 0:
+                self.candidate_collection.delete(ids=existing["ids"])
+                return len(existing["ids"])
+        except Exception:
+            pass
+        return 0
 
     def reset(self) -> None:
         """Helper to clear collections for testing and test isolation."""

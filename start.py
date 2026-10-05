@@ -5,16 +5,46 @@ Launches both the FastAPI backend server and the Streamlit frontend dashboard co
 """
 
 import os
+import socket
 import subprocess
 import sys
 import time
 import webbrowser
 
 
+def is_port_in_use(port: int) -> bool:
+    """Checks whether a local TCP port is currently occupied."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def kill_process_on_port(port: int):
+    """Terminates any stale/zombie process holding the target port on Windows."""
+    try:
+        out = subprocess.check_output(f"netstat -ano | findstr :{port}", shell=True, text=True)
+        pids = set()
+        for line in out.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and "LISTENING" in parts:
+                pids.add(parts[-1])
+        for pid in pids:
+            if pid != "0":
+                subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
+        time.sleep(1)
+    except Exception:
+        pass
+
+
 def main():
     print("=" * 70)
     print(" Starting Agentic Recruitment Screening System")
     print("=" * 70)
+
+    # Clean stale ports if occupied
+    for port in (8000, 8501):
+        if is_port_in_use(port):
+            print(f"Port {port} in use by stale process. Clearing port {port}...")
+            kill_process_on_port(port)
 
     # Determine Python executable
     venv_python = os.path.join(os.getcwd(), ".venv", "Scripts", "python.exe")
@@ -37,6 +67,8 @@ def main():
             "--reload",
             "--reload-dir",
             "backend",
+            "--timeout-keep-alive",
+            "75",
         ],
         cwd=os.getcwd(),
     )
@@ -101,10 +133,16 @@ def main():
     except KeyboardInterrupt:
         print("\nTerminating background services...")
     finally:
-        backend_proc.terminate()
-        frontend_proc.terminate()
-        backend_proc.wait()
-        frontend_proc.wait()
+        for p in (backend_proc, frontend_proc):
+            if p:
+                try:
+                    p.terminate()
+                    p.wait(timeout=3)
+                except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
         print("Both services terminated cleanly. Goodbye!")
 
 

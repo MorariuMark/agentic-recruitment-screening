@@ -70,3 +70,13 @@ body {
 .panel-card:hover {
   border-color: #334155;
 }
+
+/* Ensure Next.js dev indicator stays at bottom-right corner */
+nextjs-portal,
+[data-nextjs-dev-tools-button],
+[data-nextjs-dev-tools],
+div[class*="nextjs-dev-tools"] {
+  left: auto !important;
+  right: 16px !important;
+}
+

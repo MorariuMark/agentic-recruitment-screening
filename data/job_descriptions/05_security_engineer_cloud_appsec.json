@@ -1,0 +1,71 @@
+{
+  "title": "Security Engineer (Cloud & Application Security)",
+  "department": "Information Security (CISO Office)",
+  "seniority_level": "Senior",
+  "location": "Remote, Romania",
+  "work_model": "Remote",
+  "employment_type": "Full-time",
+  "languages": [
+    "English",
+    "Romanian"
+  ],
+  "requirements": [
+    {
+      "id": "req_cloud_security",
+      "category": "must_have",
+      "weight": 5.0,
+      "title": "Cloud Security Posture (AWS/Azure/GCP)",
+      "description": "Hardening cloud environments: IAM least privilege, network segmentation, KMS/secret management, CSPM tooling.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_appsec_sdlc",
+      "category": "must_have",
+      "weight": 4.0,
+      "title": "Application Security & Secure SDLC",
+      "description": "Threat modeling, secure code reviews, SAST/DAST/SCA integration, and OWASP Top 10 remediation guidance.",
+      "minimum_years_experience": 4
+    },
+    {
+      "id": "req_kubernetes_runtime",
+      "category": "must_have",
+      "weight": 3.5,
+      "title": "Kubernetes & Container Security",
+      "description": "Cluster baselining, admission control, image signing, runtime detection, and secrets handling in Kubernetes.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_detect_response",
+      "category": "must_have",
+      "weight": 3.5,
+      "title": "Detection Engineering & Incident Response",
+      "description": "Writing detections (SIEM/EDR), triaging alerts, and leading security incident response and forensics basics.",
+      "minimum_years_experience": 3
+    },
+    {
+      "id": "req_iac_policy",
+      "category": "nice_to_have",
+      "weight": 2.5,
+      "title": "Policy as Code",
+      "description": "Enforcing guardrails with OPA/Gatekeeper, Checkov, tfsec, or Kubernetes admission policies in pipelines.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_compliance_iso_soc2",
+      "category": "nice_to_have",
+      "weight": 2.0,
+      "title": "Compliance Frameworks",
+      "description": "Supporting ISO 27001, SOC 2, or NIS2 audits: control mapping, evidence collection, and gap remediation.",
+      "minimum_years_experience": 2
+    },
+    {
+      "id": "req_soft_risk_comm",
+      "category": "soft_skill",
+      "weight": 1.5,
+      "title": "Risk Communication & Influence",
+      "description": "Ability to translate technical risk into business impact and to drive remediation without blocking delivery teams.",
+      "minimum_years_experience": null
+    }
+  ],
+  "raw_text": "# Security Engineer (Cloud & Application Security)\n\n**Department:** Information Security (CISO Office)  \n**Seniority:** Senior  \n**Location:** Remote, Romania  \n**Work model:** Remote  \n**Employment type:** Full-time  \n**Languages:** English, Romanian\n\n## Company Overview\n\nNovaStack Solutions serves enterprise clients in finance and telecom where security is a contractual obligation. Our CISO Office runs a product-minded security program: platform guardrails, developer self-service security tooling, and 24/7 detection coverage.\n\n## About the Role\n\nWe are hiring a Senior Security Engineer to strengthen cloud and application security across our multi-cloud estate. You will be a hands-on contributor who builds guardrails into the delivery pipeline and partners with engineering teams on remediation.\n\n## Responsibilities\n\n- Harden AWS/Azure/GCP landing zones: IAM design, network policies, encryption, and secret rotation.\n- Embed security into CI/CD: SAST/DAST/SCA scanning, IaC policy checks, and image scanning gates.\n- Secure Kubernetes workloads: baselines, admission controllers, service mesh mTLS, and runtime monitoring.\n- Develop detections and runbooks in the SIEM; participate in on-call incident response.\n- Perform threat modeling for new services and security reviews of critical changes.\n- Automate compliance evidence collection for ISO 27001 / SOC 2 / NIS2 controls.\n- Advise engineers with practical remediation guidance and secure-by-default patterns.\n\n## Minimum Qualifications\n\n- 5+ years in information security, at least 3 in a hands-on engineering capacity.\n- Deep knowledge of cloud security controls on AWS, Azure, or GCP.\n- Practical experience with the OWASP Top 10, SAST/DAST/SCA tooling, and secrets management (Vault, KMS).\n- Production Kubernetes security experience.\n- Scripting ability (Python, Bash, or Go) for automation.\n- Fluent English.\n\n## Nice to Have\n\n- Certifications: CCSP, AWS Security Specialty, CKS, or OSCP.\n- Experience with policy-as-code (OPA/Gatekeeper, Checkov, tfsec).\n- Familiarity with NIS2/DORA regulatory expectations in EU IT environments.\n- Bug bounty or CTF background.\n\n## Soft Skills\n\n- Influence without authority across delivery squads.\n- Clear, calm communication during security incidents.\n- Balanced view of risk: pragmatic, not obstructive.\n\n## What We Offer\n\n- Fully remote within Romania with quarterly team gatherings.\n- Home-office and security-conference budget.\n- Private medical insurance and wellbeing stipend.\n- Access to lab environments, bug bounty programs, and training platforms (e.g. Hack The Box, SANS on-demand).\n- Direct reporting line to the CISO and visibility at board level.\n\n## How to Apply\n\nSend your CV. Mention any security research, CVEs, talks, or hard problems you have solved - we value demonstrated impact over credentials alone."
+}

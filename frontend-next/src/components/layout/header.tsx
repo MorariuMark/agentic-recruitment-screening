@@ -8,8 +8,8 @@ import {
   Briefcase,
   ChevronDown,
   ExternalLink,
-  Layers,
-  Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
   Zap,
 } from "lucide-react";
 
@@ -18,6 +18,9 @@ interface HeaderProps {
   selectedJobId: string | null;
   onSelectJob: (jobId: string | null) => void;
   onOpenUploadModal?: () => void;
+  onNavigateToSettings?: () => void;
+  isSidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export function Header({
@@ -25,41 +28,35 @@ export function Header({
   selectedJobId,
   onSelectJob,
   onOpenUploadModal,
+  onNavigateToSettings,
+  isSidebarOpen = true,
+  onToggleSidebar,
 }: HeaderProps) {
   const [backendStatus, setBackendStatus] = useState<"online" | "offline" | "checking">("checking");
-  const [activeModel, setActiveModel] = useState<string>("Detecting...");
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
+
+  const refreshStatus = async () => {
+    try {
+      const health = await api.getHealth();
+      if (health && health.status === "ok") {
+        setBackendStatus("online");
+      }
+    } catch {
+      setBackendStatus("offline");
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
-
-    // Failsafe timer: transition out of 'checking' state within 4s if network hangs
     const failsafe = setTimeout(() => {
       if (isMounted) {
         setBackendStatus((prev) => (prev === "checking" ? "offline" : prev));
-        setActiveModel((prev) => (prev === "Detecting..." ? "Offline" : prev));
       }
-    }, 4000);
+    }, 2500);
 
-    async function checkHealth() {
-      try {
-        const health = await api.getHealth();
-        if (isMounted) {
-          setBackendStatus(health.status === "ok" ? "online" : "offline");
-          const provider = health.active_llm_provider || "llm";
-          const model = health.active_model || "ready";
-          setActiveModel(`${provider}:${model}`);
-        }
-      } catch {
-        if (isMounted) {
-          setBackendStatus("offline");
-          setActiveModel("Unavailable");
-        }
-      }
-    }
+    refreshStatus();
+    const interval = setInterval(refreshStatus, 10000);
 
-    checkHealth();
-    const interval = setInterval(checkHealth, 15000);
     return () => {
       isMounted = false;
       clearTimeout(failsafe);
@@ -71,36 +68,44 @@ export function Header({
 
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md px-4 flex items-center justify-between sticky top-0 z-40">
-      {/* Left: Requisition Scope Selector */}
+      {/* Left: Sidebar Toggle & Requisition Scope Selector */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider">
-          <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-          <span>Enterprise Screening</span>
-        </div>
-
-        <div className="h-4 w-px bg-slate-800" />
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+            title={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+            aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+          >
+            {isSidebarOpen ? (
+              <PanelLeftClose className="w-4 h-4 text-slate-300" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4 text-blue-400" />
+            )}
+          </button>
+        )}
 
         {/* Active Job Selector Dropdown */}
         <div className="relative">
           <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-sm font-medium text-slate-200 transition-colors"
+            onClick={() => setIsJobDropdownOpen(!isJobDropdownOpen)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-sm font-medium text-slate-200 transition-colors cursor-pointer"
           >
             <Briefcase className="w-4 h-4 text-slate-400" />
-            <span className="max-w-[200px] truncate">
+            <span className="max-w-[220px] md:max-w-[280px] truncate">
               {activeJob ? activeJob.title : "All Requisitions"}
             </span>
             <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
           </button>
 
-          {isDropdownOpen && (
-            <div className="absolute left-0 mt-1 w-64 rounded-lg bg-slate-900 border border-slate-800 shadow-2xl py-1 z-50">
+          {isJobDropdownOpen && (
+            <div className="absolute left-0 mt-1 w-72 rounded-lg bg-slate-900 border border-slate-800 shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95">
               <button
                 onClick={() => {
                   onSelectJob(null);
-                  setIsDropdownOpen(false);
+                  setIsJobDropdownOpen(false);
                 }}
-                className={`w-full px-3 py-2 text-left text-xs font-medium flex items-center justify-between hover:bg-slate-800 transition-colors ${
+                className={`w-full px-3 py-2 text-left text-xs font-medium flex items-center justify-between hover:bg-slate-800 transition-colors cursor-pointer ${
                   !selectedJobId ? "text-blue-400 font-semibold bg-blue-500/10" : "text-slate-300"
                 }`}
               >
@@ -113,9 +118,9 @@ export function Header({
                   key={job.id}
                   onClick={() => {
                     onSelectJob(job.id);
-                    setIsDropdownOpen(false);
+                    setIsJobDropdownOpen(false);
                   }}
-                  className={`w-full px-3 py-2 text-left text-xs hover:bg-slate-800 transition-colors ${
+                  className={`w-full px-3 py-2 text-left text-xs hover:bg-slate-800 transition-colors cursor-pointer ${
                     selectedJobId === job.id ? "text-blue-400 font-semibold bg-blue-500/10" : "text-slate-300"
                   }`}
                 >
@@ -130,25 +135,33 @@ export function Header({
         </div>
       </div>
 
-      {/* Right: Diagnostics, Phoenix Trace, & Status */}
+      {/* Right: Phoenix Traces & Backend Health */}
       <div className="flex items-center gap-3">
+
+        {/* Token Usage Analytics link */}
+        {onNavigateToSettings && (
+          <button
+            onClick={onNavigateToSettings}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-amber-500/40 text-xs text-slate-300 hover:text-amber-300 transition-colors cursor-pointer group"
+            title="Open Token Usage & Model Analytics Dashboard"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform fill-amber-400/20" />
+            <span className="font-mono text-[11px]">Tokens &amp; Telemetry</span>
+          </button>
+        )}
+
         {/* Arize Phoenix Observability link */}
         <a
           href="http://localhost:6006"
           target="_blank"
           rel="noopener noreferrer"
-          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          title="Open Arize Phoenix OpenTelemetry tracing dashboard"
         >
           <Activity className="w-3.5 h-3.5 text-purple-400" />
           <span>Phoenix Traces</span>
           <ExternalLink className="w-3 h-3 text-slate-500" />
         </a>
-
-        {/* Active LLM Model tag */}
-        <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-xs text-slate-300">
-          <Zap className="w-3.5 h-3.5 text-amber-400" />
-          <span className="font-mono text-[11px] text-slate-400">{activeModel}</span>
-        </div>
 
         {/* Backend health pulse */}
         <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs">

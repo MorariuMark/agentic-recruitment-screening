@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import backend.api.routes as routes
 from backend.main import app
-from backend.schemas.cv import ContactInfo, ParsedCV, WorkExperience
+from backend.schemas.cv import AnonymizedCandidate, ContactInfo, ParsedCV, WorkExperience
 from backend.schemas.job import JobDescription, JobRequirement, RequirementCategory
 from backend.schemas.match import MatchEvaluationResult, Recommendation
 
@@ -213,5 +213,42 @@ def test_ollama_load_and_unload_endpoints(api_client, monkeypatch):
     res_unload = api_client.post("/api/v1/ollama/unload", json={"model": "qwen3.5:2b-q4_K_M"})
     assert res_unload.status_code == 200
     assert res_unload.json()["success"] is True
+
+
+def test_delete_candidate_endpoint(api_client):
+    """Verify DELETE /api/v1/candidates/{candidate_id} deletes candidate and returns confirmation."""
+    cid = uuid4()
+    mock_parsed = ParsedCV(
+        contact_info=ContactInfo(full_name="Temp Candidate", email="temp@example.com"),
+        experiences=[
+            WorkExperience(
+                job_title="Software Engineer",
+                company_name="Tech Co",
+                work_description=["Developed software."],
+            )
+        ],
+    )
+    mock_anon = AnonymizedCandidate(
+        candidate_id=cid,
+        anonymized_work_experiences=mock_parsed.experiences,
+        anonymized_skills=["Python"],
+        sanitized_text="Candidate description",
+    )
+    routes._CANDIDATE_RAW_STORE[cid] = mock_parsed
+    routes._CANDIDATE_ANONYMIZED_STORE[cid] = mock_anon
+    routes._CANDIDATE_CHUNKS_STORE[cid] = 1
+
+    res = api_client.delete(f"/api/v1/candidates/{cid}")
+    assert res.status_code == 200
+    assert res.json()["status"] == "deleted"
+    assert res.json()["candidate_id"] == str(cid)
+
+    # Verify candidate removed from memory cache
+    assert cid not in routes._CANDIDATE_RAW_STORE
+    assert cid not in routes._CANDIDATE_ANONYMIZED_STORE
+
+    # Subsequent delete of non-existent candidate returns 404
+    res_404 = api_client.delete(f"/api/v1/candidates/{uuid4()}")
+    assert res_404.status_code == 404
 
 

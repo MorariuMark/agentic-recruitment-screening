@@ -1,0 +1,57 @@
+NGUYEN MINH KHOA
+Embedded Software Engineer — ADAS & Autonomous Driving
+Ho Chi Minh City, Vietnam • +84 90 123 4567 • minhkhoa.nguyen.sw@hella-dev.vn • linkedin.com/in/nguyen-minh-khoa-adas • github.com/minhkhoa-embedded
+
+PROFESSIONAL SUMMARY
+Embedded Software Engineer with 3+ years of experience developing automotive ADAS and autonomous driving software systems. Proven track record in high-level collaborative design under formal ASPICE SWE processes, radar system software integration, and AUTOSAR Classic stack deployment on 32-bit Infineon TriCore MCUs. Hands-on expertise with IBM Rhapsody, Polyspace, Vector CANoe (CAPL), DaVinci, DOORS, and UDS/CAN FD protocols. Certified in ISO 26262 Functional Safety (ASIL-B) with practical automotive cybersecurity experience.
+
+TECHNICAL SKILLS
+- Languages: C, C++, CAPL, Python, Embedded C, Assembly
+- Microcontrollers & Hardware: 32-bit MCUs, Infineon TriCore (TC3xx / TC397), Renesas RH850, Bare-Metal OS, RTOS, Multi-core Development
+- Architecture & Stacks: AUTOSAR Classic (MCAL, BSW, RTE, SWC), Flashbootloader (FBL), Secure Boot / EVITA Medium
+- Protocols & Busses: CAN, CAN FD, LIN, Ethernet, TCP/IP, J1939, UDS (ISO 14229)
+- Tools & Toolchains: IBM Rhapsody, Polyspace Bug Finder & Code Prover, WindIdea, DaVinci Configurator & Developer, IBM DOORS, PTC Integrity, Vector CANoe, Vector CANdb++, VectorCAST, Git, Jenkins (CI/CD)
+- Standards & Quality: ASPICE (SWE.1–SWE.6), ISO 26262 Functional Safety (ASIL-B), MISRA C:2012, ISO 21434 Cybersecurity
+
+PROFESSIONAL EXPERIENCE
+
+Embedded Software Engineer — ADAS Radar | FORVIA HELLA Vietnam — Ho Chi Minh City, Vietnam
+July 2023 – Present
+- Primarily responsible for software modules of HELLA's 77 GHz Radar ADAS product line targeting Level 2+ autonomous driving.
+- Implemented and maintained AUTOSAR-compliant SWCs for radar signal processing, object detection, and CAN FD communication on Infineon TriCore TC397 MCU.
+- Led high-level collaborative design of integrated solutions in compliance with ASPICE SWE.1–SWE.6 across 3 active radar platform projects.
+- Worked with Software Project Manager to identify optimal technical solutions for RADAR-to-ECU interface challenges, cutting integration defects by 25%.
+- Conducted design quality reviews and provided mentorship to 2 junior engineers on Rhapsody modeling and MISRA C compliance.
+- Implemented UDS diagnostic services (0x22, 0x2E, 0x31, 0x36) and Flashbootloader (FBL) modules aligned with OEM specifications.
+- Integrated cybersecurity measures (EVITA Medium, Secure Boot) into the BSW layer in compliance with ISO 21434.
+
+Junior Embedded Software Engineer | Renesas Design Vietnam — Ho Chi Minh City, Vietnam
+August 2021 – June 2023
+- Developed and unit-tested bare-metal C drivers for Renesas RH850 MCU peripherals (SPI, UART, CAN, LIN) for body electronics ECUs.
+- Used Polyspace Bug Finder and VectorCAST to achieve MISRA C compliance and unit test coverage targets of 95%+.
+- Participated in LIN cluster driver integration and regression testing using Vector CANoe with CAPL scripting.
+- Maintained DOORS traceability matrices linking requirements to design artifacts for ASPICE SWE.4 evidence.
+- Contributed to CI pipeline (Jenkins + Git) for automated build, static analysis, and test execution.
+
+KEY ENGINEERING PROJECTS
+
+HELLA 77 GHz Radar — FBL & OTA Update Module
+Technologies: C, AUTOSAR Classic, UDS, CAN FD, Infineon TriCore TC397, DaVinci Configurator
+- Designed and implemented an AUTOSAR-compliant Flashbootloader and OTA Software Update Manager for the HELLA Radar ECU.
+- Integrated UDS 0x34/0x36/0x37 data transfer services with CRC validation and rollback on checksum failure.
+- Passed OEM OTA acceptance testing on first submission with zero critical defects.
+
+LIN Cluster Driver — Full-Stack Bare Metal (Renesas RH850)
+Technologies: C, Renesas RH850, LIN 2.2A, Polyspace, VectorCAST, Vector CANoe
+- Developed a LIN 2.2A master/slave driver stack from scratch for body electronics on RH850.
+- Achieved 100% MISRA C:2012 compliance validated by Polyspace; full MC/DC coverage via VectorCAST.
+
+EDUCATION
+
+Bachelor of Engineering in Computer Engineering
+Ho Chi Minh City University of Technology (HCMUT) | Graduated: 2021
+GPA: 3.6 / 4.0 | Top 10% of graduating cohort
+
+LANGUAGES & CERTIFICATIONS
+- Languages: English (Fluent, C1), Vietnamese (Native, C2)
+- Certifications: ISO 26262 Functional Safety Engineer (TUV SUD — ASIL-B), Vector Academy CANoe Advanced CAPL Scripting, AUTOSAR Classic Platform (Vector Academy)

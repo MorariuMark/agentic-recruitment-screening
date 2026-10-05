@@ -73,6 +73,7 @@ class ScoringEngine:
         must_have_weighted_score = 0.0
         must_have_total_weight = 0.0
         must_have_gaps_count = 0
+        clarification_count = 0
 
         nice_to_have_weighted_score = 0.0
         nice_to_have_total_weight = 0.0
@@ -97,13 +98,21 @@ class ScoringEngine:
                     reasoning=match.reasoning,
                     citations=verified_cits,
                     gap_analysis=match.gap_analysis,
+                    is_objective=getattr(match, "is_objective", True),
+                    clarification_question=getattr(match, "clarification_question", None),
+                    transferable_skill=getattr(match, "transferable_skill", None),
+                    benefit_of_doubt=getattr(match, "benefit_of_doubt", False),
                 )
             )
+
+            if match.status == MatchStatus.CLARIFICATION_NEEDED:
+                clarification_count += 1
 
             if category == RequirementCategory.MUST_HAVE:
                 must_have_total_weight += weight
                 must_have_weighted_score += match.score * weight
-                if match.status != MatchStatus.MET:
+                # Non-met and partial must-have requirements count as gaps; clarification_needed does NOT disqualify.
+                if match.status in (MatchStatus.NOT_MET, MatchStatus.PARTIAL):
                     must_have_gaps_count += 1
             else:
                 nice_to_have_total_weight += weight
@@ -124,9 +133,31 @@ class ScoringEngine:
         must_have_score = round(must_have_score, 2)
         nice_to_have_score = round(nice_to_have_score, 2)
 
-        if must_have_gaps_count >= 2 or overall_score < 50.0:
+        # Count hard objective NOT_MET must-have gaps (excluding transferable skills or benefit-of-the-doubt)
+        hard_not_met_count = sum(
+            1
+            for m in updated_matches
+            if req_lookup.get(m.requirement_id)
+            and req_lookup[m.requirement_id].category == RequirementCategory.MUST_HAVE
+            and m.status == MatchStatus.NOT_MET
+            and getattr(m, "is_objective", True)
+        )
+
+        # Decision Matrix:
+        # A candidate is REJECTED only for hard objective shortcomings:
+        # - >= 2 hard objective must-have requirements NOT MET (complete lack of qualification/experience), or
+        # - >= 1 must-have gap and overall_score < 50.0, or
+        # - >= 2 must-have gaps where overall_score < 55.0 and at least 1 hard NOT_MET
+        # If candidate has transferable skills or partial competencies with overall_score >= 55.0
+        # and < 2 hard NOT_MET gaps:
+        # - Advanced to BORDERLINE (or STRONG_MATCH if high-scoring and 0 hard gaps). Under no circumstances falsely REJECTED!
+        has_multiple_hard_rejections = hard_not_met_count >= 2
+        is_failing_score = overall_score < 50.0
+        is_subpar_with_hard_gap = must_have_gaps_count >= 2 and overall_score < 55.0 and hard_not_met_count >= 1
+
+        if has_multiple_hard_rejections or (must_have_gaps_count >= 1 and is_failing_score) or is_subpar_with_hard_gap:
             recommendation = Recommendation.REJECT
-        elif must_have_gaps_count == 1 or (50.0 <= overall_score < 70.0):
+        elif must_have_gaps_count >= 1 or clarification_count > 0 or (50.0 <= overall_score < 70.0):
             recommendation = Recommendation.BORDERLINE
         else:
             recommendation = Recommendation.STRONG_MATCH
@@ -143,6 +174,7 @@ class ScoringEngine:
             recommendation=recommendation,
             requirement_matches=updated_matches,
             must_have_gaps_count=must_have_gaps_count,
+            clarification_count=clarification_count,
             citation_verification_score=round(global_cvs, 4),
             hitl_validated=False,
         )
