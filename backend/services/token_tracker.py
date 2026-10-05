@@ -158,14 +158,15 @@ class TokenTracker:
         # Accumulate into action session if active
         if hasattr(_THREAD_LOCAL, "active_action"):
             act = _THREAD_LOCAL.active_action
-            acc = _SESSION_ACCUMULATOR[act]
-            acc["provider"] = provider.lower()
-            acc["model"] = model
-            acc["prompt_tokens"] += prompt_tokens
-            acc["completion_tokens"] += completion_tokens
-            acc["total_tokens"] += total_tokens
-            acc["latency_ms"] += float(latency_ms)
-            acc["call_count"] += 1
+            with _LOCK:
+                acc = _SESSION_ACCUMULATOR[act]
+                acc["provider"] = provider.lower()
+                acc["model"] = model
+                acc["prompt_tokens"] += prompt_tokens
+                acc["completion_tokens"] += completion_tokens
+                acc["total_tokens"] += total_tokens
+                acc["latency_ms"] += float(latency_ms)
+                acc["call_count"] += 1
 
         friendly = _get_friendly_model_name(provider, model)
         return TokenUsageInfo(

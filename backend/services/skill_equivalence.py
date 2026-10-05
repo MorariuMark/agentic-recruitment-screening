@@ -260,6 +260,14 @@ def format_tech_name(term: str) -> str:
     return TECH_NAME_MAP.get(term_lower, term.title())
 
 
+# Pre-compiled word-boundary regex patterns for cluster members
+_MEMBER_PATTERNS: Dict[str, re.Pattern] = {
+    m: re.compile(r"\b" + re.escape(m) + r"\b", re.IGNORECASE)
+    for cluster in EQUIVALENCE_CLUSTERS
+    for m in cluster["members"]
+}
+
+
 class SkillEquivalenceService:
     """Service providing fuzzy, transferable, and hierarchical competence evaluation."""
 
@@ -280,41 +288,47 @@ class SkillEquivalenceService:
         """
         req_text = f"{requirement_title} {requirement_description}".lower()
 
-        # Collect candidate tokens
-        cand_tokens: Set[str] = {s.lower().strip() for s in candidate_skills}
-        for exp in candidate_experiences:
-            for s in exp.skills_used:
-                cand_tokens.add(s.lower().strip())
-            for line in exp.work_description:
-                for word in re.findall(r"\b[a-zA-Z0-9_\-\.+#]+\b", line.lower()):
-                    cand_tokens.add(word)
+        # Build candidate search corpus: explicit skills set and concatenated descriptions
+        cand_explicit_skills: Set[str] = {s.lower().strip() for s in (candidate_skills or [])}
+        for exp in (candidate_experiences or []):
+            for s in (exp.skills_used or []):
+                cand_explicit_skills.add(s.lower().strip())
+
+        exp_desc_text = " ".join(
+            line.lower()
+            for exp in (candidate_experiences or [])
+            for line in (exp.work_description or [])
+        )
+        cand_full_text = " ".join(cand_explicit_skills) + " " + exp_desc_text
 
         for cluster in EQUIVALENCE_CLUSTERS:
             members = cluster["members"]
             # Check if requirement specifically calls for any member in this cluster
-            target_matches = [m for m in members if re.search(r"\b" + re.escape(m) + r"\b", req_text)]
+            target_matches = [
+                m for m in members
+                if _MEMBER_PATTERNS[m].search(req_text)
+            ]
             if not target_matches:
                 continue
 
             target_term = target_matches[0]
 
-            # If candidate already possesses the target technology directly, it's not a transferable fallback
-            has_target = any(
-                re.search(r"\b" + re.escape(t) + r"\b", cand_tok)
+            # If candidate already possesses any target technology directly, it's not a transferable fallback
+            has_direct_target = any(
+                t in cand_explicit_skills or _MEMBER_PATTERNS[t].search(cand_full_text)
                 for t in target_matches
-                for cand_tok in cand_tokens
             )
-            if has_target:
+            if has_direct_target:
                 continue
 
             # Check if candidate possesses ANY OTHER member of the same cluster
-            for cand_skill in cand_tokens:
-                for member in members:
-                    if member == target_term or member in target_matches:
-                        continue
-                    # Match on word boundary to prevent false substring matches (e.g. 'iam' in 'parliament')
-                    if re.search(r"\b" + re.escape(member) + r"\b", cand_skill):
-                        return (format_tech_name(member), format_tech_name(target_term), cluster["category"])
+            # Check explicit skills first for speed, then full text
+            for member in members:
+                if member in target_matches or member == target_term:
+                    continue
+                pat = _MEMBER_PATTERNS[member]
+                if member in cand_explicit_skills or any(pat.search(s) for s in cand_explicit_skills) or pat.search(cand_full_text):
+                    return (format_tech_name(member), format_tech_name(target_term), cluster["category"])
 
         return None
 

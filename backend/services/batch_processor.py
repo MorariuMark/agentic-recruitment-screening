@@ -168,55 +168,68 @@ class BatchProcessorService:
             },
         )
 
-        for idx, (filename, content_bytes) in enumerate(file_payloads, start=1):
-            logger.info(f"Batch {batch_id}: processing file {idx}/{len(file_payloads)} ({filename})...")
+        try:
+            for idx, (filename, content_bytes) in enumerate(file_payloads, start=1):
+                logger.info(f"Batch {batch_id}: processing file {idx}/{len(file_payloads)} ({filename})...")
+                await event_broadcaster.publish_batch_event(
+                    batch_id=batch_id,
+                    event_type="file_processing",
+                    data={
+                        "batch_id": str(batch_id),
+                        "filename": filename,
+                        "current_index": idx,
+                        "total_files": len(file_payloads),
+                    },
+                )
+
+                result_item = await self.process_single_candidate(
+                    content_bytes=content_bytes,
+                    filename=filename,
+                    job_description=job_description,
+                )
+                is_success = (result_item.get("status") == "COMPLETED")
+                is_completed = (idx == len(file_payloads))
+
+                await DatabaseRepository.update_batch_progress(
+                    batch_id=batch_id,
+                    candidate_result=result_item,
+                    is_success=is_success,
+                    is_completed=is_completed,
+                )
+
+                progress_pct = round((idx / len(file_payloads)) * 100.0, 1)
+                await event_broadcaster.publish_batch_event(
+                    batch_id=batch_id,
+                    event_type="file_completed",
+                    data={
+                        "batch_id": str(batch_id),
+                        "filename": filename,
+                        "result": result_item,
+                        "processed_count": idx,
+                        "total_files": len(file_payloads),
+                        "progress_percentage": progress_pct,
+                    },
+                )
+
+            logger.info(f"Batch {batch_id} processing complete.")
             await event_broadcaster.publish_batch_event(
                 batch_id=batch_id,
-                event_type="file_processing",
+                event_type="batch_completed",
                 data={
                     "batch_id": str(batch_id),
-                    "filename": filename,
-                    "current_index": idx,
+                    "status": "COMPLETED",
                     "total_files": len(file_payloads),
                 },
             )
-
-            result_item = await self.process_single_candidate(
-                content_bytes=content_bytes,
-                filename=filename,
-                job_description=job_description,
-            )
-            is_success = (result_item.get("status") == "COMPLETED")
-            is_completed = (idx == len(file_payloads))
-
-            await DatabaseRepository.update_batch_progress(
-                batch_id=batch_id,
-                candidate_result=result_item,
-                is_success=is_success,
-                is_completed=is_completed,
-            )
-
-            progress_pct = round((idx / len(file_payloads)) * 100.0, 1)
+        except Exception as batch_err:
+            logger.error(f"Catastrophic failure in batch {batch_id}: {batch_err}", exc_info=True)
             await event_broadcaster.publish_batch_event(
                 batch_id=batch_id,
-                event_type="file_completed",
+                event_type="batch_failed",
                 data={
                     "batch_id": str(batch_id),
-                    "filename": filename,
-                    "result": result_item,
-                    "processed_count": idx,
+                    "status": "FAILED",
+                    "error": str(batch_err),
                     "total_files": len(file_payloads),
-                    "progress_percentage": progress_pct,
                 },
             )
-
-        logger.info(f"Batch {batch_id} processing complete.")
-        await event_broadcaster.publish_batch_event(
-            batch_id=batch_id,
-            event_type="batch_completed",
-            data={
-                "batch_id": str(batch_id),
-                "status": "COMPLETED",
-                "total_files": len(file_payloads),
-            },
-        )

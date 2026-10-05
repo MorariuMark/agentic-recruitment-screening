@@ -152,7 +152,11 @@ class DatabaseRepository:
         """Persists or updates a job description with atomic requirement decomposition."""
         async def _op(s: AsyncSession) -> JobRequisitionModel:
             jid_str = str(job.id)
-            existing = await s.get(JobRequisitionModel, jid_str)
+            existing = await s.get(
+                JobRequisitionModel,
+                jid_str,
+                options=[selectinload(JobRequisitionModel.requirements)],
+            )
 
             custom_sec = [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in (job.custom_sections or [])]
 

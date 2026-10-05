@@ -28,16 +28,18 @@ class ComplianceService:
     @staticmethod
     def _get_active_model_name() -> str:
         prov = getattr(settings, "llm_provider", "groq").lower()
-        if prov == "groq":
-            return getattr(settings, "groq_model", "llama-3.3-70b-versatile")
+        if prov == "agnes":
+            return getattr(settings, "agnes_model", "agnes-2.5-flash")
+        elif prov == "groq":
+            return getattr(settings, "groq_model", "openai/gpt-oss-20b")
         elif prov == "openrouter":
-            return getattr(settings, "openrouter_model", "meta-llama/llama-3.3-70b-instruct")
+            return getattr(settings, "openrouter_model", "openrouter/free")
         elif prov == "nvidia_nim":
-            return getattr(settings, "nvidia_nim_model", "meta/llama-3.3-70b-instruct")
+            return getattr(settings, "nvidia_nim_model", "meta/llama-3.2-11b-vision-instruct")
         elif prov == "gemini":
-            return getattr(settings, "gemini_model", "gemini-2.5-flash")
+            return getattr(settings, "gemini_model", "gemini-flash-latest")
         elif prov == "ollama":
-            return getattr(settings, "ollama_model", "llama3.2:latest")
+            return getattr(settings, "ollama_model", "qwen3.5:2b-q4_K_M")
         return "default"
 
     @classmethod

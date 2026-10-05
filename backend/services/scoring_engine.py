@@ -37,7 +37,8 @@ class ScoringEngine:
         if not citations:
             return [], 1.0
 
-        normalized_source = " ".join(source_text.lower().split())
+        source_str = source_text or ""
+        normalized_source = " ".join(source_str.lower().split())
 
         verified_citations: List[VerbatimCitation] = []
         valid_count = 0

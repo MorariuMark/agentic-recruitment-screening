@@ -339,7 +339,14 @@ class VectorStoreService:
                 n_results=n_results,
             )
         except Exception:
-            return []
+            try:
+                results = self.candidate_collection.query(
+                    query_texts=[query_text],
+                    where={"candidate_id": str(candidate_id)},
+                    n_results=1,
+                )
+            except Exception:
+                return []
 
         # 4. Unpack ChromaDB's 2D batch response structure into a clean list of dictionaries
         formatted: List[Dict[str, Any]] = []

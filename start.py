@@ -1,10 +1,12 @@
 """
 start.py
 Single-command startup runner for Agentic Recruitment Screening.
-Launches both the FastAPI backend server and the Streamlit frontend dashboard concurrently.
+Supports launching the modern Next.js 15 enterprise UI, legacy Streamlit dashboard, or both concurrently.
 """
 
+import argparse
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -36,12 +38,33 @@ def kill_process_on_port(port: int):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Start the Agentic Recruitment Screening Platform")
+    parser.add_argument(
+        "--ui",
+        choices=["next", "streamlit", "all"],
+        default="next",
+        help="Frontend UI to launch: 'next' (Next.js 15 enterprise studio, default), 'streamlit' (legacy dashboard), or 'all' (both).",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not automatically open the browser on startup.",
+    )
+    args = parser.parse_args()
+
     print("=" * 70)
-    print(" Starting Agentic Recruitment Screening System")
+    print(" Starting Agentic Recruitment Screening Platform")
+    print(f" Mode: UI={args.ui.upper()} | Backend=FastAPI")
     print("=" * 70)
 
     # Clean stale ports if occupied
-    for port in (8000, 8501):
+    ports_to_check = [8000]
+    if args.ui in ("next", "all"):
+        ports_to_check.append(3000)
+    if args.ui in ("streamlit", "all"):
+        ports_to_check.append(8501)
+
+    for port in ports_to_check:
         if is_port_in_use(port):
             print(f"Port {port} in use by stale process. Clearing port {port}...")
             kill_process_on_port(port)
@@ -95,45 +118,65 @@ def main():
     else:
         print("Warning: Backend health check timed out. Launching frontend anyway...")
 
-    print("Starting Streamlit frontend on http://127.0.0.1:8501 ...")
-    frontend_proc = subprocess.Popen(
-        [
-            venv_python,
-            "-m",
-            "streamlit",
-            "run",
-            "frontend/app.py",
-            "--server.port=8501",
-            "--server.address=127.0.0.1",
-        ],
-        cwd=os.getcwd(),
-    )
+    frontend_procs = []
+
+    # 1. Launch Next.js Enterprise UI
+    if args.ui in ("next", "all"):
+        print("Starting Next.js enterprise UI on http://localhost:3000 ...")
+        frontend_dir = os.path.join(os.getcwd(), "frontend-next")
+        npm_cmd = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
+        next_proc = subprocess.Popen(
+            [npm_cmd, "run", "dev"],
+            cwd=frontend_dir,
+            shell=True,
+        )
+        frontend_procs.append(("Next.js Enterprise Studio", next_proc, "http://localhost:3000"))
+
+    # 2. Launch Streamlit Legacy UI
+    if args.ui in ("streamlit", "all"):
+        print("Starting Streamlit legacy UI on http://127.0.0.1:8501 ...")
+        st_proc = subprocess.Popen(
+            [
+                venv_python,
+                "-m",
+                "streamlit",
+                "run",
+                "frontend/app.py",
+                "--server.port=8501",
+                "--server.address=127.0.0.1",
+            ],
+            cwd=os.getcwd(),
+        )
+        frontend_procs.append(("Streamlit Dashboard", st_proc, "http://127.0.0.1:8501"))
 
     print("\n" + "=" * 70)
     print(" Applications successfully launched!")
-    print("   - Frontend Dashboard:   http://127.0.0.1:8501")
-    print("   - FastAPI Backend:      http://127.0.0.1:8000")
-    print("   - API Interactive Docs: http://127.0.0.1:8000/docs")
-    print("   - Health Check:         http://127.0.0.1:8000/health")
+    for name, _, url in frontend_procs:
+        print(f"   - {name:<26}: {url}")
+    print("   - FastAPI Backend           : http://127.0.0.1:8000")
+    print("   - API Interactive Docs      : http://127.0.0.1:8000/docs")
+    print("   - Backend Health Check      : http://127.0.0.1:8000/health")
     print("=" * 70)
-    print("Press Ctrl+C to gracefully terminate both services.\n")
+    print("Press Ctrl+C to gracefully terminate all services.\n")
 
-    # Automatically open browser to Streamlit dashboard
-    try:
-        webbrowser.open("http://127.0.0.1:8501")
-    except Exception:
-        pass
+    # Automatically open primary browser
+    if not args.no_browser and frontend_procs:
+        try:
+            webbrowser.open(frontend_procs[0][2])
+        except Exception:
+            pass
 
+    all_procs = [backend_proc] + [p for _, p, _ in frontend_procs]
     try:
         while True:
             time.sleep(1)
-            if backend_proc.poll() is not None or frontend_proc.poll() is not None:
-                print("One of the child processes exited. Terminating...")
+            if any(p.poll() is not None for p in all_procs):
+                print("One of the child processes exited. Terminating remaining services...")
                 break
     except KeyboardInterrupt:
         print("\nTerminating background services...")
     finally:
-        for p in (backend_proc, frontend_proc):
+        for p in all_procs:
             if p:
                 try:
                     p.terminate()
@@ -143,7 +186,7 @@ def main():
                         p.kill()
                     except Exception:
                         pass
-        print("Both services terminated cleanly. Goodbye!")
+        print("All services terminated cleanly. Goodbye!")
 
 
 if __name__ == "__main__":

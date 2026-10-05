@@ -75,15 +75,15 @@ _batch_processor = BatchProcessorService(
 # Database Object Reconstruction Helpers
 # ---------------------------------------------------------------------------
 def _reconstruct_candidate_from_db(cand_model: CandidateModel) -> Tuple[ParsedCV, AnonymizedCandidate, int]:
-    parsed = ParsedCV.model_validate(cand_model.raw_cv_json)
-    anonymized = AnonymizedCandidate.model_validate(cand_model.anonymized_cv_json)
-    chunks_count = cand_model.chunks_indexed
+    parsed = ParsedCV.model_validate(cand_model.raw_cv_json or {})
+    anonymized = AnonymizedCandidate.model_validate(cand_model.anonymized_cv_json or {})
+    chunks_count = cand_model.chunks_indexed or 0
     return parsed, anonymized, chunks_count
 
 
 def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEvaluationResult:
     matches: List[RequirementMatch] = []
-    for m in eval_model.matches_json:
+    for m in (eval_model.matches_json or []):
         rm = RequirementMatch.model_validate(m)
         req_id_lower = rm.requirement_id.lower()
         reasoning_lower = rm.reasoning.lower()
@@ -163,7 +163,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
 
 
 def _reconstruct_interview_plan_from_db(plan_model: InterviewPlanModel) -> InterviewPlan:
-    questions = [InterviewQuestion.model_validate(q) for q in plan_model.questions_json]
+    questions = [InterviewQuestion.model_validate(q) for q in (plan_model.questions_json or [])]
     return InterviewPlan(
         id=UUID(plan_model.id),
         candidate_id=UUID(plan_model.candidate_id),

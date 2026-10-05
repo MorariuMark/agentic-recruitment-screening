@@ -128,12 +128,14 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        """Normalizes postgres:// and postgresql:// to postgresql+asyncpg:// for async SQLAlchemy."""
+        """Normalizes postgres://, postgresql://, and sqlite:/// to async drivers for async SQLAlchemy."""
         url = self.database_url
         if url.startswith("postgres://"):
             return url.replace("postgres://", "postgresql+asyncpg://", 1)
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if url.startswith("sqlite:///") and not url.startswith("sqlite+aiosqlite:///"):
+            return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
         return url
 
     model_config = SettingsConfigDict(

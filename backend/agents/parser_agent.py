@@ -69,6 +69,29 @@ Guidelines:
 14. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
 
 
+# Pre-compiled normalization maps and regular expressions
+_LIGATURE_MAP = {
+    "\ufb00": "ff",
+    "\ufb01": "fi",
+    "\ufb02": "fl",
+    "\ufb03": "ffi",
+    "\ufb04": "ffl",
+    "\ufb05": "ft",
+    "\ufb06": "st",
+}
+_INVISIBLE_CHARS = ("\xad", "\u00ad", "\u200b", "\u200c", "\u200d", "\ufeff")
+_BULLET_ICONS_REGEX = re.compile(r"[\uf000-\uf8ff\u25aa\u25cf\u25ba\u25b6\u2023\u2043]")
+_DEHYPHEN_REGEX = re.compile(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[a-z])")
+_EMAIL_AT_DOT_REGEX = re.compile(
+    r"(\b[A-Za-z0-9._%+-]+)\s*\[\s*at\s*\]\s*([A-Za-z0-9.-]+)\s*\[\s*dot\s*\]\s*([A-Za-z]{2,})\b",
+    re.IGNORECASE,
+)
+_EMAIL_PAREN_DOT_REGEX = re.compile(
+    r"(\b[A-Za-z0-9._%+-]+)\s*\(\s*at\s*\)\s*([A-Za-z0-9.-]+)\s*\.\s*([A-Za-z]{2,})\b",
+    re.IGNORECASE,
+)
+
+
 def normalize_extracted_text(text: str) -> str:
     """
     Sanitizes and normalizes extracted document text across typographical,
@@ -84,44 +107,25 @@ def normalize_extracted_text(text: str) -> str:
         return ""
 
     # Replace typographical ligatures
-    ligature_map = {
-        "\ufb00": "ff",
-        "\ufb01": "fi",
-        "\ufb02": "fl",
-        "\ufb03": "ffi",
-        "\ufb04": "ffl",
-        "\ufb05": "ft",
-        "\ufb06": "st",
-    }
-    for lig, repl in ligature_map.items():
+    for lig, repl in _LIGATURE_MAP.items():
         text = text.replace(lig, repl)
 
     # Strip soft hyphens and zero-width spaces
-    for invisible in ["\xad", "\u00ad", "\u200b", "\u200c", "\u200d", "\ufeff"]:
+    for invisible in _INVISIBLE_CHARS:
         text = text.replace(invisible, "")
 
     # Normalize unicode to NFKC
     text = unicodedata.normalize("NFKC", text)
 
     # Standardize bullet icons and private-use symbols to clean bullets
-    text = re.sub(r"[\uf000-\uf8ff\u25aa\u25cf\u25ba\u25b6\u2023\u2043]", "• ", text)
+    text = _BULLET_ICONS_REGEX.sub("• ", text)
 
     # De-hyphenate line wraps (e.g. "micro-\ncontroller" -> "microcontroller")
-    text = re.sub(r"(?<=[A-Za-z])-[ \t]*\n[ \t]*(?=[a-z])", "", text)
+    text = _DEHYPHEN_REGEX.sub("", text)
 
     # Unmask obfuscated anti-scraping email addresses
-    text = re.sub(
-        r"(\b[A-Za-z0-9._%+-]+)\s*\[\s*at\s*\]\s*([A-Za-z0-9.-]+)\s*\[\s*dot\s*\]\s*([A-Za-z]{2,})\b",
-        r"\1@\2.\3",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"(\b[A-Za-z0-9._%+-]+)\s*\(\s*at\s*\)\s*([A-Za-z0-9.-]+)\s*\.\s*([A-Za-z]{2,})\b",
-        r"\1@\2.\3",
-        text,
-        flags=re.IGNORECASE,
-    )
+    text = _EMAIL_AT_DOT_REGEX.sub(r"\1@\2.\3", text)
+    text = _EMAIL_PAREN_DOT_REGEX.sub(r"\1@\2.\3", text)
 
     return text
 
