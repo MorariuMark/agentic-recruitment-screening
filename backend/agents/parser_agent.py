@@ -937,9 +937,9 @@ class ParserAgent:
         if not raw_text or not raw_text.strip():
             raise ValueError("Cannot parse empty CV text.")
 
-        # Cap text at 25,000 characters (~5,500 tokens)
+        # Cap text at 12,000 characters (~2,800 tokens) to fit within provider TPM windows
         trimmed = raw_text.strip()
-        max_chars = 25000
+        max_chars = 12000
         if len(trimmed) > max_chars:
             trimmed = trimmed[:max_chars]
 

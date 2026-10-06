@@ -48,6 +48,7 @@ import {
 import { LiveProcessTimer, DurationBadge, useProcessTimer } from "@/components/ui/live-process-timer";
 import { ComplianceDossierModal } from "@/components/compliance/compliance-dossier-modal";
 import { DocumentViewer } from "@/components/evaluation/document-viewer";
+import { ParsedJdViewer } from "@/components/evaluation/parsed-jd-viewer";
 
 export interface RequirementMeta {
   title: string;
@@ -202,8 +203,10 @@ export function EvaluationView({
   // UI Interactive States
   const [showComplianceModal, setShowComplianceModal] = useState(false);
   const [showDocViewer, setShowDocViewer] = useState(true);
+  const [showFullJdModal, setShowFullJdModal] = useState(false);
   const [activeCitation, setActiveCitation] = useState<string | null>(null);
-  const [rightPanelTab, setRightPanelTab] = useState<"document" | "signoff">("document");
+  const [activeHighlightedReqId, setActiveHighlightedReqId] = useState<string | null>(null);
+  const [rightPanelTab, setRightPanelTab] = useState<"document" | "signoff" | "jd">("document");
   const [requirementFilter, setRequirementFilter] = useState<"all" | "met" | "partial" | "clarification_needed" | "not_met">("all");
   const [candidateSearchQuery, setCandidateSearchQuery] = useState("");
 
@@ -579,7 +582,17 @@ export function EvaluationView({
           </div>
 
           {/* Quick Actions on the Right */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* View Full Parsed JD Button */}
+            <button
+              onClick={() => setShowFullJdModal(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-sm shadow-blue-600/30 transition-all cursor-pointer active:scale-95"
+              title="Open full parsed Job Description with interactive requirement highlights"
+            >
+              <Briefcase className="w-3.5 h-3.5 text-white" />
+              <span>View Full Parsed JD</span>
+            </button>
+
             {evaluation && (
               <>
                 <button
@@ -607,7 +620,7 @@ export function EvaluationView({
                 <button
                   onClick={() => handleRunEvaluation()}
                   disabled={evaluating}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
                   title="Re-run semantic evaluation on candidate"
                 >
                   <RotateCw className={`w-3.5 h-3.5 text-slate-400 ${evaluating ? "animate-spin text-blue-400" : ""}`} />
@@ -984,29 +997,29 @@ export function EvaluationView({
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               {/* Score & Algorithmic Verdict */}
               <div className="flex items-center gap-4">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-white tracking-tight tabular-nums">
+                <div className="flex items-baseline gap-2.5">
+                  <span className="text-4xl font-black text-white tracking-tight tabular-nums">
                     {evaluation.overall_score.toFixed(0)}%
                   </span>
-                  <span className="text-xs uppercase font-semibold text-slate-400">
+                  <span className="text-xs sm:text-sm uppercase font-bold text-slate-300">
                     Overall Match
                   </span>
                 </div>
 
-                <div className="h-6 w-px bg-slate-800" />
+                <div className="h-7 w-px bg-slate-800" />
 
                 {recBadge && (
                   <div className="flex items-center gap-2">
                     <span
-                      className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold tracking-wide uppercase shadow-sm ${recBadge.className}`}
+                      className={`inline-flex items-center px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold tracking-wide uppercase shadow-sm ${recBadge.className}`}
                     >
                       {recBadge.label}
                     </span>
                   </div>
                 )}
 
-                <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs font-semibold text-emerald-300">
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <div className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs sm:text-sm font-semibold text-emerald-300">
+                  <Check className="w-4 h-4 text-emerald-400" />
                   <span>{(evaluation.citation_verification_score * 100).toFixed(0)}% Grounded</span>
                 </div>
 
@@ -1014,7 +1027,7 @@ export function EvaluationView({
                   <DurationBadge
                     duration={evalDuration}
                     label="Evaluation Duration"
-                    className="hidden md:inline-flex bg-slate-900/90 border-slate-700 text-slate-300"
+                    className="hidden md:inline-flex bg-slate-900/90 border-slate-700 text-slate-300 text-xs sm:text-sm"
                   />
                 )}
 
@@ -1026,22 +1039,22 @@ export function EvaluationView({
                 )}
 
                 {statusCounts.clarification_needed > 0 && (
-                  <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/30 text-xs font-semibold text-violet-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-violet-400" />
+                  <div className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/30 text-xs sm:text-sm font-semibold text-violet-300">
+                    <HelpCircle className="w-4 h-4 text-violet-400" />
                     <span>{statusCounts.clarification_needed} Clarifications Needed</span>
                   </div>
                 )}
               </div>
 
               {/* Recruiter Validation State */}
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-2 text-xs sm:text-sm">
                 {evaluation.hitl_validated ? (
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300">
+                  <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <span className="font-semibold">Article 14 Human Sign-off Recorded</span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300">
+                  <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300">
                     <AlertCircle className="w-4 h-4 text-amber-400 animate-pulse" />
                     <span className="font-semibold">Recruiter Sign-off Pending</span>
                   </div>
@@ -1050,13 +1063,13 @@ export function EvaluationView({
             </div>
 
             {/* Filter Tabs for Requirements List */}
-            <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
-              <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 rounded-xl border border-slate-800/80">
+            <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2.5 text-xs">
+              <div className="flex items-center gap-1 p-1 bg-slate-950/80 rounded-xl border border-slate-800/80 flex-wrap">
                 <button
                   onClick={() => setRequirementFilter("all")}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                     requirementFilter === "all"
-                      ? "bg-blue-600 text-white font-semibold shadow-sm"
+                      ? "bg-blue-600 text-white shadow-sm"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
@@ -1064,9 +1077,9 @@ export function EvaluationView({
                 </button>
                 <button
                   onClick={() => setRequirementFilter("met")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                     requirementFilter === "met"
-                      ? "bg-emerald-600 text-white font-semibold shadow-sm"
+                      ? "bg-emerald-600 text-white shadow-sm"
                       : "text-emerald-400 hover:text-emerald-300"
                   }`}
                 >
@@ -1075,9 +1088,9 @@ export function EvaluationView({
                 </button>
                 <button
                   onClick={() => setRequirementFilter("partial")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                     requirementFilter === "partial"
-                      ? "bg-amber-600 text-white font-semibold shadow-sm"
+                      ? "bg-amber-600 text-white shadow-sm"
                       : "text-amber-400 hover:text-amber-300"
                   }`}
                 >
@@ -1086,9 +1099,9 @@ export function EvaluationView({
                 </button>
                 <button
                   onClick={() => setRequirementFilter("clarification_needed")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                     requirementFilter === "clarification_needed"
-                      ? "bg-violet-600 text-white font-semibold shadow-sm"
+                      ? "bg-violet-600 text-white shadow-sm"
                       : "text-violet-400 hover:text-violet-300"
                   }`}
                 >
@@ -1097,9 +1110,9 @@ export function EvaluationView({
                 </button>
                 <button
                   onClick={() => setRequirementFilter("not_met")}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                     requirementFilter === "not_met"
-                      ? "bg-rose-600 text-white font-semibold shadow-sm"
+                      ? "bg-rose-600 text-white shadow-sm"
                       : "text-rose-400 hover:text-rose-300"
                   }`}
                 >
@@ -1108,10 +1121,17 @@ export function EvaluationView({
                 </button>
               </div>
 
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="text-xs text-slate-400">
-                  Showing <strong>{filteredRequirements.length}</strong> requirements • Click titles to inspect JD request &amp; citation
-                </div>
+              <div className="flex items-center justify-between gap-2.5 flex-wrap">
+                {/* View Full Parsed JD CTA Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowFullJdModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-sm shadow-blue-600/30 transition-all cursor-pointer active:scale-95"
+                  title="Open the complete parsed Job Description with interactive requirement locator"
+                >
+                  <FileText className="w-3.5 h-3.5 text-white" />
+                  <span>View Full Parsed JD</span>
+                </button>
 
                 {filteredRequirements.length > 0 && (
                   <button
@@ -1123,7 +1143,7 @@ export function EvaluationView({
                         setExpandedReqIds(new Set(filteredRequirements.map((r) => r.requirement_id)));
                       }
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/60"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer border border-slate-700/60"
                   >
                     <BookOpen className="w-3.5 h-3.5 text-blue-400" />
                     <span>
@@ -1155,16 +1175,27 @@ export function EvaluationView({
                   const isObjective = rm.is_objective !== false;
                   const reqMeta = getRequirementMeta(rm, activeJob);
                   const isExpanded = expandedReqIds.has(rm.requirement_id);
+                  const isSelectedInJd = activeHighlightedReqId === rm.requirement_id;
+
+                  // Qualification outline styling requested by user:
+                  // not_met: bright red outline
+                  // partial: yellow outline
+                  // met: green outline of the box (glow)
+                  // clarification_needed: violet outline
+                  const outlineClass = isMet
+                    ? "border-2 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.25)] hover:border-emerald-400 hover:shadow-[0_0_20px_rgba(16,185,129,0.35)]"
+                    : isPartial
+                    ? "border-2 border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.25)] hover:border-amber-300 hover:shadow-[0_0_20px_rgba(251,191,36,0.35)]"
+                    : isClarification
+                    ? "border-2 border-violet-500 shadow-[0_0_15px_rgba(139,92,246,0.25)] hover:border-violet-400 hover:shadow-[0_0_20px_rgba(139,92,246,0.35)]"
+                    : "border-2 border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.28)] hover:border-rose-400 hover:shadow-[0_0_20px_rgba(244,63,94,0.4)]";
 
                   return (
                     <div
                       key={idx}
-                      className={`p-5 rounded-2xl border transition-all space-y-3.5 shadow-sm ${
-                        isClarification
-                          ? "border-violet-500/30 bg-slate-900/60 hover:border-violet-500/50"
-                          : isExpanded
-                          ? "border-blue-500/40 bg-slate-900/70 ring-1 ring-blue-500/20"
-                          : "border-slate-800/90 bg-slate-900/50 hover:border-slate-700/80"
+                      onClick={() => setActiveHighlightedReqId(rm.requirement_id)}
+                      className={`p-4 sm:p-5 rounded-2xl transition-all space-y-3.5 bg-slate-900/90 cursor-pointer ${outlineClass} ${
+                        isSelectedInJd ? "ring-2 ring-blue-400/80 ring-offset-2 ring-offset-slate-950" : ""
                       }`}
                     >
                       {/* Requirement Header */}
@@ -1185,8 +1216,11 @@ export function EvaluationView({
                             <div className="flex items-center gap-2 flex-wrap">
                               <button
                                 type="button"
-                                onClick={() => toggleRequirementExpand(rm.requirement_id)}
-                                className="text-left font-semibold text-base text-white hover:text-blue-300 transition-colors cursor-pointer group flex items-center gap-1.5 leading-snug"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleRequirementExpand(rm.requirement_id);
+                                }}
+                                className="text-left font-bold text-base text-white hover:text-blue-300 transition-colors cursor-pointer group flex items-center gap-1.5 leading-snug"
                                 title="Click to inspect JD request summary and verbatim citation"
                               >
                                 <span>{reqMeta.title}</span>
@@ -1205,42 +1239,80 @@ export function EvaluationView({
                                   e.stopPropagation();
                                   setActiveModalReq(rm);
                                 }}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 transition-all cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 transition-all cursor-pointer shadow-sm active:scale-95"
                                 title="Open full Requisition Specification & Citation dialog"
                               >
                                 <BookOpen className="w-3 h-3 text-blue-400" />
                                 <span>JD Citation</span>
                               </button>
 
-                              <span className="text-[10px] font-mono text-slate-500 px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveHighlightedReqId(rm.requirement_id);
+                                  setShowFullJdModal(true);
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/35 text-indigo-200 border border-indigo-500/35 transition-all cursor-pointer shadow-sm active:scale-95"
+                                title="Open full Parsed Job Description focused on this requirement"
+                              >
+                                <Highlighter className="w-3 h-3 text-indigo-300" />
+                                <span>Highlight in JD</span>
+                              </button>
+
+                              <span className="text-[11px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800">
                                 {reqMeta.slug}
                               </span>
                             </div>
 
-                            <div className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
-                              <span>Confidence: {(rm.confidence * 100).toFixed(0)}% • Score: {(rm.score * 100).toFixed(0)}%</span>
-                              <span className="text-slate-600">•</span>
-                              <span className={reqMeta.category === "must_have" ? "text-rose-400 font-medium" : "text-blue-400 font-medium"}>
-                                {reqMeta.category === "must_have" ? "Must-Have" : "Nice-to-Have"}
+                            {/* Prominent Metadata & Scores row: Must-Have, Confidence, Match Score, Experience */}
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              {/* Must-Have / Nice-to-Have badge: slightly larger, high-contrast, tidy */}
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold uppercase tracking-wide border shadow-sm ${
+                                  reqMeta.category === "must_have"
+                                    ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                                    : "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                                }`}
+                              >
+                                <Sparkles className="w-3 h-3" />
+                                <span>{reqMeta.category === "must_have" ? "Must-Have" : "Nice-to-Have"}</span>
                               </span>
+
+                              {/* Confidence Score & Match Score: balanced, clear, slightly larger font */}
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-slate-950/80 border border-slate-800 text-xs font-medium">
+                                <span className="text-slate-400">Confidence:</span>
+                                <span className="font-mono font-bold text-amber-300 text-xs sm:text-sm">
+                                  {(rm.confidence * 100).toFixed(0)}%
+                                </span>
+                                <span className="text-slate-600">|</span>
+                                <span className="text-slate-400">Match:</span>
+                                <span className="font-mono font-bold text-cyan-300 text-xs sm:text-sm">
+                                  {(rm.score * 100).toFixed(0)}%
+                                </span>
+                              </div>
+
                               {reqMeta.minYears && (
-                                <span className="text-slate-300">
-                                  • {reqMeta.minYears}+ yrs exp
+                                <span className="px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700 text-xs font-medium text-slate-300">
+                                  {reqMeta.minYears}+ yrs exp
                                 </span>
                               )}
+
                               {!isObjective && (
-                                <span className="text-violet-300 font-medium">
-                                  • Interpretive / Screening Detail
+                                <span className="px-2 py-0.5 rounded-md bg-violet-500/15 border border-violet-500/30 text-violet-200 text-xs font-medium">
+                                  Interpretive / Screening
                                 </span>
                               )}
+
                               {rm.transferable_skill && (
-                                <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-medium inline-flex items-center gap-1">
+                                <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-medium inline-flex items-center gap-1">
                                   <ArrowRightLeft className="w-3 h-3 text-cyan-400" />
                                   <span>Transferable: {rm.transferable_skill}</span>
                                 </span>
                               )}
+
                               {rm.benefit_of_doubt && (
-                                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-medium inline-flex items-center gap-1">
+                                <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-medium inline-flex items-center gap-1">
                                   <ShieldCheck className="w-3 h-3 text-indigo-400" />
                                   <span>Benefit of Doubt</span>
                                 </span>
@@ -1249,8 +1321,9 @@ export function EvaluationView({
                           </div>
                         </div>
 
+                        {/* Status Tag: kept intact */}
                         <span
-                          className={`text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shrink-0 ${
+                          className={`text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shrink-0 shadow-sm ${
                             isMet
                               ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
                               : isPartial
@@ -1266,10 +1339,10 @@ export function EvaluationView({
 
                       {/* Interactive Requisition Summary & Citation Panel */}
                       {isExpanded && (
-                        <div className="p-4 rounded-xl border border-blue-500/40 bg-gradient-to-br from-blue-950/30 via-slate-950/80 to-slate-900/70 space-y-3.5 shadow-md animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="p-3.5 rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-950/30 via-slate-950/80 to-slate-900/70 space-y-3 shadow-md animate-in fade-in slide-in-from-top-2 duration-200">
                           <div className="flex items-center justify-between gap-2 border-b border-blue-500/20 pb-2">
                             <div className="flex items-center gap-2">
-                              <BookOpen className="w-4 h-4 text-blue-400" />
+                              <BookOpen className="w-3.5 h-3.5 text-blue-400" />
                               <span className="text-xs font-bold uppercase tracking-wider text-blue-300">
                                 Requisition Specification &amp; JD Citation
                               </span>
@@ -1281,37 +1354,38 @@ export function EvaluationView({
 
                           {/* 1. Summary of the Request */}
                           <div className="space-y-1">
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                              <FileText className="w-3.5 h-3.5 text-blue-400" />
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                              <FileText className="w-3 h-3 text-blue-400" />
                               <span>Summary of Request</span>
                             </div>
-                            <p className="text-xs text-slate-200 leading-relaxed pl-5 font-sans">
+                            <p className="text-xs sm:text-sm text-slate-200 leading-relaxed pl-4 font-sans">
                               {reqMeta.summary}
                             </p>
                           </div>
 
                           {/* 2. Verbatim Citation from the JD */}
                           <div className="space-y-1.5">
-                            <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300 flex items-center justify-between">
+                            <div className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center justify-between">
                               <span className="flex items-center gap-1.5">
                                 <Quote className="w-3.5 h-3.5 text-amber-400" />
                                 <span>Verbatim Citation from Job Description</span>
                               </span>
                               <button
                                 type="button"
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   navigator.clipboard.writeText(reqMeta.citation);
                                   setCitationCopiedId(rm.requirement_id);
                                   setTimeout(() => setCitationCopiedId(null), 2000);
                                 }}
-                                className="text-[10px] text-amber-300 hover:text-amber-200 font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                                className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-[11px] text-amber-300 hover:text-amber-200 font-semibold transition-colors flex items-center gap-1 cursor-pointer border border-amber-500/30"
                               >
                                 <Copy className="w-3 h-3" />
                                 <span>{citationCopiedId === rm.requirement_id ? "Copied Citation!" : "Copy Citation"}</span>
                               </button>
                             </div>
 
-                            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-amber-500/30 text-amber-100 text-xs italic font-serif leading-relaxed shadow-inner">
+                            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-amber-500/30 text-amber-100 text-xs sm:text-sm italic font-serif leading-relaxed shadow-inner">
                               &ldquo;{reqMeta.citation}&rdquo;
                             </div>
                           </div>
@@ -1319,16 +1393,16 @@ export function EvaluationView({
                       )}
 
                       {/* Reasoning paragraph (Clean 14px font for great readability) */}
-                      <p className="text-sm text-slate-200 leading-relaxed font-sans pl-7">
+                      <p className="text-sm text-slate-200 leading-relaxed font-sans pl-7 sm:pl-8">
                         {rm.reasoning}
                       </p>
 
                       {/* Transferable Skill Callout Card */}
                       {rm.transferable_skill && (
-                        <div className="pl-7 pt-1">
-                          <div className="p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-500/30 flex items-center justify-between text-xs text-cyan-200 flex-wrap gap-2 shadow-inner">
+                        <div className="pl-7 sm:pl-8 pt-0.5">
+                          <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/30 flex items-center justify-between text-xs text-cyan-200 flex-wrap gap-2 shadow-inner">
                             <div className="flex items-center gap-2">
-                              <ArrowRightLeft className="w-4 h-4 text-cyan-400 shrink-0" />
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                               <span>
                                 <strong className="text-cyan-300">Transferable Competency Detected:</strong> Candidate demonstrated proficiency with <strong className="text-white font-mono">{rm.transferable_skill}</strong>.
                               </span>
@@ -1342,10 +1416,10 @@ export function EvaluationView({
 
                       {/* Benefit of Doubt Callout Card */}
                       {rm.benefit_of_doubt && (
-                        <div className="pl-7 pt-1">
-                          <div className="p-3.5 rounded-xl bg-indigo-950/30 border border-indigo-500/30 flex items-center justify-between text-xs text-indigo-200 flex-wrap gap-2 shadow-inner">
+                        <div className="pl-7 sm:pl-8 pt-0.5">
+                          <div className="p-3 rounded-xl bg-indigo-950/30 border border-indigo-500/30 flex items-center justify-between text-xs text-indigo-200 flex-wrap gap-2 shadow-inner">
                             <div className="flex items-center gap-2">
-                              <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                               <span>
                                 <strong className="text-indigo-300">Benefit of Doubt:</strong> Evaluated as partial match due to ambiguous phrasing in CV. Recommended for recruiter interview probe.
                               </span>
@@ -1359,11 +1433,11 @@ export function EvaluationView({
 
                       {/* Clarification Screening Question & Yes/No Recruiter Actions */}
                       {isClarification && (
-                        <div className="pl-7 pt-1">
-                          <div className="p-4 rounded-xl bg-violet-950/25 border border-violet-500/30 space-y-3 shadow-inner">
+                        <div className="pl-7 sm:pl-8 pt-0.5">
+                          <div className="p-3.5 sm:p-4 rounded-xl bg-violet-950/20 border border-violet-500/30 space-y-3 shadow-inner">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-violet-300">
-                                <HelpCircle className="w-4 h-4 text-violet-400" />
+                              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-300">
+                                <HelpCircle className="w-3.5 h-3.5 text-violet-400" />
                                 <span>Screening Question (Application Form or Recruiter Call)</span>
                               </span>
                               <span className="text-[11px] text-violet-400/80 italic">
@@ -1371,26 +1445,32 @@ export function EvaluationView({
                               </span>
                             </div>
 
-                            <p className="text-sm font-medium text-slate-100 pl-3.5 border-l-2 border-violet-500 py-0.5 leading-relaxed font-sans">
+                            <p className="text-sm font-medium text-slate-100 pl-3 border-l-2 border-violet-500 py-0.5 leading-relaxed font-sans">
                               {rm.clarification_question || `Confirm candidate readiness for "${reqMeta.title}". [Yes / No]`}
                             </p>
 
-                            <div className="flex items-center justify-between pt-1 border-t border-violet-500/20 flex-wrap gap-2">
-                              <span className="text-xs text-slate-400">
+                            <div className="flex items-center justify-between pt-1.5 border-t border-violet-500/20 flex-wrap gap-2.5">
+                              <span className="text-xs text-slate-300">
                                 Record candidate response:
                               </span>
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => handleResolveClarification(rm.requirement_id, "yes")}
-                                  className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResolveClarification(rm.requirement_id, "yes");
+                                  }}
+                                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
                                   title="Mark as confirmed on application form or call"
                                 >
                                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                                   <span>Yes (Confirmed)</span>
                                 </button>
                                 <button
-                                  onClick={() => handleResolveClarification(rm.requirement_id, "no")}
-                                  className="px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResolveClarification(rm.requirement_id, "no");
+                                  }}
+                                  className="px-3.5 py-1.5 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
                                   title="Mark as not met/declined"
                                 >
                                   <XCircle className="w-3.5 h-3.5 text-rose-400" />
@@ -1404,7 +1484,7 @@ export function EvaluationView({
 
                       {/* Verbatim Citations Grounding */}
                       {rm.citations && rm.citations.length > 0 && (
-                        <div className="pl-7 space-y-2 pt-1">
+                        <div className="pl-7 sm:pl-8 space-y-2 pt-0.5">
                           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-amber-300">
                               <Quote className="w-3.5 h-3.5 text-amber-400" />
@@ -1421,21 +1501,22 @@ export function EvaluationView({
                               return (
                                 <div
                                   key={cIdx}
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setActiveCitation(c.quote);
                                     setShowDocViewer(true);
                                     setRightPanelTab("document");
                                   }}
                                   className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-2 ${
                                     isSelected
-                                      ? "bg-amber-500/15 border-amber-500/60 ring-1 ring-amber-500/50 shadow-md"
+                                      ? "bg-amber-500/15 border-amber-500/60 ring-2 ring-amber-500/50 shadow-md"
                                       : "bg-slate-950/70 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900/60"
                                   }`}
                                 >
                                   <div className="flex items-start justify-between gap-3">
                                     <div
-                                      className={`text-sm italic font-sans leading-relaxed ${
-                                        isSelected ? "text-amber-100 font-medium" : "text-slate-200"
+                                      className={`text-xs sm:text-sm italic font-sans leading-relaxed ${
+                                        isSelected ? "text-amber-100 font-semibold" : "text-slate-200"
                                       }`}
                                     >
                                       &ldquo;{c.quote}&rdquo;
@@ -1462,9 +1543,9 @@ export function EvaluationView({
 
                       {/* Gap analysis note if unmet (only for objective unmet gaps) */}
                       {rm.gap_analysis && !isClarification && (
-                        <div className="pl-7 pt-1">
+                        <div className="pl-7 sm:pl-8 pt-0.5">
                           <div className="p-3 rounded-xl bg-rose-950/25 border border-rose-500/30 text-xs text-rose-200 flex items-start gap-2">
-                            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
                             <div>
                               <strong className="text-rose-300 font-semibold">Identified Gap: </strong>
                               {rm.gap_analysis}
@@ -1478,7 +1559,7 @@ export function EvaluationView({
               )}
             </div>
 
-            {/* Right Column: Dual-Tab Interactive Panel (Document Inspector + Sign-off Gate) */}
+            {/* Right Column: Tri-Tab Interactive Panel (Document Inspector + Parsed JD + Sign-off Gate) */}
             <div className={showDocViewer ? "lg:col-span-5 sticky top-0 self-start space-y-4" : "lg:col-span-1 sticky top-0 self-start space-y-4"}>
               {/* Panel Tab Switcher */}
               <div className="p-1 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-1 shadow-sm">
@@ -1487,28 +1568,49 @@ export function EvaluationView({
                     setShowDocViewer(true);
                     setRightPanelTab("document");
                   }}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     rightPanelTab === "document" && showDocViewer
-                      ? "bg-blue-600 text-white shadow-md"
-                      : "text-slate-400 hover:text-slate-200"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
                   }`}
+                  title="Inspect candidate CV with verbatim citations"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>CV Document Inspector</span>
+                  <span>CV Document</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowDocViewer(true);
+                    setRightPanelTab("jd");
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    rightPanelTab === "jd" && showDocViewer
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  }`}
+                  title="Inspect parsed Job Description and highlighted requirements"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Parsed JD</span>
+                  {activeHighlightedReqId && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
                 </button>
 
                 <button
                   onClick={() => setRightPanelTab("signoff")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     rightPanelTab === "signoff"
-                      ? "bg-blue-600 text-white shadow-md"
-                      : "text-slate-400 hover:text-slate-200"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
                   }`}
+                  title="Article 14 Human Gate Sign-Off"
                 >
                   <UserCheck className="w-3.5 h-3.5" />
-                  <span>Human Gate Sign-Off</span>
+                  <span>Sign-Off Gate</span>
                   {!evaluation.hitl_validated && (
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                   )}
                 </button>
               </div>
@@ -1541,7 +1643,22 @@ export function EvaluationView({
                 </div>
               )}
 
-              {/* View 2: Human-in-the-Loop Sign-off Form */}
+              {/* View 2: Parsed JD Viewer */}
+              {rightPanelTab === "jd" && showDocViewer && (
+                <div className="h-[calc(100vh-140px)] min-h-[560px] flex flex-col space-y-3">
+                  <div className="flex-1 min-h-0 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+                    <ParsedJdViewer
+                      job={activeJob}
+                      activeRequirementId={activeHighlightedReqId}
+                      onSelectRequirement={(reqId) => setActiveHighlightedReqId(reqId)}
+                      onClose={() => setShowDocViewer(false)}
+                      isModal={false}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* View 3: Human-in-the-Loop Sign-off Form */}
               {(rightPanelTab === "signoff" || !showDocViewer) && (
                 <div className="p-5 rounded-2xl border border-blue-500/40 bg-slate-900/80 backdrop-blur-md shadow-2xl space-y-4 animate-in fade-in">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -1807,6 +1924,28 @@ export function EvaluationView({
           </div>
         );
       })()}
+
+      {/* Full Parsed JD Interactive Modal with Requirement Locator */}
+      {showFullJdModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200"
+          onClick={() => setShowFullJdModal(false)}
+        >
+          <div
+            className="w-full max-w-5xl h-[92vh] max-h-[960px] bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ParsedJdViewer
+              job={activeJob}
+              activeRequirementId={activeHighlightedReqId}
+              onSelectRequirement={(reqId) => setActiveHighlightedReqId(reqId)}
+              onClose={() => setShowFullJdModal(false)}
+              isModal={true}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -5,8 +5,6 @@ import { JobDescription } from "@/types";
 import { api } from "@/lib/api";
 import {
   Activity,
-  Briefcase,
-  ChevronDown,
   ExternalLink,
   PanelLeftClose,
   PanelLeftOpen,
@@ -14,9 +12,9 @@ import {
 } from "lucide-react";
 
 interface HeaderProps {
-  jobs: JobDescription[];
-  selectedJobId: string | null;
-  onSelectJob: (jobId: string | null) => void;
+  jobs?: JobDescription[];
+  selectedJobId?: string | null;
+  onSelectJob?: (jobId: string | null) => void;
   onOpenUploadModal?: () => void;
   onNavigateToSettings?: () => void;
   isSidebarOpen?: boolean;
@@ -24,7 +22,7 @@ interface HeaderProps {
 }
 
 export function Header({
-  jobs,
+  jobs = [],
   selectedJobId,
   onSelectJob,
   onOpenUploadModal,
@@ -33,7 +31,6 @@ export function Header({
   onToggleSidebar,
 }: HeaderProps) {
   const [backendStatus, setBackendStatus] = useState<"online" | "offline" | "checking">("checking");
-  const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
 
   const refreshStatus = async () => {
     try {
@@ -64,11 +61,9 @@ export function Header({
     };
   }, []);
 
-  const activeJob = jobs.find((j) => j.id === selectedJobId);
-
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md px-4 flex items-center justify-between sticky top-0 z-40">
-      {/* Left: Sidebar Toggle & Requisition Scope Selector */}
+      {/* Left: Sidebar Toggle */}
       <div className="flex items-center gap-3">
         {onToggleSidebar && (
           <button
@@ -84,55 +79,6 @@ export function Header({
             )}
           </button>
         )}
-
-        {/* Active Job Selector Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setIsJobDropdownOpen(!isJobDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-sm font-medium text-slate-200 transition-colors cursor-pointer"
-          >
-            <Briefcase className="w-4 h-4 text-slate-400" />
-            <span className="max-w-[220px] md:max-w-[280px] truncate">
-              {activeJob ? activeJob.title : "All Requisitions"}
-            </span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-          </button>
-
-          {isJobDropdownOpen && (
-            <div className="absolute left-0 mt-1 w-72 rounded-lg bg-slate-900 border border-slate-800 shadow-2xl py-1 z-50 animate-in fade-in zoom-in-95">
-              <button
-                onClick={() => {
-                  onSelectJob(null);
-                  setIsJobDropdownOpen(false);
-                }}
-                className={`w-full px-3 py-2 text-left text-xs font-medium flex items-center justify-between hover:bg-slate-800 transition-colors cursor-pointer ${
-                  !selectedJobId ? "text-blue-400 font-semibold bg-blue-500/10" : "text-slate-300"
-                }`}
-              >
-                <span>All Requisitions</span>
-                <span className="text-[10px] text-slate-500">{jobs.length} total</span>
-              </button>
-              <div className="h-px bg-slate-800 my-1" />
-              {jobs.map((job) => (
-                <button
-                  key={job.id}
-                  onClick={() => {
-                    onSelectJob(job.id);
-                    setIsJobDropdownOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 text-left text-xs hover:bg-slate-800 transition-colors cursor-pointer ${
-                    selectedJobId === job.id ? "text-blue-400 font-semibold bg-blue-500/10" : "text-slate-300"
-                  }`}
-                >
-                  <div className="truncate font-medium">{job.title}</div>
-                  <div className="text-[10px] text-slate-500 truncate">
-                    {job.seniority_level || "Standard"} • {job.department || "Engineering"}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Right: Phoenix Traces & Backend Health */}

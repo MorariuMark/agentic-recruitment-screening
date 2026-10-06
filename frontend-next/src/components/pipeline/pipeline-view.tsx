@@ -620,27 +620,32 @@ export function PipelineView({
 
             {/* Interactive Dropzone */}
             <label
-              htmlFor="single-cv-upload-input"
+              htmlFor={isUploadingSingle ? undefined : "single-cv-upload-input"}
               onDragOver={(e) => {
                 e.preventDefault();
-                setIsDragOver(true);
+                if (!isUploadingSingle) setIsDragOver(true);
               }}
               onDragLeave={() => setIsDragOver(false)}
               onDrop={(e) => {
                 e.preventDefault();
                 setIsDragOver(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) handleSingleFileUpload(file);
+                if (!isUploadingSingle) {
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleSingleFileUpload(file);
+                }
               }}
-              className={`p-8 rounded-xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-3 text-center cursor-pointer select-none ${
-                isDragOver
-                  ? "border-blue-500 bg-blue-500/10"
-                  : "border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-900/50"
+              className={`transition-all select-none ${
+                isUploadingSingle
+                  ? "p-5 sm:p-6 rounded-xl border-2 border-dashed border-blue-500/40 bg-slate-950/80 flex flex-col items-stretch w-full cursor-default shadow-inner"
+                  : isDragOver
+                  ? "p-8 rounded-xl border-2 border-dashed border-blue-500 bg-blue-500/10 flex flex-col items-center justify-center gap-3 text-center cursor-pointer"
+                  : "p-8 rounded-xl border-2 border-dashed border-slate-800 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-900/50 flex flex-col items-center justify-center gap-3 text-center cursor-pointer"
               }`}
             >
               {isUploadingSingle ? (
-                <div className="w-full max-w-md py-2" onClick={(e) => e.stopPropagation()}>
+                <div className="w-full py-1" onClick={(e) => e.stopPropagation()}>
                   <LiveProcessTimer
+                    variant="expanded"
                     isRunning={singleTimer.isRunning}
                     elapsedSeconds={singleTimer.elapsedSeconds}
                     onCancel={handleCancelSingleUpload}
@@ -710,74 +715,95 @@ export function PipelineView({
           {singleExtraction && (
             <div id="candidate-extracted-profile" className="space-y-6 animate-in fade-in duration-300">
               {/* Unified Extraction Header Toolbar */}
-              <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
-                    <CheckCircle2 className="w-5 h-5" />
+              <div className="p-5 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/30 via-slate-900/95 to-slate-900/95 backdrop-blur-md shadow-xl shadow-emerald-950/20 space-y-4">
+                {/* Top Tier: Candidate Identity & Primary Actions */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 shrink-0 shadow-inner">
+                      <CheckCircle2 className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight whitespace-nowrap">
+                          {singleExtraction.parsed_cv?.contact_info?.full_name ||
+                            singleExtraction.anonymized_candidate?.candidate_id ||
+                            singleExtraction.candidate_id}
+                        </h2>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>Extracted &amp; Indexed</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1">
+                        Candidate CV extracted, PII isolated, and semantic vectors ready for evaluation.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-base font-bold text-white flex items-center gap-2">
-                      <span>
-                        {singleExtraction.parsed_cv?.contact_info?.full_name ||
-                          singleExtraction.anonymized_candidate?.candidate_id ||
-                          singleExtraction.candidate_id}
-                      </span>
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-medium">
-                        {singleExtraction.chunks_indexed || 0} chunks indexed
-                      </span>
-                      {lastUploadDuration && (
-                        <DurationBadge
-                          duration={lastUploadDuration}
-                          label="CV Extraction Time"
-                          className="bg-emerald-900/60 text-emerald-300 border-emerald-500/30"
-                        />
-                      )}
-                      {singleExtraction.token_usage && (
-                        <TokenUsageBadge usage={singleExtraction.token_usage} />
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-300 mt-0.5">
-                      Candidate CV extracted, PII isolated, and semantic vectors ready for evaluation.
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono mt-0.5">
-                      Candidate ID: <code>{singleExtraction.candidate_id}</code>
-                    </div>
+
+                  {/* Actions Toolbar */}
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+                    <button
+                      onClick={() => {
+                        const effectiveJobId = targetJobId || selectedJobId || (jobs[0]?.id ?? undefined);
+                        onOpenEvaluation(singleExtraction.candidate_id, effectiveJobId, true);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/30 transition-all cursor-pointer whitespace-nowrap active:scale-[0.98]"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Run Match Evaluation</span>
+                    </button>
+                    <button
+                      onClick={() => onOpenInterview(singleExtraction.candidate_id)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700/60 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Interview Guide</span>
+                    </button>
+                    <button
+                      onClick={() => updateActiveSection("batch")}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700/60 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <Users2 className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Cohort ({candidates.length}) &rarr;</span>
+                    </button>
+                    <button
+                      onClick={() => updateSingleExtraction(null)}
+                      className="flex items-center gap-1 px-2.5 py-2 rounded-lg bg-slate-800/80 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-700/60 hover:border-rose-900/50 text-xs transition-colors cursor-pointer whitespace-nowrap"
+                      title="Close extracted candidate and reset workspace"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Close</span>
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                  <button
-                    onClick={() => {
-                      const effectiveJobId = targetJobId || selectedJobId || (jobs[0]?.id ?? undefined);
-                      onOpenEvaluation(singleExtraction.candidate_id, effectiveJobId, true);
-                    }}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30 transition-all cursor-pointer whitespace-nowrap"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Run Match Evaluation</span>
-                  </button>
-                  <button
-                    onClick={() => onOpenInterview(singleExtraction.candidate_id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>Interview Guide</span>
-                  </button>
-                  <button
-                    onClick={() => updateActiveSection("batch")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <Users2 className="w-3.5 h-3.5" />
-                    <span>Cohort ({candidates.length}) &rarr;</span>
-                  </button>
-                  <button
-                    onClick={() => updateSingleExtraction(null)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-700/60 hover:border-rose-900/50 text-xs transition-colors cursor-pointer whitespace-nowrap"
-                    title="Close extracted candidate and reset workspace"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Close</span>
-                  </button>
+                {/* Bottom Tier: Metrics & Candidate ID Strip */}
+                <div className="pt-3 border-t border-emerald-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 font-mono text-[11px] font-medium">
+                      <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{singleExtraction.chunks_indexed || 0} chunks indexed</span>
+                    </span>
+
+                    {lastUploadDuration && (
+                      <DurationBadge
+                        duration={lastUploadDuration}
+                        label="CV Extraction Time"
+                        className="bg-slate-800/80 text-emerald-300 border-slate-700/60"
+                      />
+                    )}
+
+                    {singleExtraction.token_usage && (
+                      <TokenUsageBadge usage={singleExtraction.token_usage} />
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-slate-400 font-mono text-[11px]">
+                    <span>Candidate ID:</span>
+                    <code className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 select-all font-mono">
+                      {singleExtraction.candidate_id}
+                    </code>
+                  </div>
                 </div>
               </div>
 
