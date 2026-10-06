@@ -44,7 +44,7 @@ class ApiClient {
     endpoint: string,
     options: RequestInit & { timeoutMs?: number } = {}
   ): Promise<T> {
-    const { timeoutMs = 15000, ...fetchOptions } = options;
+    const { timeoutMs = 60000, ...fetchOptions } = options;
     const headers = new Headers(options.headers || {});
     if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -58,14 +58,38 @@ class ApiClient {
 
     const executeFetch = async (targetUrl: string): Promise<T> => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort(
+          typeof DOMException !== "undefined"
+            ? new DOMException(`Request to ${targetUrl} timed out after ${timeoutMs}ms`, "TimeoutError")
+            : new Error(`Request to ${targetUrl} timed out after ${timeoutMs}ms`)
+        );
+      }, timeoutMs);
 
       // Propagate caller signal to timeout controller if supplied
       if (fetchOptions.signal) {
         if (fetchOptions.signal.aborted) {
-          controller.abort();
+          const reason =
+            fetchOptions.signal.reason ||
+            (typeof DOMException !== "undefined"
+              ? new DOMException("Request cancelled by caller", "AbortError")
+              : new Error("Request cancelled by caller"));
+          controller.abort(reason);
         } else {
-          fetchOptions.signal.addEventListener("abort", () => controller.abort(), { once: true });
+          fetchOptions.signal.addEventListener(
+            "abort",
+            () => {
+              const reason =
+                fetchOptions.signal?.reason ||
+                (typeof DOMException !== "undefined"
+                  ? new DOMException("Request cancelled by caller", "AbortError")
+                  : new Error("Request cancelled by caller"));
+              controller.abort(reason);
+            },
+            { once: true }
+          );
         }
       }
 
@@ -97,6 +121,13 @@ class ApiClient {
         }
 
         return res.json();
+      } catch (err: any) {
+        if (timedOut) {
+          const timeoutErr = new Error(`Request to ${targetUrl} timed out after ${timeoutMs}ms`);
+          timeoutErr.name = "TimeoutError";
+          throw timeoutErr;
+        }
+        throw err;
       } finally {
         clearTimeout(timeoutId);
       }
@@ -105,6 +136,10 @@ class ApiClient {
     try {
       return await executeFetch(primaryUrl);
     } catch (primaryErr: any) {
+      if (fetchOptions.signal?.aborted || primaryErr?.name === "AbortError" || primaryErr?.name === "TimeoutError") {
+        throw primaryErr;
+      }
+
       const isNetworkError =
         primaryErr instanceof TypeError ||
         primaryErr?.name === "TypeError" ||
@@ -125,9 +160,15 @@ class ApiClient {
   // Health
   async getHealth(): Promise<{ status: string; active_llm_provider: string; active_model: string }> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const timeoutId = setTimeout(() => {
+      controller.abort(
+        typeof DOMException !== "undefined"
+          ? new DOMException("Health check timed out after 8000ms", "TimeoutError")
+          : new Error("Health check timed out after 8000ms")
+      );
+    }, 8000);
     try {
-      return await this.request("/health", { signal: controller.signal });
+      return await this.request("/health", { signal: controller.signal, timeoutMs: 8000 });
     } finally {
       clearTimeout(timeoutId);
     }

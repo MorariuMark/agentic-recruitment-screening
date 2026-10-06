@@ -704,10 +704,10 @@ export function EvaluationView({
             isRunning={evalTimer.isRunning}
             elapsedSeconds={evalTimer.elapsedSeconds}
             onCancel={handleCancelEvaluation}
-            label="Evaluating candidate match against requirements with Agnes AI..."
+            label="Evaluating candidate match against requirements with AI Engine..."
             estimateText="Multi-agent reasoning active (typically 5 - 15s)"
             cancelLabel="Cancel Evaluation"
-            modelName="Agnes Flash 3.0"
+            modelName={evaluation?.token_usage?.display_name || "Active AI Model"}
             tokenUsage={evaluation?.token_usage}
           />
         </div>

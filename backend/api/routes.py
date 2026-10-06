@@ -212,6 +212,7 @@ class CVUploadResponse(BaseModel):
     parsed_cv: ParsedCV = Field(description="Structured CV representation")
     anonymized_candidate: AnonymizedCandidate = Field(description="PII-scrubbed candidate profile")
     chunks_indexed: int = Field(description="Count of semantic chunks stored in ChromaDB")
+    token_usage: Optional[TokenUsageInfo] = Field(default=None, description="Inference token usage for CV extraction")
 
 
 class BatchUploadResponse(BaseModel):
@@ -487,11 +488,16 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
         _CANDIDATE_ANONYMIZED_STORE[cid] = anonymized_candidate
         _CANDIDATE_CHUNKS_STORE[cid] = chunks_indexed
 
+        token_usage_record = None
+        if hasattr(_parser_agent.llm_client, "get_last_usage"):
+            token_usage_record = _parser_agent.llm_client.get_last_usage()
+
         return CVUploadResponse(
             candidate_id=cid,
             parsed_cv=parsed_cv,
             anonymized_candidate=anonymized_candidate,
             chunks_indexed=chunks_indexed,
+            token_usage=token_usage_record,
         )
     except ScannedPDFException as e:
         logger.warning(f"Single CV upload scanned PDF rejected '{getattr(file, 'filename', 'unknown')}': {e}")

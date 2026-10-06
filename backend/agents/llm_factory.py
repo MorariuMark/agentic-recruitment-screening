@@ -955,7 +955,7 @@ class DynamicLLMClient(BaseLLMClient):
                     if hasattr(settings, f"{prov}_model"):
                         setattr(settings, f"{prov}_model", mod)
                     logger.warning(
-                        "Failover active: Text generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
+                        "Failover event: Text generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
                         mod,
                         primary_prov,
@@ -1034,7 +1034,7 @@ class DynamicLLMClient(BaseLLMClient):
                     if hasattr(settings, f"{prov}_model"):
                         setattr(settings, f"{prov}_model", mod)
                     logger.warning(
-                        "Failover active: Structured generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
+                        "Failover event: Structured generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
                         mod,
                         primary_prov,

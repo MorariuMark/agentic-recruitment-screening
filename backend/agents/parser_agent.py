@@ -950,6 +950,9 @@ class ParserAgent:
             "</candidate_document_untrusted_input>"
         )
 
+        if hasattr(self.llm_client, "set_action_context"):
+            self.llm_client.set_action_context("cv_extraction")
+
         try:
             parsed = self.llm_client.generate_structured(
                 prompt=prompt,

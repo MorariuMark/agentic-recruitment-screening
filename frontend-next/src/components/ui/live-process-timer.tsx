@@ -162,7 +162,7 @@ export function LiveProcessTimer({
   estimatedTimeText,
   cancelLabel = "Cancel",
   className = "",
-  modelName = "Agnes Flash 3.0",
+  modelName = "Active AI Model",
   tokenUsage,
 }: LiveProcessTimerProps) {
   const isRunning = timer ? timer.isRunning : (directIsRunning ?? false);
@@ -200,6 +200,8 @@ export function LiveProcessTimer({
     return `${mins > 0 ? `${mins}m ` : ""}${secs}.${tenths}s`;
   };
 
+  const effectiveModelName = tokenUsage?.display_name || modelName;
+
   if (isRunning) {
     return (
       <div
@@ -222,7 +224,7 @@ export function LiveProcessTimer({
               </span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
                 <span>⚡</span>
-                <span>{modelName}: ~{streamedTokens.toLocaleString()} tok</span>
+                <span>{effectiveModelName}: ~{streamedTokens.toLocaleString()} tok</span>
               </span>
             </div>
             {description && (

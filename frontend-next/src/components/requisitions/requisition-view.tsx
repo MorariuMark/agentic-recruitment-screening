@@ -290,7 +290,7 @@ export function RequisitionView({
               isRunning={jdTimer.isRunning}
               elapsedSeconds={jdTimer.elapsedSeconds}
               onCancel={handleCancelJdParsing}
-              label="Analyzing & Decomposing Job Description with Agnes AI..."
+              label="Analyzing & Decomposing Job Description with AI..."
               estimateText="AI parsing active (typically 5 - 15s)"
               cancelLabel="Cancel Parsing"
             />
@@ -337,7 +337,7 @@ export function RequisitionView({
               isRunning={jdTimer.isRunning}
               elapsedSeconds={jdTimer.elapsedSeconds}
               onCancel={handleCancelJdParsing}
-              label="Scraping & Extracting Job Requisition with Agnes AI..."
+              label="Scraping & Extracting Job Requisition with AI..."
               estimateText="Web scraping & AI parsing active (typically 8 - 20s)"
               cancelLabel="Cancel Parsing"
             />

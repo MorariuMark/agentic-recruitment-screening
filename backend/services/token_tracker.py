@@ -13,7 +13,7 @@ import math
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 from backend.schemas.models_catalog import CATALOG_PROVIDERS
@@ -31,17 +31,33 @@ logger = logging.getLogger("recruitment_screening.token_tracker")
 _LOCK = threading.RLock()
 _IN_MEMORY_LOGS: List[Dict[str, Any]] = []
 _THREAD_LOCAL = threading.local()
-_SESSION_ACCUMULATOR: Dict[str, Dict[str, Any]] = defaultdict(
-    lambda: {
-        "provider": "agnes",
-        "model": "agnes-3.0-flash",
+_LAST_GLOBAL_RECORD: Optional[Dict[str, Any]] = None
+
+
+def _get_active_provider_and_model() -> Tuple[str, str]:
+    try:
+        from backend.config import settings
+        prov = getattr(settings, "llm_provider", "groq") or "groq"
+        mod = getattr(settings, f"{prov}_model", "") or "default"
+        return prov.lower(), mod
+    except Exception:
+        return "groq", "default"
+
+
+def _default_accumulator() -> Dict[str, Any]:
+    prov, mod = _get_active_provider_and_model()
+    return {
+        "provider": prov,
+        "model": mod,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
         "latency_ms": 0.0,
         "call_count": 0,
     }
-)
+
+
+_SESSION_ACCUMULATOR: Dict[str, Dict[str, Any]] = defaultdict(_default_accumulator)
 
 
 def _get_friendly_model_name(provider: str, model: str) -> str:
@@ -146,11 +162,13 @@ class TokenTracker:
             "created_at": ts,
         }
 
+        global _LAST_GLOBAL_RECORD
         with _LOCK:
             _IN_MEMORY_LOGS.append(record)
             # Retain up to 20,000 logs in memory
             if len(_IN_MEMORY_LOGS) > 20000:
                 del _IN_MEMORY_LOGS[: len(_IN_MEMORY_LOGS) - 20000]
+            _LAST_GLOBAL_RECORD = record
 
         # Record into thread-local for instant retrieval
         _THREAD_LOCAL.last_usage = record
@@ -181,11 +199,11 @@ class TokenTracker:
         )
 
     def get_last_usage(self) -> Optional[TokenUsageInfo]:
-        """Returns the token usage for the most recent LLM call on the current thread."""
+        """Returns the token usage for the most recent LLM call on the current thread or globally."""
         rec = getattr(_THREAD_LOCAL, "last_usage", None)
         if not rec:
             with _LOCK:
-                rec = _IN_MEMORY_LOGS[-1] if _IN_MEMORY_LOGS else None
+                rec = _LAST_GLOBAL_RECORD
         if not rec:
             return None
 
@@ -203,10 +221,11 @@ class TokenTracker:
     def start_action_session(self, action: str) -> None:
         """Starts aggregating token usage across multiple calls for a composite action."""
         _THREAD_LOCAL.active_action = action
+        prov, mod = _get_active_provider_and_model()
         with _LOCK:
             _SESSION_ACCUMULATOR[action] = {
-                "provider": "agnes",
-                "model": "agnes-3.0-flash",
+                "provider": prov,
+                "model": mod,
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
@@ -216,12 +235,13 @@ class TokenTracker:
 
     def end_action_session(self, action: str) -> TokenUsageInfo:
         """Ends aggregation session and returns total tokens used during the action."""
+        prov, mod = _get_active_provider_and_model()
         with _LOCK:
             acc = _SESSION_ACCUMULATOR.pop(
                 action,
                 {
-                    "provider": "agnes",
-                    "model": "agnes-3.0-flash",
+                    "provider": prov,
+                    "model": mod,
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "total_tokens": 0,

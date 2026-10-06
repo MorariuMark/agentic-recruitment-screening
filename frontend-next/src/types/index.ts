@@ -149,6 +149,7 @@ export interface CVUploadResponse {
   parsed_cv: ParsedCV;
   anonymized_candidate: AnonymizedCandidate;
   chunks_indexed: number;
+  token_usage?: TokenUsageInfo | null;
 }
 
 export interface CandidateExperience {

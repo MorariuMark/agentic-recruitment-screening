@@ -86,8 +86,8 @@ interface LiveTokenCounterProps {
 
 export function LiveTokenCounter({
   isRunning,
-  modelName = "Agnes Flash 3.0",
-  provider = "agnes",
+  modelName = "Active AI Model",
+  provider = "default",
   completedUsage,
   className = "",
 }: LiveTokenCounterProps) {

@@ -43,6 +43,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { LiveProcessTimer, DurationBadge, useProcessTimer } from "@/components/ui/live-process-timer";
+import { TokenUsageBadge } from "@/components/ui/token-counter";
 
 interface PipelineViewProps {
   selectedJobId: string | null;
@@ -76,6 +77,7 @@ export function PipelineView({
   const [singleUploadError, setSingleUploadError] = useState<string | null>(null);
   const singleFileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [activeModelName, setActiveModelName] = useState<string>("Active AI Model");
 
   // Live Timer and Cancellation Hooks for AI Processing
   const singleTimer = useProcessTimer();
@@ -85,6 +87,23 @@ export function PipelineView({
 
   // Target job selection for Phase 2 evaluation
   const [targetJobId, setTargetJobId] = useState<string>(selectedJobId || (jobs[0]?.id || ""));
+
+  useEffect(() => {
+    const fetchActiveModel = async () => {
+      try {
+        const s = await api.getLLMSettings();
+        const prov = s.active_provider;
+        const mod = s.active_model;
+        const catalogInfo = s.providers_catalog?.[prov]?.models?.find((m: any) => m.id === mod);
+        setActiveModelName(catalogInfo?.name || mod || `${prov.toUpperCase()} AI`);
+      } catch {
+        // preserve current fallback
+      }
+    };
+    fetchActiveModel();
+    const interval = setInterval(fetchActiveModel, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (selectedJobId) {
@@ -625,9 +644,10 @@ export function PipelineView({
                     isRunning={singleTimer.isRunning}
                     elapsedSeconds={singleTimer.elapsedSeconds}
                     onCancel={handleCancelSingleUpload}
-                    label="Extracting CV with Agnes AI & Scrubbing PII..."
+                    label={`Extracting CV with ${activeModelName} & Scrubbing PII...`}
                     estimateText="AI parsing active (typically 8-25s)"
                     cancelLabel="Cancel Extraction"
+                    modelName={activeModelName}
                   />
                 </div>
               ) : (
@@ -711,6 +731,9 @@ export function PipelineView({
                           label="CV Extraction Time"
                           className="bg-emerald-900/60 text-emerald-300 border-emerald-500/30"
                         />
+                      )}
+                      {singleExtraction.token_usage && (
+                        <TokenUsageBadge usage={singleExtraction.token_usage} />
                       )}
                     </div>
                     <div className="text-xs text-slate-300 mt-0.5">
