@@ -332,6 +332,11 @@ class LLMSettingsResponse(BaseModel):
     fallback_chain: List[str] = Field(default_factory=list, description="Sequence of fallback (provider:model) candidates")
     custom_fallback_chain: Optional[List[Dict[str, Any]]] = Field(default=None, description="User-customized fallback sequence")
     last_fallback_event: Optional[Dict[str, Any]] = Field(default=None, description="Metadata of most recent failover event")
+    # Local model specific settings & hardware recommendations
+    local_context_window: int = Field(default=4096, description="Local model context window in tokens")
+    local_rolling_context: bool = Field(default=True, description="Rolling context window enabled")
+    local_thinking_enabled: bool = Field(default=False, description="Local model thinking/reasoning enabled")
+    hardware_profile: Optional[Dict[str, Any]] = Field(default=None, description="Host system RAM, GPU VRAM, and recommendations")
 
 
 class LLMUpdateRequest(BaseModel):
@@ -341,6 +346,14 @@ class LLMUpdateRequest(BaseModel):
     compatibility_mode: str = Field(default="auto", description="Structured output compatibility mode")
     api_key: Optional[str] = Field(default=None, description="Optional new API key for the target provider")
     base_url: Optional[str] = Field(default=None, description="Optional custom base URL")
+    local_context_window: Optional[int] = Field(default=None, description="Local context window in tokens")
+    local_rolling_context: Optional[bool] = Field(default=None, description="Enable rolling context window")
+    local_thinking_enabled: Optional[bool] = Field(default=None, description="Enable thinking tags")
+    fallback_enabled: Optional[bool] = Field(default=None, description="Enable or disable multi-tier fallback failover")
+
+
+class FallbackToggleRequest(BaseModel):
+    enabled: bool = Field(description="Enable or disable multi-tier fallback failover")
 
 
 class LLMTestRequest(BaseModel):
@@ -1417,6 +1430,20 @@ async def get_llm_settings() -> LLMSettingsResponse:
                 "rate_limits": model_info.rate_limits if model_info else None,
             })
 
+    # Sync and detect local models automatically without blocking event loop
+    try:
+        from backend.schemas.models_catalog import sync_local_ollama_models
+        await asyncio.to_thread(sync_local_ollama_models)
+        catalog_dict["ollama"] = CATALOG_PROVIDERS["ollama"].model_dump()
+    except Exception:
+        pass
+
+    hw_profile = None
+    try:
+        hw_profile = await asyncio.to_thread(_ollama_service.get_hardware_profile)
+    except Exception:
+        pass
+
     return LLMSettingsResponse(
         active_provider=settings.llm_provider,
         active_model=_get_active_model_for_provider(settings.llm_provider),
@@ -1430,10 +1457,14 @@ async def get_llm_settings() -> LLMSettingsResponse:
             "gemini": bool(settings.gemini_api_key),
             "ollama": True,
         },
-        fallback_enabled=True,
+        fallback_enabled=getattr(settings, "fallback_enabled", True),
         fallback_chain=chain_labels,
         custom_fallback_chain=enriched_custom,
         last_fallback_event=get_last_fallback_event(),
+        local_context_window=getattr(settings, "local_context_window", 4096),
+        local_rolling_context=getattr(settings, "local_rolling_context", True),
+        local_thinking_enabled=getattr(settings, "local_thinking_enabled", False),
+        hardware_profile=hw_profile,
     )
 
 
@@ -1453,6 +1484,15 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
 
     settings.llm_provider = prov
     settings.compatibility_mode = payload.compatibility_mode
+
+    if payload.local_context_window is not None:
+        settings.local_context_window = payload.local_context_window
+    if payload.local_rolling_context is not None:
+        settings.local_rolling_context = payload.local_rolling_context
+    if payload.local_thinking_enabled is not None:
+        settings.local_thinking_enabled = payload.local_thinking_enabled
+    if payload.fallback_enabled is not None:
+        settings.fallback_enabled = payload.fallback_enabled
 
     if prov == "agnes":
         settings.agnes_model = payload.model
@@ -1490,6 +1530,17 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
     from backend.agents.llm_factory import clear_last_fallback_event
     clear_last_fallback_event()
 
+    return await get_llm_settings()
+
+
+@router.post(
+    "/settings/llm/fallback-toggle",
+    response_model=LLMSettingsResponse,
+    summary="Toggle multi-tier automatic failover on or off",
+)
+async def toggle_fallback(payload: FallbackToggleRequest) -> LLMSettingsResponse:
+    """Toggles automatic cascading failover across model tiers."""
+    settings.fallback_enabled = payload.enabled
     return await get_llm_settings()
 
 
@@ -1649,11 +1700,26 @@ async def start_ollama_service() -> Dict[str, Any]:
     summary="List all installed local models and models currently loaded in RAM/VRAM",
 )
 async def get_ollama_models() -> Dict[str, Any]:
-    """Fetches local tags from /api/tags and active in-memory models from /api/ps."""
+    """Fetches local tags from /api/tags, auto-imports external models, and active in-memory models concurrently."""
+    installed, running, hw = await asyncio.gather(
+        asyncio.to_thread(_ollama_service.list_installed_models),
+        asyncio.to_thread(_ollama_service.list_running_models),
+        asyncio.to_thread(_ollama_service.get_hardware_profile),
+    )
     return {
-        "installed": _ollama_service.list_installed_models(),
-        "running": _ollama_service.list_running_models(),
+        "installed": installed,
+        "running": running,
+        "hardware": hw,
     }
+
+
+@router.get(
+    "/ollama/hardware",
+    summary="Get hardware profile and context window recommendations",
+)
+async def get_ollama_hardware() -> Dict[str, Any]:
+    """Returns host RAM, GPU VRAM, recommended context window and settings."""
+    return await asyncio.to_thread(_ollama_service.get_hardware_profile)
 
 
 @router.post(
@@ -1661,7 +1727,7 @@ async def get_ollama_models() -> Dict[str, Any]:
     summary="Pre-load a local Ollama model into GPU VRAM / system RAM",
 )
 async def load_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, Any]:
-    """Loads weights into memory with specified keep_alive duration."""
+    """Loads weights into memory with specified keep_alive duration and context window."""
     return _ollama_service.load_model(model_name=payload.model, keep_alive=payload.keep_alive)
 
 

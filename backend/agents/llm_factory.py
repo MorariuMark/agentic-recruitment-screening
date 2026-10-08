@@ -10,7 +10,8 @@ import os
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -21,6 +22,44 @@ T = TypeVar("T", bound=BaseModel)
 _LAST_FALLBACK_EVENT: Optional[Dict[str, Any]] = None
 
 
+def _build_compact_json_skeleton(model_cls: Type[BaseModel], depth: int = 0) -> Any:
+    """
+    Constructs a lightweight, compact JSON skeleton representing the required fields and types.
+    Eliminates OpenAPI $defs, reference recursion, and verbose descriptions that overwhelm
+    small local models (2B parameters) and consume thousands of prompt tokens.
+    """
+    if depth > 4:
+        return {}
+    skeleton: Dict[str, Any] = {}
+    for name, field in getattr(model_cls, "model_fields", {}).items():
+        annotation = field.annotation
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if origin is Union:
+            non_none = [a for a in args if a is not type(None)]
+            if non_none:
+                annotation = non_none[0]
+                origin = get_origin(annotation)
+                args = get_args(annotation)
+        if origin in (list, List):
+            inner = args[0] if args else Any
+            if hasattr(inner, "model_fields"):
+                skeleton[name] = [_build_compact_json_skeleton(inner, depth + 1)]
+            elif isinstance(inner, type) and issubclass(inner, Enum):
+                skeleton[name] = [" | ".join(str(e.value) for e in inner)]
+            else:
+                inner_name = getattr(inner, "__name__", "string")
+                skeleton[name] = [f"<{inner_name}>"]
+        elif hasattr(annotation, "model_fields"):
+            skeleton[name] = _build_compact_json_skeleton(annotation, depth + 1)
+        elif isinstance(annotation, type) and issubclass(annotation, Enum):
+            skeleton[name] = " | ".join(str(e.value) for e in annotation)
+        else:
+            t_name = getattr(annotation, "__name__", "string")
+            skeleton[name] = f"<{t_name}>"
+    return skeleton
+
+
 def clean_and_parse_json(raw_content: str) -> Dict[str, Any]:
     """
     Resilient JSON extractor handling raw JSON, markdown code fences,
@@ -28,8 +67,9 @@ def clean_and_parse_json(raw_content: str) -> Dict[str, Any]:
     """
     text = (raw_content or "").strip()
 
-    # Remove DeepSeek / reasoning thought blocks
+    # Remove DeepSeek / reasoning thought blocks and prefill closing tags
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"^</think>\s*", "", text).strip()
 
     # Strip markdown code blocks ```json ... ``` or ``` ... ```
     if "```" in text:
@@ -555,7 +595,10 @@ class GeminiClient(BaseLLMClient):
 
 
 class OllamaClient(BaseLLMClient):
-    """Client for local Ollama instance with privacy guarantees."""
+    """
+    Client for local Ollama instance with privacy guarantees, hardware-optimized context windows,
+    rolling context sliding window, thinking toggle, live speed telemetry, and small-model prompt enhancement.
+    """
 
     def __init__(
         self,
@@ -570,23 +613,145 @@ class OllamaClient(BaseLLMClient):
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
         self.client = ollama.Client(host=self.base_url)
 
+    def _get_execution_options(self, temperature: float = 0.0) -> Dict[str, Any]:
+        """Builds hardware-tuned generation options for the local engine."""
+        num_ctx = getattr(settings, "local_context_window", 4096)
+        opts: Dict[str, Any] = {
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+            "num_predict": 2048,  # Cap output generation to avoid runaway loops
+        }
+        return opts
+
+    def _apply_rolling_context(self, prompt: str) -> str:
+        """
+        Sliding / rolling window protection for continuous generation without out-of-memory (OOM) errors.
+        When rolling context is enabled, oversized prompts are gracefully truncated to the most recent/salient text.
+        """
+        if not getattr(settings, "local_rolling_context", True):
+            return prompt
+
+        num_ctx = getattr(settings, "local_context_window", 4096)
+        # Allow prompt to take at most ~70% of context window (approx 4 chars/token)
+        max_prompt_chars = int(num_ctx * 0.7 * 4.0)
+
+        if len(prompt) > max_prompt_chars:
+            head_chars = int(max_prompt_chars * 0.2)
+            tail_chars = max_prompt_chars - head_chars
+            prompt = (
+                f"{prompt[:head_chars]}\n\n"
+                f"... [Rolling Context: intermediate lines condensed to prevent local VRAM OOM] ...\n\n"
+                f"{prompt[-tail_chars:]}"
+            )
+        return prompt
+
+    def _enhance_system_prompt_for_local_model(
+        self,
+        system_prompt: Optional[str] = None,
+        response_model: Optional[Type[T]] = None,
+    ) -> str:
+        """
+        Enhances system prompt for smaller local models (e.g. MiniCPM 2B, Qwen 2B, SmolLM).
+        Suppresses unwanted thinking/monologue tags if disabled, and enforces strict, concise schema compliance.
+        """
+        thinking_enabled = getattr(settings, "local_thinking_enabled", False)
+        base = (system_prompt or "").strip()
+
+        directives = []
+        if not thinking_enabled:
+            directives.append(
+                "STRICT EFFICIENCY DIRECTIVE: Do NOT output any internal monologue, scratchpad, reasoning, or <think>...</think> tags. "
+                "Provide the final direct answer immediately."
+            )
+
+        if response_model is not None:
+            try:
+                skeleton = _build_compact_json_skeleton(response_model)
+                skeleton_json = json.dumps(skeleton, indent=2)
+            except Exception:
+                skeleton_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
+            directives.append(
+                "STRICT JSON OUTPUT DIRECTIVE:\n"
+                "1. Output a SINGLE valid JSON object adhering strictly to the JSON schema structure below.\n"
+                "2. Use the EXACT property names shown in the template (e.g. 'job_title', 'company_name', 'degree_title', 'institution_name').\n"
+                "3. Ensure list fields (e.g. 'skills', 'certifications', 'work_description') are flat JSON arrays of strings like [\"Python\", \"Docker\"], NOT nested objects or categorized dictionaries.\n"
+                "4. Do NOT output conversational text, markdown formatting, explanations, or commentary outside the JSON.\n"
+                f"JSON Template:\n{skeleton_json}"
+            )
+
+        directive_block = "\n\n".join(directives)
+        if base and directive_block:
+            return f"{base}\n\n{directive_block}"
+        return base or directive_block
+
+    def _record_telemetry(
+        self,
+        prompt: str,
+        response: Any,
+        duration_s: float,
+        action: str = "general",
+    ) -> None:
+        """Records token metrics and generation speed (tokens/sec) into the token tracker."""
+        p_eval = getattr(response, "prompt_eval_count", None) or max(1, len(prompt) // 4)
+        c_eval = getattr(response, "eval_count", None) or 0
+        eval_dur_ns = getattr(response, "eval_duration", None) or 0
+
+        lat_ms = duration_s * 1000.0
+        self.last_usage = {
+            "prompt_tokens": p_eval,
+            "completion_tokens": c_eval,
+            "total_tokens": p_eval + c_eval,
+        }
+
+        try:
+            from backend.services.token_tracker import token_tracker
+            token_tracker.record_usage(
+                provider="ollama",
+                model=self.model,
+                prompt_tokens=p_eval,
+                completion_tokens=c_eval,
+                total_tokens=p_eval + c_eval,
+                action=action,
+                latency_ms=lat_ms,
+                status="success",
+            )
+        except Exception:
+            pass
+
     def generate_text(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.1,
     ) -> str:
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        prompt = self._apply_rolling_context(prompt)
+        sys_prompt = self._enhance_system_prompt_for_local_model(system_prompt)
 
+        messages = []
+        if sys_prompt:
+            messages.append({"role": "system", "content": sys_prompt})
+        messages.append({"role": "user", "content": prompt})
+        if not getattr(settings, "local_thinking_enabled", False):
+            messages.append({"role": "assistant", "content": "</think>"})
+
+        t0 = time.perf_counter()
         response = self.client.chat(
             model=self.model,
             messages=messages,
-            options={"temperature": temperature},
+            stream=False,
+            options=self._get_execution_options(temperature=temperature),
         )
-        return response.message.content or ""
+        duration_s = time.perf_counter() - t0
+
+        self._record_telemetry(prompt, response, duration_s, action="text_generation")
+        content = (response.message.content or "").strip()
+
+        # If thinking is disabled, sanitize away any residual thinking tags
+        if not getattr(settings, "local_thinking_enabled", False):
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            content = re.sub(r"^</think>\s*", "", content).strip()
+
+        return content
 
     def generate_structured(
         self,
@@ -595,23 +760,30 @@ class OllamaClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
-        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
-        augmented_system = (
-            f"{system_prompt or ''}\n\n"
-            f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
-        ).strip()
+        prompt = self._apply_rolling_context(prompt)
+        augmented_system = self._enhance_system_prompt_for_local_model(
+            system_prompt=system_prompt,
+            response_model=response_model,
+        )
 
         messages = [
             {"role": "system", "content": augmented_system},
             {"role": "user", "content": prompt},
         ]
+        if not getattr(settings, "local_thinking_enabled", False):
+            messages.append({"role": "assistant", "content": "</think>"})
 
+        t0 = time.perf_counter()
         response = self.client.chat(
             model=self.model,
             messages=messages,
             format="json",
-            options={"temperature": temperature},
+            stream=False,
+            options=self._get_execution_options(temperature=temperature),
         )
+        duration_s = time.perf_counter() - t0
+
+        self._record_telemetry(prompt, response, duration_s, action="structured_generation")
         raw_content = response.message.content or "{}"
         parsed_dict = clean_and_parse_json(raw_content)
         return response_model.model_validate(parsed_dict)
@@ -833,6 +1005,13 @@ class DynamicLLMClient(BaseLLMClient):
                 seen_targets.add(target_key)
                 chain.append((prov.lower(), mod, cli))
 
+        # If fallback failover is disabled, strictly resolve only the primary configured engine
+        if not getattr(settings, "fallback_enabled", True):
+            primary_prov = settings.llm_provider.lower()
+            primary_model = _get_fallback_primary_model(primary_prov)
+            add_candidate(primary_prov, primary_model)
+            return chain
+
         # Check for user-defined custom fallback hierarchy first
         custom = get_custom_fallback_chain()
         if custom and len(custom) > 0:
@@ -898,6 +1077,9 @@ class DynamicLLMClient(BaseLLMClient):
                 if _is_local_port_open("127.0.0.1", 11434):
                     add_candidate("ollama", settings.ollama_model or "qwen3.5:2b-q4_K_M")
 
+        if not getattr(settings, "fallback_enabled", True):
+            return chain[:1]
+
         return chain
 
     def generate_text(
@@ -907,9 +1089,13 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.1,
     ) -> str:
         global _LAST_FALLBACK_EVENT
+        fallback_enabled = getattr(settings, "fallback_enabled", True)
         chain = self.get_fallback_chain()
         if not chain:
             raise RuntimeError("No configured or reachable LLM providers available in fallback chain.")
+
+        if not fallback_enabled:
+            chain = chain[:1]
 
         primary_prov, primary_mod, _ = chain[0]
         last_error: Optional[Exception] = None
@@ -965,6 +1151,16 @@ class DynamicLLMClient(BaseLLMClient):
             except Exception as err:
                 last_error = err
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
+                if not fallback_enabled:
+                    logger.warning(
+                        "LLM generation failed on [%s / %s]: %s (Failover disabled).",
+                        prov,
+                        mod,
+                        err,
+                    )
+                    raise RuntimeError(
+                        f"Primary LLM engine [{prov} / {mod}] failed: {err} (Failover disabled)"
+                    ) from err
                 logger.warning(
                     "LLM generation failed on [%s / %s]: %s. Advancing to next fallback...",
                     prov,
@@ -985,9 +1181,13 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.0,
     ) -> T:
         global _LAST_FALLBACK_EVENT
+        fallback_enabled = getattr(settings, "fallback_enabled", True)
         chain = self.get_fallback_chain()
         if not chain:
             raise RuntimeError("No configured or reachable LLM providers available in fallback chain.")
+
+        if not fallback_enabled:
+            chain = chain[:1]
 
         primary_prov, primary_mod, _ = chain[0]
         last_error: Optional[Exception] = None
@@ -1044,6 +1244,16 @@ class DynamicLLMClient(BaseLLMClient):
             except Exception as err:
                 last_error = err
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
+                if not fallback_enabled:
+                    logger.warning(
+                        "Structured LLM generation failed on [%s / %s]: %s (Failover disabled).",
+                        prov,
+                        mod,
+                        err,
+                    )
+                    raise RuntimeError(
+                        f"Primary LLM engine [{prov} / {mod}] failed: {err} (Failover disabled)"
+                    ) from err
                 logger.warning(
                     "Structured LLM generation failed on [%s / %s]: %s. Advancing to next fallback...",
                     prov,

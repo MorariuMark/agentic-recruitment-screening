@@ -5,6 +5,7 @@ NVIDIA NIM, Google Gemini, and local Ollama, including real-time rate limits,
 context windows, and schema compatibility definitions.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -492,31 +493,48 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
 }
 
 
-def sync_local_ollama_models() -> List[ModelInfo]:
-    """Syncs the actual locally installed Ollama models from the running Ollama instance."""
+_LOCAL_OLLAMA_MODELS_CACHE: Optional[List[ModelInfo]] = None
+_LOCAL_OLLAMA_CACHE_TIME: float = 0.0
+_LOCAL_OLLAMA_CACHE_TTL: float = 60.0
+
+
+def sync_local_ollama_models(force: bool = False) -> List[ModelInfo]:
+    """Syncs the actual locally installed Ollama models from the running Ollama instance with 60s TTL."""
+    global _LOCAL_OLLAMA_MODELS_CACHE, _LOCAL_OLLAMA_CACHE_TIME
+    now = time.time()
+    if not force and _LOCAL_OLLAMA_MODELS_CACHE is not None and (now - _LOCAL_OLLAMA_CACHE_TIME < _LOCAL_OLLAMA_CACHE_TTL):
+        return _LOCAL_OLLAMA_MODELS_CACHE
+
     try:
+        from backend.config import settings
         from backend.services.ollama_service import OllamaService
         svc = OllamaService()
-        installed = svc.list_installed_models()
+        installed = svc.list_installed_models(force=force)
         if installed:
             models = []
+            ctx_display = f"{getattr(settings, 'local_context_window', 4096) // 1024}k"
             for m in installed:
+                # Format a friendly clean display name
+                clean_name = m["name"].replace(":latest", "").replace("registry.ollama.ai/library/", "")
+                source_badge = f" [{m.get('source', 'Local')}]" if "Auto-Imported" in m.get("source", "") else ""
                 models.append(
                     ModelInfo(
                         id=m["name"],
-                        name=f"{m['name']} (Local)",
+                        name=f"{clean_name}{source_badge}",
                         provider="ollama",
                         free=True,
                         rate_limits="Unlimited (Local GPU/CPU)",
-                        context_window="128k",
-                        category=f"Local {m.get('parameter_size', '')}",
-                        compatibility="Ollama JSON Format",
-                        description=f"Installed local model ({m.get('size_gb', 0)} GB, {m.get('family', '')}).",
+                        context_window=f"{ctx_display} (Local Config)",
+                        category=f"Local {m.get('parameter_size', '2B-8B')}",
+                        compatibility="Native Ollama JSON Mode",
+                        description=f"Installed local model ({m.get('size_gb', 0)} GB, {m.get('family', 'GGUF')}). Zero data egress.",
                     )
                 )
             CATALOG_PROVIDERS["ollama"].models = models
-            if models:
+            if models and not getattr(settings, "ollama_model", None):
                 CATALOG_PROVIDERS["ollama"].default_model = models[0].id
+            _LOCAL_OLLAMA_MODELS_CACHE = models
+            _LOCAL_OLLAMA_CACHE_TIME = now
             return models
     except Exception:
         pass

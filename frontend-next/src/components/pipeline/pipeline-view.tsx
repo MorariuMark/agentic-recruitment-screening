@@ -7,7 +7,7 @@ import {
   CVUploadResponse,
 } from "@/types";
 import { api } from "@/lib/api";
-import { formatPercent, getRecommendationBadge } from "@/lib/utils";
+import { formatPercent, getRecommendationBadge, downloadJsonFile } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Download,
   ExternalLink,
   Eye,
   FileCheck,
@@ -742,6 +743,20 @@ export function PipelineView({
 
                   {/* Actions Toolbar */}
                   <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+                    <button
+                      onClick={() => {
+                        const exportData = singleExtraction.parsed_cv || singleExtraction;
+                        const candName = (singleExtraction.parsed_cv?.contact_info?.full_name || singleExtraction.candidate_id || "candidate")
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]/g, "_");
+                        downloadJsonFile(exportData, `candidate_${candName}_extracted.json`);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700/60 transition-colors cursor-pointer whitespace-nowrap active:scale-[0.98]"
+                      title="Download exact extracted candidate profile JSON"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Download JSON</span>
+                    </button>
                     <button
                       onClick={() => {
                         const effectiveJobId = targetJobId || selectedJobId || (jobs[0]?.id ?? undefined);
@@ -1809,6 +1824,23 @@ export function PipelineView({
                               className="flex items-center justify-end gap-1.5"
                               onClick={(e) => e.stopPropagation()}
                             >
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    const detail = await api.getCandidate(candidate.id);
+                                    const candName = (detail.parsed_cv?.contact_info?.full_name || detail.masked_name || candidate.id)
+                                      .toLowerCase()
+                                      .replace(/[^a-z0-9]/g, "_");
+                                    downloadJsonFile(detail.parsed_cv || detail, `candidate_${candName}_extracted.json`);
+                                  } catch (err: any) {
+                                    alert("Failed to export candidate JSON: " + err.message);
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-blue-400 transition-colors cursor-pointer"
+                                title="Download extracted candidate profile JSON"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 onClick={() => handleInspectCandidate(candidate.id)}
                                 className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"

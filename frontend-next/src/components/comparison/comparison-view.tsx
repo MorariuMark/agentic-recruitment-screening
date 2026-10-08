@@ -248,7 +248,7 @@ ${report.candidates
             <select
               value={activeJobId || ""}
               onChange={(e) => handleSelectJobChange(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-semibold text-white focus:outline-none focus:border-blue-500 cursor-pointer truncate"
+              className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-100 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
             >
               {jobs.map((job) => (
                 <option key={job.id} value={job.id}>
@@ -727,7 +727,7 @@ ${report.candidates
                     onClick={() => handleToggleCandidate(cand.id)}
                     className={`p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-colors ${
                       isChecked
-                        ? "bg-blue-600/15 border-blue-500/50 text-white"
+                        ? "bg-blue-600/15 border-blue-500/50 text-blue-700 dark:text-white font-medium"
                         : "bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300"
                     }`}
                   >
@@ -742,7 +742,7 @@ ${report.candidates
                         {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
                       </div>
                       <div>
-                        <div className="font-semibold text-xs text-white">
+                        <div className="font-semibold text-xs text-slate-100">
                           {cand.masked_name || `Candidate-${cand.id.slice(0, 6)}`}
                         </div>
                         <div className="text-[10px] text-slate-500">

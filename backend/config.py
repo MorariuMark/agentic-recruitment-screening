@@ -94,14 +94,30 @@ class Settings(BaseSettings):
         description="Google Gemini model identifier",
     )
 
-    # Ollama Settings
+    # Ollama & Local Model Settings
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for local Ollama instance",
     )
     ollama_model: str = Field(
-        default="llama3.1:8b",
+        default="minicpm5:2b",
         description="Ollama model identifier",
+    )
+    local_context_window: int = Field(
+        default=4096,
+        description="Local model context window size in tokens (e.g. 2048, 4096, 8192, 16384)",
+    )
+    local_rolling_context: bool = Field(
+        default=True,
+        description="Enable rolling context window with sliding chunk summarization to prevent OOM errors",
+    )
+    local_thinking_enabled: bool = Field(
+        default=False,
+        description="Enable thinking/reasoning tags for local reasoning models (when disabled, suppresses <think> tokens for speed)",
+    )
+    fallback_enabled: bool = Field(
+        default=True,
+        description="Enable multi-tier fallback failover to alternate models upon rate limit or failure",
     )
 
     # ChromaDB & Embeddings

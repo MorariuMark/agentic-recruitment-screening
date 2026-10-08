@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   FileText,
   Highlighter,
   Search,
@@ -15,6 +16,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { downloadJsonFile } from "@/lib/utils";
 
 interface DocumentViewerProps {
   candidate: CandidateDetail | null;
@@ -313,6 +315,23 @@ export function DocumentViewer({
             title="Copy text representation"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Download JSON */}
+          <button
+            onClick={() => {
+              if (!candidate) return;
+              const exportData = candidate.parsed_cv || candidate;
+              const candName = (candidate.masked_name || candidate.original_filename || candidate.id)
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, "_");
+              downloadJsonFile(exportData, `candidate_${candName}_extracted.json`);
+            }}
+            disabled={!candidate}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-blue-400 text-xs transition-colors disabled:opacity-40"
+            title="Download extracted candidate profile JSON"
+          >
+            <Download className="w-3.5 h-3.5" />
           </button>
 
           {onClose && (

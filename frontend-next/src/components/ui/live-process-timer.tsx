@@ -179,10 +179,13 @@ export function LiveProcessTimer({
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     if (isRunning) {
-      setStreamedTokens(90);
+      setStreamedTokens(80);
       interval = setInterval(() => {
-        setStreamedTokens((prev) => prev + Math.floor(Math.random() * 35) + 25);
-      }, 250);
+        setStreamedTokens((prev) => {
+          if (prev >= 1600) return prev;
+          return prev + Math.floor(Math.random() * 15) + 10;
+        });
+      }, 400);
     } else {
       setStreamedTokens(0);
     }

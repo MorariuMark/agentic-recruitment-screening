@@ -230,13 +230,17 @@ class ApiClient {
     });
   }
 
+  async exportCandidateCV(candidateId: string): Promise<any> {
+    return this.request(`/api/v1/cv/${candidateId}/export`);
+  }
+
   async uploadSingleCV(file: File, signal?: AbortSignal): Promise<CVUploadResponse> {
     const formData = new FormData();
     formData.append("file", file);
     return this.request<CVUploadResponse>("/api/v1/cv/upload", {
       method: "POST",
       body: formData,
-      timeoutMs: 180000,
+      timeoutMs: 600000,
       signal,
     });
   }
@@ -252,7 +256,7 @@ class ApiClient {
     return this.request("/api/v1/cv/batch-upload", {
       method: "POST",
       body: formData,
-      timeoutMs: 180000,
+      timeoutMs: 600000,
       signal,
     });
   }
@@ -353,6 +357,14 @@ class ApiClient {
     });
   }
 
+  async exportJobDescription(job: JobDescription): Promise<any> {
+    return this.request("/api/v1/job/export", {
+      method: "POST",
+      body: JSON.stringify(job),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   // Interview Studio
   async generateInterviewPlan(
     candidateId: string,
@@ -420,11 +432,44 @@ class ApiClient {
     compatibility_mode?: string;
     api_key?: string;
     base_url?: string;
+    local_context_window?: number;
+    local_rolling_context?: boolean;
+    local_thinking_enabled?: boolean;
+    fallback_enabled?: boolean;
   }): Promise<LLMSettings> {
     return this.request("/api/v1/settings/llm", {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async toggleFailover(enabled: boolean): Promise<LLMSettings> {
+    return this.request("/api/v1/settings/llm/fallback-toggle", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async loadOllamaModel(model: string, keep_alive: string = "1h"): Promise<any> {
+    return this.request("/api/v1/ollama/load", {
+      method: "POST",
+      body: JSON.stringify({ model, keep_alive }),
+    });
+  }
+
+  async unloadOllamaModel(model: string): Promise<any> {
+    return this.request("/api/v1/ollama/unload", {
+      method: "POST",
+      body: JSON.stringify({ model, keep_alive: "0" }),
+    });
+  }
+
+  async getOllamaModels(): Promise<{ installed: any[]; running: any[]; hardware?: any }> {
+    return this.request("/api/v1/ollama/models");
+  }
+
+  async getHardwareProfile(): Promise<any> {
+    return this.request("/api/v1/ollama/hardware");
   }
 
   async saveFallbackChain(

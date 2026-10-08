@@ -6,10 +6,14 @@ import { api } from "@/lib/api";
 import {
   Activity,
   ExternalLink,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Sparkles,
+  Sun,
   Zap,
 } from "lucide-react";
+import { useTheme } from "@/components/providers/theme-provider";
 
 interface HeaderProps {
   jobs?: JobDescription[];
@@ -30,6 +34,7 @@ export function Header({
   isSidebarOpen = true,
   onToggleSidebar,
 }: HeaderProps) {
+  const { theme, setTheme } = useTheme();
   const [backendStatus, setBackendStatus] = useState<"online" | "offline" | "checking">("checking");
 
   const refreshStatus = async () => {
@@ -95,6 +100,27 @@ export function Header({
             <span className="font-mono text-[11px]">Tokens &amp; Telemetry</span>
           </button>
         )}
+
+        {/* Quick Interface Skin Toggle */}
+        <button
+          onClick={() => {
+            const nextTheme = theme === "default" ? "dark" : theme === "dark" ? "light" : "default";
+            setTheme(nextTheme);
+          }}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-slate-100 transition-colors cursor-pointer group"
+          title={`Active skin: ${theme === "default" ? "Obsidian Midnight" : theme === "dark" ? "Graphite Dark" : "Clean Editorial"}. Click to cycle skin.`}
+        >
+          {theme === "default" ? (
+            <Sparkles className="w-3.5 h-3.5 text-blue-400 group-hover:rotate-12 transition-transform" />
+          ) : theme === "dark" ? (
+            <Moon className="w-3.5 h-3.5 text-slate-300 group-hover:-rotate-12 transition-transform" />
+          ) : (
+            <Sun className="w-3.5 h-3.5 text-amber-500 group-hover:rotate-45 transition-transform" />
+          )}
+          <span className="font-mono text-[11px] hidden sm:inline capitalize">
+            {theme === "default" ? "Obsidian" : theme === "dark" ? "Graphite" : "Light"}
+          </span>
+        </button>
 
         {/* Arize Phoenix Observability link */}
         <a

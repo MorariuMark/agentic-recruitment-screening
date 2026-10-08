@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import unicodedata
 
 from backend.agents.llm_factory import BaseLLMClient, get_llm_client
+from backend.config import settings
 from backend.schemas.cv import (
     AnonymizedCandidate,
     CustomSection,
@@ -67,6 +68,19 @@ Guidelines:
 12. Summary: Include the professional bio, objective, or 'about me' if present.
 13. Unused Details: Identify purely personal or demographic items (date of birth, place of birth, nationality, gender, marital status) and place them into unused_details.
 14. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
+
+PARSER_LOCAL_SYSTEM_PROMPT = """You are an expert HR Recruitment Parsing Agent.
+Analyze the candidate CV text and extract the structured candidate profile into JSON.
+JSON Keys to include:
+- contact_info: object with full_name, email, phone, location
+- summary: string summary
+- experiences: array of objects with {"job_title": str, "company_name": str, "start_date": str, "end_date": str, "work_description": ["bullet 1", "bullet 2"]}
+- education: array of objects with {"degree_title": str, "institution_name": str, "graduation_year": int}
+- skills: flat array of skill name strings (e.g. ["Python", "Docker"])
+- certifications: flat array of strings
+- projects: array of objects with {"project_name": str, "description": [...], "technologies": [...]}
+- languages: array of objects with {"language": str, "proficiency": str}
+Preserve exact qualifications, achievements, and facts without omission."""
 
 
 # Pre-compiled normalization maps and regular expressions
@@ -932,16 +946,19 @@ class ParserAgent:
     def parse_cv_text(self, raw_text: str) -> ParsedCV:
         """
         Invokes LLM structured generation to parse raw CV text into a ParsedCV object.
-        Applies safe character limits to avoid provider rate/TPM limit errors on oversized inputs.
+        Applies safe character limits to avoid provider rate/TPM limit errors or local GPU timeouts.
         """
         if not raw_text or not raw_text.strip():
             raise ValueError("Cannot parse empty CV text.")
 
-        # Cap text at 12,000 characters (~2,800 tokens) to fit within provider TPM windows
-        trimmed = raw_text.strip()
-        max_chars = 12000
-        if len(trimmed) > max_chars:
-            trimmed = trimmed[:max_chars]
+        # Clean and densify text (collapse redundant blank lines and tabs)
+        cleaned = re.sub(r"\n{3,}", "\n\n", raw_text.strip())
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+
+        # For local models (Ollama on GPU/CPU), cap text at 6,500 chars to prevent high inference latency / timeouts
+        is_local = getattr(settings, "llm_provider", "").lower() == "ollama"
+        max_chars = 6500 if is_local else 12000
+        trimmed = cleaned[:max_chars] if len(cleaned) > max_chars else cleaned
 
         prompt = (
             "Extract the structured candidate profile from the following CV document text:\n\n"
@@ -950,6 +967,8 @@ class ParserAgent:
             "</candidate_document_untrusted_input>"
         )
 
+        system_prompt = PARSER_LOCAL_SYSTEM_PROMPT if is_local else PARSER_SYSTEM_PROMPT
+
         if hasattr(self.llm_client, "set_action_context"):
             self.llm_client.set_action_context("cv_extraction")
 
@@ -957,7 +976,7 @@ class ParserAgent:
             parsed = self.llm_client.generate_structured(
                 prompt=prompt,
                 response_model=ParsedCV,
-                system_prompt=PARSER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 temperature=0.0,
             )
         except Exception as err:
@@ -967,13 +986,13 @@ class ParserAgent:
                 fallback_prompt = (
                     "Extract the structured candidate profile from the following CV document text:\n\n"
                     "<candidate_document_untrusted_input>\n"
-                    f"{trimmed[:12000]}\n"
+                    f"{trimmed[:5000]}\n"
                     "</candidate_document_untrusted_input>"
                 )
                 parsed = self.llm_client.generate_structured(
                     prompt=fallback_prompt,
                     response_model=ParsedCV,
-                    system_prompt=PARSER_SYSTEM_PROMPT,
+                    system_prompt=system_prompt,
                     temperature=0.0,
                 )
             else:

@@ -3,11 +3,13 @@
 import { useState, useEffect } from "react";
 import { JobDescription, JobRequirement, RequirementCategory } from "@/types";
 import { api } from "@/lib/api";
+import { downloadJsonFile } from "@/lib/utils";
 import {
   Briefcase,
   Check,
   CheckCircle2,
   ChevronRight,
+  Download,
   Globe,
   Layers,
   Loader2,
@@ -453,6 +455,20 @@ export function RequisitionView({
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        if (!activeJob) return;
+                        const title = (activeJob.title || activeJob.id || "job")
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]/g, "_");
+                        downloadJsonFile(activeJob, `job_${title}_extracted.json`);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-200 hover:text-white text-xs font-semibold border border-slate-700/80 transition-all cursor-pointer"
+                      title="Download extracted job specification JSON"
+                    >
+                      <Download className="w-4 h-4 text-blue-400" />
+                      <span>Download JSON</span>
+                    </button>
                     <button
                       onClick={handleSaveCriteria}
                       disabled={isSavingCriteria}

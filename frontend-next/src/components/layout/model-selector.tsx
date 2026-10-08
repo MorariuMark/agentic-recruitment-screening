@@ -27,6 +27,7 @@ export function ModelSelector({
   const [selectedProviderTab, setSelectedProviderTab] = useState<string>("groq");
   const [onlyFreeModels, setOnlyFreeModels] = useState<boolean>(false);
   const [isSwitchingModel, setIsSwitchingModel] = useState<boolean>(false);
+  const [isTogglingFallback, setIsTogglingFallback] = useState<boolean>(false);
 
   const modelDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -53,9 +54,15 @@ export function ModelSelector({
 
   useEffect(() => {
     fetchSettings();
-    const interval = setInterval(fetchSettings, 10000);
+    const interval = setInterval(fetchSettings, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (isModelDropdownOpen) {
+      fetchSettings();
+    }
+  }, [isModelDropdownOpen]);
 
   const handleSelectModel = async (provider: string, modelId: string) => {
     try {
@@ -78,6 +85,20 @@ export function ModelSelector({
   const activeModelId = llmSettings?.active_model || "openai/gpt-oss-20b";
   const hasFallbackEvent = Boolean(llmSettings?.last_fallback_event);
   const fallbackCount = llmSettings?.fallback_chain?.length || 0;
+  const fallbackEnabled = llmSettings?.fallback_enabled ?? true;
+
+  const handleToggleFallback = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setIsTogglingFallback(true);
+      const updated = await api.toggleFailover(!fallbackEnabled);
+      setLlmSettings(updated);
+    } catch (err: any) {
+      console.error("Failed to toggle failover:", err);
+    } finally {
+      setIsTogglingFallback(false);
+    }
+  };
 
   // Active model info lookup
   const activeProviderInfo = llmSettings?.providers_catalog?.[activeProvider];
@@ -151,6 +172,10 @@ export function ModelSelector({
                 <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
                 <span>Failover Active</span>
               </span>
+            ) : activeProvider === "ollama" ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 text-[10px] font-semibold border border-purple-500/20 font-mono">
+                Local GPU
+              </span>
             ) : isActiveModelFree ? (
               <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold border border-emerald-500/20 font-mono">
                 Free Tier
@@ -176,8 +201,19 @@ export function ModelSelector({
 
         {/* Row 3: Operational Status Strip & Switch Action */}
         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-          <span className="text-slate-400 text-[10px]">
-            {fallbackCount > 0 ? `${fallbackCount}-Tier Failover` : "Active Engine"}
+          <span className="text-slate-400 text-[10px] flex items-center gap-1.5">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                !fallbackEnabled ? "bg-slate-500" : "bg-emerald-400"
+              }`}
+            />
+            <span>
+              {!fallbackEnabled
+                ? "Failover Off"
+                : fallbackCount > 0
+                ? `${fallbackCount}-Tier Failover`
+                : "Active Engine"}
+            </span>
           </span>
           <span className="text-blue-400 group-hover:text-blue-300 font-medium flex items-center gap-1 transition-colors">
             <span>Change</span>
@@ -238,6 +274,13 @@ export function ModelSelector({
           </div>
 
           {/* Model List for Selected Provider */}
+          {selectedProviderTab === "ollama" && (
+            <div className="px-2 py-1.5 rounded-lg bg-purple-950/30 border border-purple-500/20 text-[10px] text-purple-300 flex items-center justify-between">
+              <span>Host GGUF / Ollama Models</span>
+              <span className="font-mono text-purple-400">100% Offline</span>
+            </div>
+          )}
+
           <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
             {filteredModels.length === 0 ? (
               <div className="p-4 text-center text-slate-500 text-[11px]">
@@ -246,6 +289,7 @@ export function ModelSelector({
             ) : (
               filteredModels.map((m) => {
                 const isSelected = activeProvider === selectedProviderTab && activeModelId === m.id;
+                const isLocal = selectedProviderTab === "ollama";
                 return (
                   <button
                     key={m.id}
@@ -260,11 +304,15 @@ export function ModelSelector({
                     <div className="space-y-0.5 min-w-0">
                       <div className="font-semibold text-[11px] text-white flex items-center gap-1.5">
                         <span className="truncate">{m.name}</span>
-                        {m.free && (
+                        {isLocal ? (
+                          <span className="text-[9px] px-1 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">
+                            LOCAL
+                          </span>
+                        ) : m.free ? (
                           <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                             FREE
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="text-[10px] text-slate-400 font-mono truncate">
                         {m.id}
@@ -289,12 +337,44 @@ export function ModelSelector({
 
           {/* Failover Status & Settings Link */}
           <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-            <div className="flex items-center gap-1.5 text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>
-                Failover Active: <strong className="text-slate-200 font-mono">{fallbackCount}</strong> tiers
+            <button
+              type="button"
+              disabled={isTogglingFallback}
+              onClick={handleToggleFallback}
+              className="flex items-center gap-2 group/failover text-slate-400 hover:text-slate-200 transition-colors cursor-pointer select-none"
+              title={
+                fallbackEnabled
+                  ? "Failover enabled: will automatically fallback to cloud models on error. Click to disable."
+                  : "Failover disabled: will strictly stay on the chosen model without switching to cloud. Click to enable."
+              }
+            >
+              <div
+                className={`w-6 h-3.5 flex items-center rounded-full p-0.5 transition-colors ${
+                  fallbackEnabled ? "bg-emerald-500/80" : "bg-slate-700"
+                }`}
+              >
+                <div
+                  className={`bg-white w-2.5 h-2.5 rounded-full shadow-sm transform transition-transform duration-200 ${
+                    fallbackEnabled ? "translate-x-2.5" : "translate-x-0"
+                  }`}
+                />
+              </div>
+              <span className="flex items-center gap-1 text-[11px]">
+                <span>Failover:</span>
+                <span
+                  className={`font-semibold ${
+                    fallbackEnabled ? "text-emerald-400" : "text-slate-400"
+                  }`}
+                >
+                  {fallbackEnabled ? "Active" : "Off"}
+                </span>
+                {fallbackEnabled && (
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    ({fallbackCount})
+                  </span>
+                )}
               </span>
-            </div>
+            </button>
 
             {onNavigateToSettings && (
               <button
@@ -302,10 +382,10 @@ export function ModelSelector({
                   setIsModelDropdownOpen(false);
                   onNavigateToSettings();
                 }}
-                className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer font-medium text-[11px]"
               >
                 <Settings2 className="w-3 h-3" />
-                <span>Configure Hierarchy &rarr;</span>
+                <span>Configure &rarr;</span>
               </button>
             )}
           </div>

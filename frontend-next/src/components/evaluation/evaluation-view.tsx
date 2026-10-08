@@ -9,7 +9,7 @@ import {
   RequirementMatch,
 } from "@/types";
 import { api } from "@/lib/api";
-import { getRecommendationBadge } from "@/lib/utils";
+import { getRecommendationBadge, downloadJsonFile } from "@/lib/utils";
 import { TokenUsageBadge, LiveTokenCounter } from "@/components/ui/token-counter";
 import {
   AlertCircle,
@@ -24,6 +24,7 @@ import {
   ChevronRight,
   ChevronUp,
   Copy,
+  Download,
   ExternalLink,
   FileCheck2,
   FileText,
@@ -618,6 +619,21 @@ export function EvaluationView({
                 </button>
 
                 <button
+                  onClick={() => {
+                    if (!evaluation) return;
+                    const candName = (activeCandidate?.masked_name || candidateDetail?.masked_name || evaluation.id || "candidate")
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]/g, "_");
+                    downloadJsonFile(evaluation, `evaluation_${candName}_rating.json`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all cursor-pointer shadow-sm"
+                  title="Download exact AI evaluation score, citations, and criteria rating JSON"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Download Rating JSON</span>
+                </button>
+
+                <button
                   onClick={() => handleRunEvaluation()}
                   disabled={evaluating}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
@@ -645,7 +661,7 @@ export function EvaluationView({
               <select
                 value={activeJobId || ""}
                 onChange={(e) => handleSelectJobChange(e.target.value)}
-                className="w-full bg-transparent text-sm font-semibold text-white focus:outline-none cursor-pointer truncate"
+                className="w-full bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer truncate"
               >
                 {jobs.map((job) => (
                   <option key={job.id} value={job.id} className="bg-slate-900 text-slate-100">
@@ -669,7 +685,7 @@ export function EvaluationView({
               <select
                 value={activeCandidateId || ""}
                 onChange={(e) => handleSelectCandidateChange(e.target.value)}
-                className="w-full bg-transparent text-sm font-semibold text-white focus:outline-none cursor-pointer truncate"
+                className="w-full bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer truncate"
               >
                 <option value="" disabled className="bg-slate-900 text-slate-400">
                   Select a candidate to audit...
@@ -1385,7 +1401,7 @@ export function EvaluationView({
                               </button>
                             </div>
 
-                            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-amber-500/30 text-amber-100 text-xs sm:text-sm italic font-serif leading-relaxed shadow-inner">
+                            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-amber-500/30 text-amber-950 dark:text-amber-100 text-xs sm:text-sm italic font-serif leading-relaxed shadow-inner">
                               &ldquo;{reqMeta.citation}&rdquo;
                             </div>
                           </div>
@@ -1404,7 +1420,7 @@ export function EvaluationView({
                             <div className="flex items-center gap-2">
                               <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                               <span>
-                                <strong className="text-cyan-300">Transferable Competency Detected:</strong> Candidate demonstrated proficiency with <strong className="text-white font-mono">{rm.transferable_skill}</strong>.
+                                <strong className="text-cyan-300">Transferable Competency Detected:</strong> Candidate demonstrated proficiency with <strong className="text-cyan-950 dark:text-white font-mono">{rm.transferable_skill}</strong>.
                               </span>
                             </div>
                             <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
@@ -1516,7 +1532,7 @@ export function EvaluationView({
                                   <div className="flex items-start justify-between gap-3">
                                     <div
                                       className={`text-xs sm:text-sm italic font-sans leading-relaxed ${
-                                        isSelected ? "text-amber-100 font-semibold" : "text-slate-200"
+                                        isSelected ? "text-amber-950 dark:text-amber-100 font-semibold" : "text-slate-200"
                                       }`}
                                     >
                                       &ldquo;{c.quote}&rdquo;

@@ -406,6 +406,164 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------------------------------------------------------------------------
+# Dynamic Skin Theme Engine
+# ---------------------------------------------------------------------------
+if "app_theme" not in st.session_state:
+    st.session_state["app_theme"] = "default"
+app_theme = st.session_state.get("app_theme", "default")
+
+if app_theme == "dark":
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #181b20 !important;
+            background: #181b20 !important;
+            color: #f1f4f8 !important;
+        }
+        .stApp::before { display: none !important; }
+        section[data-testid="stSidebar"] {
+            background: #1c1f26 !important;
+            border-right: 1px solid #343a47 !important;
+        }
+        .page-header { border-bottom: 1px solid #343a47 !important; }
+        .page-title { color: #f1f4f8 !important; text-shadow: none !important; }
+        .page-subtitle { color: #9da8bc !important; }
+        h1, h2, h3, h4 { color: #f1f4f8 !important; text-shadow: none !important; }
+        p, [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li { color: #cad2df !important; }
+        [data-testid="stWidgetLabel"] p, label { color: #e3e8f0 !important; }
+        .app-card {
+            background: #222630 !important;
+            border: 1px solid #343a47 !important;
+            border-radius: 5px !important;
+            box-shadow: none !important;
+        }
+        .app-card:hover { border-color: #454d5d !important; }
+        .app-card-title { color: #9da8bc !important; text-shadow: none !important; }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea,
+        div[data-baseweb="select"] > div,
+        div[data-testid="stFileUploader"] section {
+            border: 1px solid #343a47 !important;
+            border-radius: 4px !important;
+            background-color: #1a1d24 !important;
+            color: #f1f4f8 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+elif app_theme == "light":
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #f8fafc !important;
+            background: #f8fafc !important;
+            color: #0f172a !important;
+        }
+        .stApp::before { display: none !important; }
+        section[data-testid="stSidebar"] {
+            background: #ffffff !important;
+            border-right: 1px solid #e2e8f0 !important;
+        }
+        .page-header { border-bottom: 1px solid #e2e8f0 !important; }
+        .page-title { color: #0f172a !important; text-shadow: none !important; }
+        .page-subtitle { color: #475569 !important; }
+        h1, h2, h3, h4 { color: #0f172a !important; text-shadow: none !important; }
+        p, [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li { color: #1e293b !important; }
+        [data-testid="stWidgetLabel"] p, label { color: #0f172a !important; }
+        .app-card {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 6px !important;
+            box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05) !important;
+            color: #0f172a !important;
+        }
+        .app-card:hover { border-color: #cbd5e1 !important; }
+        .app-card-title { color: #475569 !important; text-shadow: none !important; }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea,
+        div[data-baseweb="select"] > div,
+        div[data-testid="stFileUploader"] section {
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 4px !important;
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+        }
+        [data-testid="stMetricValue"] {
+            color: #0f172a !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stMetricLabel"] {
+            color: #64748b !important;
+        }
+        .badge-must {
+            background: #eff6ff !important;
+            color: #1d4ed8 !important;
+            border: 1px solid #bfdbfe !important;
+            box-shadow: none !important;
+        }
+        .badge-nice {
+            background: #f1f5f9 !important;
+            color: #475569 !important;
+            border: 1px solid #cbd5e1 !important;
+            box-shadow: none !important;
+        }
+        .badge-soft {
+            background: #faf5ff !important;
+            color: #6d28d9 !important;
+            border: 1px solid #e9d5ff !important;
+            box-shadow: none !important;
+        }
+        .badge-met, .badge-verified {
+            background: #ecfdf5 !important;
+            color: #15803d !important;
+            border: 1px solid #a7f3d0 !important;
+            box-shadow: none !important;
+        }
+        .badge-partial, .badge-unverified {
+            background: #fffbeb !important;
+            color: #92400e !important;
+            border: 1px solid #fde68a !important;
+            box-shadow: none !important;
+        }
+        .badge-gap {
+            background: #fef2f2 !important;
+            color: #b91c1c !important;
+            border: 1px solid #fecaca !important;
+            box-shadow: none !important;
+        }
+        .wf-item {
+            background: #f8fafc !important;
+            border: 1px solid #e2e8f0 !important;
+            box-shadow: none !important;
+        }
+        .wf-item:hover {
+            background: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+        }
+        .wf-title {
+            color: #0f172a !important;
+        }
+        .citation-block {
+            background: #fffbeb !important;
+            border-left: 3px solid #f59e0b !important;
+            color: #92400e !important;
+            box-shadow: none !important;
+        }
+        .tag-pill {
+            background: #eff6ff !important;
+            border: 1px solid #bfdbfe !important;
+            color: #1d4ed8 !important;
+            box-shadow: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 api_client = BackendAPIClient()
 
 
@@ -1511,6 +1669,39 @@ with tab_settings:
         """,
         unsafe_allow_html=True,
     )
+
+    # -----------------------------------------------------------------------
+    # Interface Skin & Appearance Selector
+    # -----------------------------------------------------------------------
+    current_skin = st.session_state.get("app_theme", "default")
+    skin_options = ["Default (Obsidian Midnight)", "Dark Mode (Graphite & Slate)", "Light Mode (Clean Editorial)"]
+    skin_idx = 0 if current_skin == "default" else (1 if current_skin == "dark" else 2)
+
+    st.markdown(
+        """
+        <div class="app-card" style="margin-bottom: 1.25rem;">
+            <div class="app-card-title">Interface Skin & Workspace Appearance</div>
+            <div style="font-size: 0.88rem; margin-bottom: 0.75rem; opacity: 0.85;">
+                Select active interface skin. Choose between the signature Obsidian look, a balanced Graphite Dark mode (neutral gray and dark gray, not black), or a crisp Clean Light editorial theme. Box corner radiuses are sharpened for enhanced workstation focus.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col_skin, _ = st.columns([3, 1])
+    with col_skin:
+        selected_skin_label = st.radio(
+            "Active Interface Skin",
+            options=skin_options,
+            index=skin_idx,
+            horizontal=True,
+            key="interface_skin_selector_radio",
+            label_visibility="collapsed",
+        )
+        new_skin_key = "default" if "Default" in selected_skin_label else ("dark" if "Dark" in selected_skin_label else "light")
+        if new_skin_key != current_skin:
+            st.session_state["app_theme"] = new_skin_key
+            st.rerun()
 
     try:
         backend_settings = api_client.get_llm_settings()

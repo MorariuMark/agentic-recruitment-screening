@@ -335,6 +335,25 @@ export interface FallbackHierarchyItem {
   rate_limits?: string | null;
 }
 
+export interface HardwareProfile {
+  ram_total_gb: number;
+  ram_avail_gb: number;
+  gpus: Array<{
+    name: string;
+    vram_total_mb: number;
+    vram_free_mb: number;
+    vram_total_gb: number;
+  }>;
+  recommended_context_window: number;
+  recommended_options: number[];
+  recommendation_reason: string;
+  current_settings: {
+    context_window: number;
+    rolling_context: boolean;
+    thinking_enabled: boolean;
+  };
+}
+
 export interface LLMSettings {
   active_provider: string;
   active_model: string;
@@ -352,6 +371,10 @@ export interface LLMSettings {
     to_model: string;
     error?: string;
   } | null;
+  local_context_window?: number;
+  local_rolling_context?: boolean;
+  local_thinking_enabled?: boolean;
+  hardware_profile?: HardwareProfile | null;
 }
 
 export interface RequirementComparisonCell {

@@ -247,7 +247,7 @@ ${interviewPlan.questions
               <select
                 value={activeJobId || ""}
                 onChange={(e) => handleSelectJobChange(e.target.value)}
-                className="w-full bg-transparent text-sm font-semibold text-white focus:outline-none cursor-pointer truncate"
+                className="w-full bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer truncate"
               >
                 {jobs.map((job) => (
                   <option key={job.id} value={job.id} className="bg-slate-900 text-slate-100">
@@ -271,7 +271,7 @@ ${interviewPlan.questions
               <select
                 value={activeCandidateId || ""}
                 onChange={(e) => handleSelectCandidateChange(e.target.value)}
-                className="w-full bg-transparent text-sm font-semibold text-white focus:outline-none cursor-pointer truncate"
+                className="w-full bg-transparent text-sm font-semibold text-slate-100 focus:outline-none cursor-pointer truncate"
               >
                 <option value="" disabled className="bg-slate-900 text-slate-400">
                   Select candidate to interview...
@@ -499,7 +499,7 @@ ${interviewPlan.questions
                             <HelpCircle className="w-3.5 h-3.5 text-emerald-400" />
                             <span>STAR Evaluation Rubric (What Good Looks Like)</span>
                           </div>
-                          <p className="text-xs text-emerald-100/90 leading-relaxed font-sans">
+                          <p className="text-xs text-emerald-950 dark:text-emerald-100/90 leading-relaxed font-sans">
                             {q.expected_answer_rubric}
                           </p>
                         </div>

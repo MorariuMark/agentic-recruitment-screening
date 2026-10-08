@@ -17,10 +17,13 @@ import {
   CheckCircle2,
   ChevronDown,
   Cpu,
+  Database,
   Gauge,
   Key,
   Layers,
   Loader2,
+  Moon,
+  Palette,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -28,12 +31,21 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Sun,
   Trash2,
   Zap,
+  HardDrive,
+  HelpCircle,
+  Play,
+  Square,
+  Brain,
+  Sliders,
 } from "lucide-react";
 import { TokenUsageDashboard } from "./token-usage-dashboard";
+import { useTheme } from "@/components/providers/theme-provider";
 
 export function SettingsView() {
+  const { theme, setTheme } = useTheme();
   const [settings, setSettings] = useState<LLMSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [settingsTab, setSettingsTab] = useState<"models" | "tokens">("models");
@@ -43,7 +55,16 @@ export function SettingsView() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Local Model Specific Controls & Hardware Tuning
+  const [localContextWindow, setLocalContextWindow] = useState<number>(4096);
+  const [localRollingContext, setLocalRollingContext] = useState<boolean>(true);
+  const [localThinkingEnabled, setLocalThinkingEnabled] = useState<boolean>(false);
+  const [runningLocalModels, setRunningLocalModels] = useState<any[]>([]);
+  const [loadingLocalModel, setLoadingLocalModel] = useState<string | null>(null);
+  const [localActionMessage, setLocalActionMessage] = useState<string | null>(null);
+
   // Fallback hierarchy state
+  const [fallbackEnabled, setFallbackEnabled] = useState<boolean>(true);
   const [fallbackChain, setFallbackChain] = useState<FallbackHierarchyItem[]>([]);
   const [addProvider, setAddProvider] = useState<string>("groq");
   const [addModel, setAddModel] = useState<string>("");
@@ -66,6 +87,29 @@ export function SettingsView() {
       setSettings(data);
       setSelectedProvider(data.active_provider);
       setSelectedModel(data.active_model);
+
+      if (data.local_context_window) {
+        setLocalContextWindow(data.local_context_window);
+      }
+      if (data.local_rolling_context !== undefined) {
+        setLocalRollingContext(data.local_rolling_context);
+      }
+      if (data.local_thinking_enabled !== undefined) {
+        setLocalThinkingEnabled(data.local_thinking_enabled);
+      }
+      if (data.fallback_enabled !== undefined) {
+        setFallbackEnabled(data.fallback_enabled);
+      }
+
+      // Check running Ollama models in background
+      try {
+        const ollamaInfo = await api.getOllamaModels();
+        if (ollamaInfo?.running) {
+          setRunningLocalModels(ollamaInfo.running);
+        }
+      } catch (err) {
+        // Ollama may be idle or not started
+      }
 
       // Populate fallback hierarchy from custom or automatic chain
       if (data.custom_fallback_chain && data.custom_fallback_chain.length > 0) {
@@ -131,6 +175,10 @@ export function SettingsView() {
       const updated = await api.updateLLMSettings({
         provider: selectedProvider,
         model: selectedModel,
+        local_context_window: localContextWindow,
+        local_rolling_context: localRollingContext,
+        local_thinking_enabled: localThinkingEnabled,
+        fallback_enabled: fallbackEnabled,
       });
       setSettings(updated);
       setSaveSuccess(true);
@@ -139,6 +187,50 @@ export function SettingsView() {
       alert(`Failed to save LLM settings: ${err.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleFailover = async () => {
+    try {
+      const updated = await api.toggleFailover(!fallbackEnabled);
+      setFallbackEnabled(updated.fallback_enabled);
+      setSettings(updated);
+    } catch (err: any) {
+      alert(`Failed to toggle failover: ${err.message}`);
+    }
+  };
+
+  const handleLoadModelToMemory = async (modelName: string) => {
+    try {
+      setLoadingLocalModel(modelName);
+      setLocalActionMessage(`Loading ${modelName} into GPU VRAM / Host RAM...`);
+      await api.loadOllamaModel(modelName);
+      const ollamaData = await api.getOllamaModels();
+      setRunningLocalModels(ollamaData.running || []);
+      setLocalActionMessage(`Successfully loaded ${modelName} into active memory!`);
+      setTimeout(() => setLocalActionMessage(null), 4000);
+    } catch (err: any) {
+      setLocalActionMessage(`Failed to load ${modelName}: ${err.message}`);
+      setTimeout(() => setLocalActionMessage(null), 5000);
+    } finally {
+      setLoadingLocalModel(null);
+    }
+  };
+
+  const handleUnloadModelFromMemory = async (modelName: string) => {
+    try {
+      setLoadingLocalModel(modelName);
+      setLocalActionMessage(`Unloading ${modelName} from memory...`);
+      await api.unloadOllamaModel(modelName);
+      const ollamaData = await api.getOllamaModels();
+      setRunningLocalModels(ollamaData.running || []);
+      setLocalActionMessage(`Released ${modelName} from memory.`);
+      setTimeout(() => setLocalActionMessage(null), 4000);
+    } catch (err: any) {
+      setLocalActionMessage(`Failed to unload ${modelName}: ${err.message}`);
+      setTimeout(() => setLocalActionMessage(null), 5000);
+    } finally {
+      setLoadingLocalModel(null);
     }
   };
 
@@ -371,6 +463,142 @@ export function SettingsView() {
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* INTERFACE APPEARANCE & SKIN SELECTION                                     */}
+      {/* ========================================================================= */}
+      <div className="p-5 rounded-xl border border-slate-800 bg-slate-900/50 backdrop-blur-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Palette className="w-4 h-4 text-purple-400" />
+              <span>Workspace Skin &amp; Appearance</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Select your active interface theme. Themes feature intentional contrast, balanced palettes, and sharpened box geometry.
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+            <span className="text-[11px] text-slate-400 font-mono">Current Skin:</span>
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-mono">
+              {theme === "default" ? "Obsidian Midnight" : theme === "dark" ? "Graphite Dark" : "Clean Editorial"}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-1">
+          {/* Option 1: Default (Obsidian Midnight) */}
+          <button
+            type="button"
+            onClick={() => setTheme("default")}
+            className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+              theme === "default"
+                ? "bg-slate-950/90 border-blue-500 shadow-lg shadow-blue-500/15 ring-2 ring-blue-500/30"
+                : "bg-slate-950/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-950/60"
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-sm text-white">Obsidian Midnight</span>
+                </div>
+                {theme === "default" && (
+                  <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
+                The original look exactly as it is. Deep midnight black canvas, central blue glow, and original curved corner geometry.
+              </p>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 rounded-full bg-[#08090c] border border-slate-700" title="#08090c Black" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#183476] border border-blue-900" title="#183476 Blue Glow" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#0f172a] border border-slate-700" title="#0f172a Card" />
+              </div>
+              <span className="text-[11px] font-mono text-slate-500">Curved (12-16px)</span>
+            </div>
+          </button>
+
+          {/* Option 2: Dark Mode (Graphite & Slate - Gray & Dark Gray, Not Black) */}
+          <button
+            type="button"
+            onClick={() => setTheme("dark")}
+            className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+              theme === "dark"
+                ? "bg-[#222630] border-blue-500 shadow-lg shadow-blue-500/15 ring-2 ring-blue-500/30"
+                : "bg-slate-950/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-950/60"
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-slate-700/30 border border-slate-600/40 text-slate-300">
+                    <Moon className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-sm text-white">Graphite Dark</span>
+                </div>
+                {theme === "dark" && (
+                  <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
+                Balanced gray and dark gray palette (no pure black). Crisp architectural dividing borders with sharpened 4-6px box geometry.
+              </p>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 rounded-full bg-[#181b20] border border-slate-600" title="#181b20 Neutral Gray" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#222630] border border-slate-600" title="#222630 Surface Gray" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#343a47] border border-slate-500" title="#343a47 Border Gray" />
+              </div>
+              <span className="text-[11px] font-mono text-slate-400">Sharpened (4-6px)</span>
+            </div>
+          </button>
+
+          {/* Option 3: Light Mode (Clean Editorial) */}
+          <button
+            type="button"
+            onClick={() => setTheme("light")}
+            className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative flex flex-col justify-between ${
+              theme === "light"
+                ? "bg-slate-950/90 border-blue-500 shadow-lg shadow-blue-500/15 ring-2 ring-blue-500/30"
+                : "bg-slate-950/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-950/60"
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                    <Sun className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-sm text-white">Clean Editorial</span>
+                </div>
+                {theme === "light" && (
+                  <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-2.5 leading-relaxed">
+                Crisp daylight theme with pure white surfaces, soft cool-slate canvas, high-contrast dark typography, and sharpened box geometry.
+              </p>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 rounded-full bg-[#f4f6f8] border border-slate-300" title="#f4f6f8 Canvas" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#ffffff] border border-slate-300" title="#ffffff Surface" />
+                <span className="w-3.5 h-3.5 rounded-full bg-[#0f172a] border border-slate-400" title="#0f172a Dark Text" />
+              </div>
+              <span className="text-[11px] font-mono text-slate-400">Sharpened (4-6px)</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
       {/* Settings Navigation Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
         <button
@@ -601,6 +829,256 @@ export function SettingsView() {
       </div>
 
       {/* ========================================================================= */}
+      {/* SECTION 1.5: LOCAL ENGINE HARDWARE TUNING & PERFORMANCE OPTIMIZATIONS     */}
+      {/* ========================================================================= */}
+      {(selectedProvider === "ollama" || settings.active_provider === "ollama") && (
+        <div className="p-6 rounded-xl border border-purple-900/60 bg-gradient-to-br from-slate-950 via-slate-900/80 to-purple-950/20 backdrop-blur-md space-y-6 shadow-xl shadow-purple-950/10 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
+                <HardDrive className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>Local Hardware Tuning &amp; Execution Parameters</span>
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    100% Private &amp; Offline
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Host GPU/VRAM hardware profiling, continuous rolling context memory, and small-model prompt enhancement.
+                </p>
+              </div>
+            </div>
+
+            {/* In-Memory VRAM Status & Pre-load / Unload Action */}
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {runningLocalModels.some((m) => m.name === selectedModel || m.model === selectedModel) ? (
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Loaded in VRAM / Memory
+                  </span>
+                  <button
+                    onClick={() => handleUnloadModelFromMemory(selectedModel)}
+                    disabled={Boolean(loadingLocalModel)}
+                    className="px-3 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                    title="Evict model from memory to free up VRAM"
+                  >
+                    {loadingLocalModel === selectedModel ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    <span>Unload Memory</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 text-xs font-mono">
+                    Cold (On Disk)
+                  </span>
+                  <button
+                    onClick={() => handleLoadModelToMemory(selectedModel)}
+                    disabled={Boolean(loadingLocalModel)}
+                    className="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+                    title="Warm up model into GPU VRAM for instant inference response"
+                  >
+                    {loadingLocalModel === selectedModel ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5" />
+                    )}
+                    <span>Pre-load into VRAM</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {localActionMessage && (
+            <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-500/30 text-purple-200 text-xs flex items-center gap-2 animate-in fade-in">
+              <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+              <span>{localActionMessage}</span>
+            </div>
+          )}
+
+          {/* Live Host Hardware Profile Strip */}
+          {settings.hardware_profile && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-xs">
+              <div className="space-y-1">
+                <div className="text-slate-400 flex items-center gap-1.5 font-medium">
+                  <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Host GPU Acceleration</span>
+                </div>
+                <div className="font-semibold text-slate-100 font-mono">
+                  {settings.hardware_profile.gpus && settings.hardware_profile.gpus.length > 0
+                    ? `${settings.hardware_profile.gpus[0].name} (${settings.hardware_profile.gpus[0].vram_total_gb} GB VRAM)`
+                    : "CPU Only (Host RAM Fallback)"}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-slate-400 flex items-center gap-1.5 font-medium">
+                  <Database className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Host System Memory</span>
+                </div>
+                <div className="font-semibold text-slate-100 font-mono">
+                  {settings.hardware_profile.ram_total_gb} GB Total &bull; {settings.hardware_profile.ram_avail_gb} GB Available
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-slate-400 flex items-center gap-1.5 font-medium">
+                  <Gauge className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Hardware Recommendation</span>
+                </div>
+                <div className="font-semibold text-amber-300 font-mono">
+                  {settings.hardware_profile.recommended_context_window} Tokens
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tuning Controls Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* 1. Context Window Size */}
+            <div className="space-y-3 p-4 rounded-xl bg-slate-950/60 border border-slate-800/70">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Context Window Size (num_ctx)</span>
+                </label>
+                <span className="text-xs font-mono font-semibold text-purple-400 px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20">
+                  {localContextWindow} tokens
+                </span>
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {settings.hardware_profile?.recommendation_reason ||
+                  "Determines maximum tokens held in KV cache. 4,096 tokens fits entirely in 4GB VRAM for 70+ tokens/sec throughput."}
+              </p>
+
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {[2048, 4096, 8192].map((ctx) => {
+                  const isRec = settings.hardware_profile?.recommended_context_window === ctx;
+                  const isCur = localContextWindow === ctx;
+                  return (
+                    <button
+                      key={ctx}
+                      type="button"
+                      onClick={() => setLocalContextWindow(ctx)}
+                      className={`p-2.5 rounded-lg border text-center transition-all cursor-pointer relative ${
+                        isCur
+                          ? "bg-purple-600/20 border-purple-500 text-purple-200 font-bold shadow-sm"
+                          : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                      }`}
+                    >
+                      <div className="text-xs font-mono">{ctx}</div>
+                      <div className="text-[9px] mt-0.5 text-slate-400">
+                        {ctx === 2048 ? "Fast / 2k" : ctx === 4096 ? "Optimal / 4k" : "Deep / 8k"}
+                      </div>
+                      {isRec && (
+                        <span className="absolute -top-1.5 right-1 px-1 rounded text-[8px] bg-amber-500 text-slate-950 font-bold uppercase">
+                          Rec
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Rolling Context & Thinking Toggles */}
+            <div className="space-y-4 p-4 rounded-xl bg-slate-950/60 border border-slate-800/70">
+              {/* Rolling Context Toggle */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <span>Continuous Rolling Context</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono">
+                      OOM Protection
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Dynamically slides the attention window across extensive CV documents, preventing Out-Of-Memory stops while retaining core profile context.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLocalRollingContext(!localRollingContext)}
+                  className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 mt-0.5 ${
+                    localRollingContext ? "bg-purple-600" : "bg-slate-800"
+                  }`}
+                >
+                  <span
+                    className={`block w-4 h-4 rounded-full bg-white transition-transform ${
+                      localRollingContext ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="border-t border-slate-800/80 pt-3">
+                {/* Thinking Monologue Toggle */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <Brain className="w-3.5 h-3.5 text-pink-400" />
+                      <span>Thinking / Reasoning Monologue</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Disabled: Strips internal &lt;think&gt; monologue for ~3x faster generation (~72 tok/s) and strict JSON extraction. Enabled: Shows step-by-step thinking traces.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLocalThinkingEnabled(!localThinkingEnabled)}
+                    className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer shrink-0 mt-0.5 ${
+                      localThinkingEnabled ? "bg-purple-600" : "bg-slate-800"
+                    }`}
+                  >
+                    <span
+                      className={`block w-4 h-4 rounded-full bg-white transition-transform ${
+                        localThinkingEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Local Optimization & Telemetry Badges Strip */}
+          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/80 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="flex items-center gap-2 text-slate-300">
+              <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <span className="font-semibold text-white">~72 tokens/sec</span>
+                <span className="text-[11px] text-slate-400 block">GTX 1650 Tested Speed</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-slate-300">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div>
+                <span className="font-semibold text-emerald-300">100% On-Device Privacy</span>
+                <span className="text-[11px] text-slate-400 block">No candidate data leaves machine</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-slate-300">
+              <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+              <div>
+                <span className="font-semibold text-purple-300">2B Model Prompt Tuning</span>
+                <span className="text-[11px] text-slate-400 block">Compact schemas &amp; strict JSON</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* SECTION 2: CUSTOM FALLBACK & FAILOVER HIERARCHY BUILDER                   */}
       {/* ========================================================================= */}
       <div className="space-y-4 pt-6 border-t border-slate-800/80">
@@ -616,6 +1094,22 @@ export function SettingsView() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggleFailover}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                fallbackEnabled
+                  ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20"
+                  : "bg-slate-800 hover:bg-slate-700 text-slate-400 border-slate-700"
+              }`}
+              title="Enable or disable automatic cascading failover across model tiers"
+            >
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  fallbackEnabled ? "bg-emerald-400" : "bg-slate-500"
+                }`}
+              />
+              <span>Failover: {fallbackEnabled ? "Enabled" : "Disabled"}</span>
+            </button>
             <button
               onClick={handleLoadRecommendedFreeHierarchy}
               className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5"

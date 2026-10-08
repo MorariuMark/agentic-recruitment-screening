@@ -37,3 +37,21 @@ export function getRecommendationBadge(rec: string): { label: string; className:
       };
   }
 }
+
+export function downloadJsonFile(data: any, defaultFilename: string): void {
+  try {
+    if (typeof window === "undefined") return;
+    const jsonStr = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFilename.endsWith(".json") ? defaultFilename : `${defaultFilename}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("Failed to download JSON file:", err);
+  }
+}

@@ -93,7 +93,7 @@ export function Sidebar({
                 onClick={() => onTabChange(item.id)}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer ${
                   isActive
-                    ? "bg-blue-600/10 border border-blue-500/30 text-white font-medium shadow-sm"
+                    ? "bg-blue-600/10 border border-blue-500/30 text-blue-700 dark:text-white font-semibold shadow-sm"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
                 }`}
               >
@@ -135,7 +135,7 @@ export function Sidebar({
             onClick={() => onTabChange("settings")}
             className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer border ${
               activeTab === "settings"
-                ? "bg-blue-600/15 border-blue-500/40 text-blue-300 font-semibold shadow-sm"
+                ? "bg-blue-600/15 border-blue-500/40 text-blue-700 dark:text-blue-300 font-semibold shadow-sm"
                 : "bg-slate-900/60 hover:bg-slate-900 text-slate-400 hover:text-slate-200 border-slate-800/80"
             }`}
             title="Model & Agent Configuration"

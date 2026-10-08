@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   ExternalLink,
   FileText,
   Highlighter,
@@ -21,6 +22,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { downloadJsonFile } from "@/lib/utils";
 
 interface ParsedJdViewerProps {
   job: JobDescription | null;
@@ -187,6 +189,22 @@ export function ParsedJdViewer({
             title="Copy full JD text"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+          </button>
+
+          {/* Download JSON */}
+          <button
+            onClick={() => {
+              if (!job) return;
+              const jobTitle = (job.title || job.id || "requisition")
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, "_");
+              downloadJsonFile(job, `job_${jobTitle}_extracted.json`);
+            }}
+            disabled={!job}
+            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-blue-400 text-xs transition-colors disabled:opacity-40"
+            title="Download extracted job specification JSON"
+          >
+            <Download className="w-4 h-4" />
           </button>
 
           {onClose && (
