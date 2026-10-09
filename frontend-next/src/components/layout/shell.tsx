@@ -204,7 +204,7 @@ export function Shell({ children }: ShellProps) {
           onToggleSidebar={toggleSidebar}
         />
 
-        <main className="flex-1 overflow-y-auto p-6 bg-slate-950">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 2xl:p-8 bg-slate-950">
           {children({
             activeTab,
             setActiveTab,

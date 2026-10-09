@@ -280,6 +280,12 @@ export function ModelSelector({
               <span className="font-mono text-purple-400">100% Offline</span>
             </div>
           )}
+          {selectedProviderTab === "lmstudio" && (
+            <div className="px-2 py-1.5 rounded-lg bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 flex items-center justify-between">
+              <span>LM Studio Local Server (Port 1234)</span>
+              <span className="font-mono text-blue-400">Local Privacy</span>
+            </div>
+          )}
 
           <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
             {filteredModels.length === 0 ? (

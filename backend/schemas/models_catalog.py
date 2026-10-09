@@ -490,6 +490,29 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
             ),
         ],
     ),
+    "lmstudio": ProviderInfo(
+        id="lmstudio",
+        name="LM Studio (Local Server)",
+        icon="💻",
+        description="Local OpenAI-compatible inference server running on your machine via LM Studio.",
+        api_key_url="https://lmstudio.ai/",
+        default_model="default",
+        default_base_url="http://localhost:1234/v1",
+        env_key_var="LMSTUDIO_BASE_URL",
+        models=[
+            ModelInfo(
+                id="default",
+                name="LM Studio Active Model",
+                provider="lmstudio",
+                free=True,
+                rate_limits="Unlimited (Local GPU/CPU)",
+                context_window="32k-128k (LM Studio)",
+                category="Local LM Studio",
+                compatibility="OpenAI JSON Object Mode",
+                description="Currently active model loaded in local LM Studio server.",
+            )
+        ],
+    ),
 }
 
 
@@ -498,44 +521,32 @@ _LOCAL_OLLAMA_CACHE_TIME: float = 0.0
 _LOCAL_OLLAMA_CACHE_TTL: float = 60.0
 
 
+def sync_all_local_models(force: bool = False) -> Dict[str, Any]:
+    """
+    Scans for local AI models across Ollama, LM Studio (server & disk),
+    Jan, Hugging Face cache, and common directories, updating the catalog.
+    """
+    try:
+        from backend.services.local_model_scanner import get_local_model_scanner
+        scanner = get_local_model_scanner()
+        return scanner.scan_all(force=force)
+    except Exception as e:
+        return {"success": False, "error": str(e), "total_found": 0}
+
+
 def sync_local_ollama_models(force: bool = False) -> List[ModelInfo]:
-    """Syncs the actual locally installed Ollama models from the running Ollama instance with 60s TTL."""
+    """Syncs local Ollama and local models with the catalog with 60s TTL."""
     global _LOCAL_OLLAMA_MODELS_CACHE, _LOCAL_OLLAMA_CACHE_TIME
     now = time.time()
     if not force and _LOCAL_OLLAMA_MODELS_CACHE is not None and (now - _LOCAL_OLLAMA_CACHE_TIME < _LOCAL_OLLAMA_CACHE_TTL):
         return _LOCAL_OLLAMA_MODELS_CACHE
 
     try:
-        from backend.config import settings
-        from backend.services.ollama_service import OllamaService
-        svc = OllamaService()
-        installed = svc.list_installed_models(force=force)
-        if installed:
-            models = []
-            ctx_display = f"{getattr(settings, 'local_context_window', 4096) // 1024}k"
-            for m in installed:
-                # Format a friendly clean display name
-                clean_name = m["name"].replace(":latest", "").replace("registry.ollama.ai/library/", "")
-                source_badge = f" [{m.get('source', 'Local')}]" if "Auto-Imported" in m.get("source", "") else ""
-                models.append(
-                    ModelInfo(
-                        id=m["name"],
-                        name=f"{clean_name}{source_badge}",
-                        provider="ollama",
-                        free=True,
-                        rate_limits="Unlimited (Local GPU/CPU)",
-                        context_window=f"{ctx_display} (Local Config)",
-                        category=f"Local {m.get('parameter_size', '2B-8B')}",
-                        compatibility="Native Ollama JSON Mode",
-                        description=f"Installed local model ({m.get('size_gb', 0)} GB, {m.get('family', 'GGUF')}). Zero data egress.",
-                    )
-                )
-            CATALOG_PROVIDERS["ollama"].models = models
-            if models and not getattr(settings, "ollama_model", None):
-                CATALOG_PROVIDERS["ollama"].default_model = models[0].id
-            _LOCAL_OLLAMA_MODELS_CACHE = models
-            _LOCAL_OLLAMA_CACHE_TIME = now
-            return models
+        sync_all_local_models(force=force)
+        models = CATALOG_PROVIDERS.get("ollama", {}).models or []
+        _LOCAL_OLLAMA_MODELS_CACHE = models
+        _LOCAL_OLLAMA_CACHE_TIME = now
+        return models
     except Exception:
         pass
     return CATALOG_PROVIDERS["ollama"].models
@@ -543,15 +554,16 @@ def sync_local_ollama_models(force: bool = False) -> List[ModelInfo]:
 
 def get_providers_catalog() -> Dict[str, ProviderInfo]:
     """Returns all registered LLM providers with their metadata and models."""
-    sync_local_ollama_models()
+    sync_all_local_models()
     return CATALOG_PROVIDERS
 
 
 def get_models_for_provider(provider_id: str) -> List[ModelInfo]:
     """Returns the list of available models for a given provider."""
-    if provider_id.lower() == "ollama":
-        sync_local_ollama_models()
-    provider = CATALOG_PROVIDERS.get(provider_id.lower())
+    p_id = provider_id.lower()
+    if p_id in ("ollama", "lmstudio"):
+        sync_all_local_models()
+    provider = CATALOG_PROVIDERS.get(p_id)
     if not provider:
         return []
     return provider.models

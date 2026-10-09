@@ -555,7 +555,7 @@ export function EvaluationView({
   });
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6 max-w-7xl 2xl:max-w-[1700px] mx-auto">
       {/* ========================================================================= */}
       {/* 1. TOP SELECTION & SCOPE TOOLBAR (Candidate & JD Switcher)                */}
       {/* ========================================================================= */}

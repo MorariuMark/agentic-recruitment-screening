@@ -10,6 +10,7 @@ import {
   Users2,
 } from "lucide-react";
 import { ModelSelector } from "./model-selector";
+import { useTheme } from "@/components/providers/theme-provider";
 
 export type NavTab = "pipeline" | "requisitions" | "comparison" | "evaluation" | "interview" | "settings";
 
@@ -31,6 +32,8 @@ export function Sidebar({
   onResetSession,
   isOpen = true,
 }: SidebarProps) {
+  const { theme, setTheme } = useTheme();
+
   if (!isOpen) {
     return null;
   }
@@ -128,8 +131,60 @@ export function Sidebar({
         </nav>
       </div>
 
-      {/* Bottom Action Bar: Settings & Reset Session */}
-      <div className="p-3 border-t border-slate-900">
+      {/* Appearance Modes Selector (Night, Blue, Light) & Bottom Action Bar */}
+      <div className="p-3 border-t border-slate-900 space-y-2.5">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500 font-mono">
+            Theme
+          </span>
+          <div className="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-full border border-slate-800/80">
+            {/* Night mode */}
+            <button
+              type="button"
+              onClick={() => setTheme("dark")}
+              className={`p-1.5 rounded-full transition-all cursor-pointer flex items-center justify-center ${
+                theme === "dark"
+                  ? "bg-slate-700/80 ring-2 ring-slate-400 shadow-sm"
+                  : "hover:bg-slate-800 opacity-70 hover:opacity-100"
+              }`}
+              title="Night Mode (Graphite & Slate)"
+              aria-label="Night Mode"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shadow-[0_0_6px_rgba(148,163,184,0.5)] block" />
+            </button>
+
+            {/* Blue mode (Default obsidian & cobalt) */}
+            <button
+              type="button"
+              onClick={() => setTheme("default")}
+              className={`p-1.5 rounded-full transition-all cursor-pointer flex items-center justify-center ${
+                theme === "default"
+                  ? "bg-blue-600/30 ring-2 ring-blue-500 shadow-sm"
+                  : "hover:bg-slate-800 opacity-70 hover:opacity-100"
+              }`}
+              title="Blue Mode (Obsidian & Blue)"
+              aria-label="Blue Mode"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.6)] block" />
+            </button>
+
+            {/* Light mode */}
+            <button
+              type="button"
+              onClick={() => setTheme("light")}
+              className={`p-1.5 rounded-full transition-all cursor-pointer flex items-center justify-center ${
+                theme === "light"
+                  ? "bg-amber-500/20 ring-2 ring-amber-400 shadow-sm"
+                  : "hover:bg-slate-800 opacity-70 hover:opacity-100"
+              }`}
+              title="Light Mode (Clean Editorial)"
+              aria-label="Light Mode"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.5)] block" />
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onTabChange("settings")}

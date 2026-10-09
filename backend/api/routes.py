@@ -375,6 +375,18 @@ class LLMTestResponse(BaseModel):
     error_message: Optional[str] = Field(default=None, description="Error details if failed")
 
 
+class LocalModelScanRequest(BaseModel):
+    """Request payload to initiate a local AI model search across Ollama, LM Studio, and filesystem."""
+    auto_import_to_ollama: bool = Field(default=False, description="Automatically import found GGUF files into Ollama")
+    force: bool = Field(default=True, description="Bypass cache and force deep scan")
+
+
+class LocalModelImportRequest(BaseModel):
+    """Request payload to register a specific local GGUF model into Ollama."""
+    full_path: str = Field(description="Absolute file path to the .gguf model on disk")
+    model_tag: str = Field(description="Desired Ollama model tag name (e.g. minicpm:2b, llama3:8b)")
+
+
 class OllamaModelActionRequest(BaseModel):
     """Request payload to load or unload a local Ollama model in memory."""
     model: str = Field(description="Ollama model tag/name (e.g. 'qwen3.5:2b-q4_K_M')")
@@ -747,6 +759,7 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
         _EVALUATION_STORE[result.id] = result
         return result
     except Exception as e:
+        logger.exception(f"Error executing semantic matching for candidate {request.candidate_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing semantic matching: {str(e)}",
@@ -1386,6 +1399,8 @@ def _get_active_model_for_provider(provider: str) -> str:
         return settings.gemini_model
     elif prov == "ollama":
         return settings.ollama_model
+    elif prov == "lmstudio":
+        return getattr(settings, "lmstudio_model", "default")
     return "default"
 
 
@@ -1432,9 +1447,11 @@ async def get_llm_settings() -> LLMSettingsResponse:
 
     # Sync and detect local models automatically without blocking event loop
     try:
-        from backend.schemas.models_catalog import sync_local_ollama_models
-        await asyncio.to_thread(sync_local_ollama_models)
+        from backend.schemas.models_catalog import sync_all_local_models
+        await asyncio.to_thread(sync_all_local_models)
         catalog_dict["ollama"] = CATALOG_PROVIDERS["ollama"].model_dump()
+        if "lmstudio" in CATALOG_PROVIDERS:
+            catalog_dict["lmstudio"] = CATALOG_PROVIDERS["lmstudio"].model_dump()
     except Exception:
         pass
 
@@ -1456,6 +1473,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
             "nvidia_nim": bool(settings.nvidia_nim_api_key),
             "gemini": bool(settings.gemini_api_key),
             "ollama": True,
+            "lmstudio": True,
         },
         fallback_enabled=getattr(settings, "fallback_enabled", True),
         fallback_chain=chain_labels,
@@ -1526,6 +1544,10 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
         settings.ollama_model = payload.model
         if payload.base_url:
             settings.ollama_base_url = payload.base_url.strip()
+    elif prov == "lmstudio":
+        settings.lmstudio_model = payload.model
+        if payload.base_url:
+            settings.lmstudio_base_url = payload.base_url.strip()
 
     from backend.agents.llm_factory import clear_last_fallback_event
     clear_last_fallback_event()
@@ -1747,6 +1769,49 @@ async def unload_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, An
 async def pull_ollama_model(payload: OllamaPullRequest) -> Dict[str, Any]:
     """Downloads model weights to local storage."""
     return _ollama_service.pull_model(model_name=payload.model)
+
+
+# ---------------------------------------------------------------------------
+# Local AI Model Auto-Discovery & Access Endpoints (Ollama, LM Studio, etc.)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/settings/local-models",
+    summary="List all discovered local AI models from Ollama, LM Studio, Jan, and filesystem",
+)
+async def get_local_models(force: bool = False) -> Dict[str, Any]:
+    """Returns detected local models across Ollama, LM Studio, Jan, and local filesystem."""
+    from backend.services.local_model_scanner import get_local_model_scanner
+    scanner = get_local_model_scanner()
+    return await asyncio.to_thread(scanner.scan_all, force=force)
+
+
+@router.post(
+    "/settings/local-models/scan",
+    summary="Automatically search for available local AI models and update platform access",
+)
+async def scan_local_models(payload: Optional[LocalModelScanRequest] = None) -> Dict[str, Any]:
+    """
+    Searches for available local AI models in Ollama, LM Studio, Jan, and common directories,
+    updates the catalog automatically with full inference access, and optionally auto-imports GGUFs into Ollama.
+    """
+    from backend.services.local_model_scanner import get_local_model_scanner
+    scanner = get_local_model_scanner()
+    auto_import = payload.auto_import_to_ollama if payload else False
+    force = payload.force if payload else True
+    return await asyncio.to_thread(scanner.scan_all, force=force, auto_import_to_ollama=auto_import)
+
+
+@router.post(
+    "/settings/local-models/import",
+    summary="Import and register a local GGUF model file into Ollama for immediate inference",
+)
+async def import_local_model_to_ollama(payload: LocalModelImportRequest) -> Dict[str, Any]:
+    """Creates a local Ollama model from a detected GGUF model file path."""
+    res = _ollama_service.auto_import_gguf_to_ollama(payload.full_path, payload.model_tag)
+    if res.get("success"):
+        from backend.services.local_model_scanner import get_local_model_scanner
+        await asyncio.to_thread(get_local_model_scanner().scan_all, force=True)
+    return res
 
 
 # ---------------------------------------------------------------------------

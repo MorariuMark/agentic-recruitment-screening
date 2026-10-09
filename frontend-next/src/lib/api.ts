@@ -13,6 +13,7 @@ import {
   JobDescription,
   JobRequirement,
   LLMSettings,
+  LocalModelScanResult,
   MatchEvaluationResult,
   RequirementMatch,
   TokenUsageAnalytics,
@@ -470,6 +471,33 @@ class ApiClient {
 
   async getHardwareProfile(): Promise<any> {
     return this.request("/api/v1/ollama/hardware");
+  }
+
+  async scanLocalModels(
+    autoImportToOllama: boolean = false,
+    force: boolean = true
+  ): Promise<LocalModelScanResult> {
+    return this.request("/api/v1/settings/local-models/scan", {
+      method: "POST",
+      body: JSON.stringify({
+        auto_import_to_ollama: autoImportToOllama,
+        force: force,
+      }),
+    });
+  }
+
+  async getLocalModels(force: boolean = false): Promise<LocalModelScanResult> {
+    return this.request(`/api/v1/settings/local-models?force=${force}`);
+  }
+
+  async importLocalModelToOllama(fullPath: string, modelTag: string): Promise<any> {
+    return this.request("/api/v1/settings/local-models/import", {
+      method: "POST",
+      body: JSON.stringify({
+        full_path: fullPath,
+        model_tag: modelTag,
+      }),
+    });
   }
 
   async saveFallbackChain(

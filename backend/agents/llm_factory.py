@@ -789,6 +789,114 @@ class OllamaClient(BaseLLMClient):
         return response_model.model_validate(parsed_dict)
 
 
+class LMStudioClient(BaseLLMClient):
+    """
+    Client for local LM Studio instance (or other OpenAI-compatible local engines)
+    running locally on port 1234 with zero data egress and local GPU acceleration.
+    """
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        compatibility_mode: Optional[str] = None,
+    ) -> None:
+        from openai import OpenAI
+
+        raw_url = (base_url or getattr(settings, "lmstudio_base_url", "http://localhost:1234/v1")).rstrip("/")
+        if not raw_url.endswith("/v1"):
+            raw_url = f"{raw_url}/v1"
+        self.base_url = raw_url
+        self.model = model or getattr(settings, "lmstudio_model", "default")
+        self.compatibility_mode = compatibility_mode or settings.compatibility_mode
+
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key="lm-studio",
+            timeout=60.0,
+            max_retries=1,
+        )
+
+    def generate_text(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.1,
+    ) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        t0 = time.perf_counter()
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+        )
+        duration_s = time.perf_counter() - t0
+        content = response.choices[0].message.content or ""
+        self._capture_usage(response, prompt, content)
+        return content
+
+    def generate_structured(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.0,
+    ) -> T:
+        compact_skeleton = json.dumps(_build_compact_json_skeleton(response_model), indent=2)
+        system_content = (
+            f"{system_prompt or ''}\n\n"
+            "You MUST output valid JSON matching the following structure:\n"
+            f"{compact_skeleton}"
+        )
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": prompt},
+        ]
+
+        t0 = time.perf_counter()
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=temperature,
+            )
+        except Exception:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+            )
+
+        duration_s = time.perf_counter() - t0
+        raw_content = response.choices[0].message.content or ""
+        self._capture_usage(response, prompt, raw_content)
+        parsed_dict = clean_and_parse_json(raw_content)
+        return response_model.model_validate(parsed_dict)
+
+    def _capture_usage(self, response: Any, prompt: str, completion: str) -> None:
+        try:
+            from backend.services.token_tracker import TokenTracker
+            tracker = TokenTracker.get_instance()
+            usage = getattr(response, "usage", None)
+            pt = getattr(usage, "prompt_tokens", len(prompt) // 4) if usage else len(prompt) // 4
+            ct = getattr(usage, "completion_tokens", len(completion) // 4) if usage else len(completion) // 4
+            tracker.record_call(
+                provider="lmstudio",
+                model=self.model,
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                latency_ms=0.0,
+                status="success",
+            )
+        except Exception:
+            pass
+
+
 def create_llm_client(
     provider: str,
     model: Optional[str] = None,
@@ -834,10 +942,16 @@ def create_llm_client(
             model=model,
             compatibility_mode=compatibility_mode,
         )
+    elif selected == "lmstudio":
+        return LMStudioClient(
+            base_url=base_url,
+            model=model,
+            compatibility_mode=compatibility_mode,
+        )
     else:
         raise ValueError(
             f"Unsupported LLM provider '{selected}'. "
-            f"Choose 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'."
+            f"Choose 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', or 'lmstudio'."
         )
 
 
@@ -911,6 +1025,8 @@ def _get_fallback_primary_model(prov: str) -> str:
         return "openrouter/free"
     elif prov == "ollama":
         return "qwen3.5:2b-q4_K_M"
+    elif prov == "lmstudio":
+        return getattr(settings, "lmstudio_model", "default") or "default"
     return "default"
 
 

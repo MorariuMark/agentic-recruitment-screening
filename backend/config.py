@@ -16,10 +16,10 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = True
 
-    # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', or 'ollama'
-    llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama"] = Field(
+    # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', or 'lmstudio'
+    llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama", "lmstudio"] = Field(
         default="groq",
-        description="Active LLM backend provider ('agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama')",
+        description="Active LLM backend provider ('agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', 'lmstudio')",
     )
 
     # Global structured output compatibility mode: 'auto', 'json_object', 'schema_prompt'
@@ -118,6 +118,16 @@ class Settings(BaseSettings):
     fallback_enabled: bool = Field(
         default=True,
         description="Enable multi-tier fallback failover to alternate models upon rate limit or failure",
+    )
+
+    # LM Studio & Local OpenAI-compatible Settings
+    lmstudio_base_url: str = Field(
+        default="http://localhost:1234/v1",
+        description="Base URL for local LM Studio OpenAI-compatible endpoint",
+    )
+    lmstudio_model: str = Field(
+        default="default",
+        description="LM Studio model identifier",
     )
 
     # ChromaDB & Embeddings

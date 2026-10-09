@@ -377,6 +377,55 @@ export interface LLMSettings {
   hardware_profile?: HardwareProfile | null;
 }
 
+export interface DiscoveredLocalModel {
+  id: string;
+  name: string;
+  provider: "ollama" | "lmstudio" | string;
+  source: string;
+  size_gb: number;
+  parameter_size?: string;
+  quantization?: string;
+  format?: string;
+  status: "running_in_vram" | "ready" | "installed" | string;
+  is_running?: boolean;
+  can_activate: boolean;
+  full_path?: string;
+  endpoint?: string;
+}
+
+export interface LocalModelScanResult {
+  success: boolean;
+  scanned_at: number;
+  total_found: number;
+  imported_count?: number;
+  providers_detected: {
+    ollama: {
+      running: boolean;
+      version?: string;
+      models_count: number;
+      models: DiscoveredLocalModel[];
+    };
+    lmstudio: {
+      running: boolean;
+      base_url?: string;
+      live_models_count: number;
+      disk_models_count: number;
+      models: DiscoveredLocalModel[];
+    };
+    other_local_servers?: {
+      count: number;
+      models: DiscoveredLocalModel[];
+    };
+    filesystem_gguf?: {
+      count: number;
+      models: DiscoveredLocalModel[];
+    };
+  };
+  all_models: DiscoveredLocalModel[];
+  catalog_updated: boolean;
+  message: string;
+}
+
 export interface RequirementComparisonCell {
   status: "met" | "partial" | "clarification_needed" | "not_met";
   score: number;

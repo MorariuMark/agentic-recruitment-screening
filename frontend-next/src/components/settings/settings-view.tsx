@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import {
   FallbackHierarchyItem,
   LLMSettings,
+  LocalModelScanResult,
+  DiscoveredLocalModel,
   ModelCatalogInfo,
   ProviderCatalogInfo,
 } from "@/types";
@@ -27,6 +29,8 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
+  FolderSearch,
   Server,
   Settings,
   ShieldCheck,
@@ -40,6 +44,7 @@ import {
   Square,
   Brain,
   Sliders,
+  Laptop,
 } from "lucide-react";
 import { TokenUsageDashboard } from "./token-usage-dashboard";
 import { useTheme } from "@/components/providers/theme-provider";
@@ -62,6 +67,12 @@ export function SettingsView() {
   const [runningLocalModels, setRunningLocalModels] = useState<any[]>([]);
   const [loadingLocalModel, setLoadingLocalModel] = useState<string | null>(null);
   const [localActionMessage, setLocalActionMessage] = useState<string | null>(null);
+
+  // Local AI Model Auto-Discovery state
+  const [localScanResult, setLocalScanResult] = useState<LocalModelScanResult | null>(null);
+  const [isScanningLocal, setIsScanningLocal] = useState<boolean>(false);
+  const [autoImportGguf, setAutoImportGguf] = useState<boolean>(false);
+  const [importingModelPath, setImportingModelPath] = useState<string | null>(null);
 
   // Fallback hierarchy state
   const [fallbackEnabled, setFallbackEnabled] = useState<boolean>(true);
@@ -109,6 +120,16 @@ export function SettingsView() {
         }
       } catch (err) {
         // Ollama may be idle or not started
+      }
+
+      // Auto-discover available local models across Ollama, LM Studio, Jan, and disk
+      try {
+        const localScan = await api.getLocalModels(false);
+        if (localScan?.success) {
+          setLocalScanResult(localScan);
+        }
+      } catch (err) {
+        // Local scan silent fallback
       }
 
       // Populate fallback hierarchy from custom or automatic chain
@@ -231,6 +252,69 @@ export function SettingsView() {
       setTimeout(() => setLocalActionMessage(null), 5000);
     } finally {
       setLoadingLocalModel(null);
+    }
+  };
+
+  const handleScanLocalModels = async (force: boolean = true) => {
+    try {
+      setIsScanningLocal(true);
+      setLocalActionMessage("Scanning Ollama, LM Studio (server & disk), Jan, and local folders...");
+      const result = await api.scanLocalModels(autoImportGguf, force);
+      setLocalScanResult(result);
+      setLocalActionMessage(result.message);
+      // Refresh global settings to update catalog with discovered models
+      const data = await api.getLLMSettings();
+      setSettings(data);
+    } catch (err: any) {
+      console.error("Local model scan failed:", err);
+      setLocalActionMessage(`Scan failed: ${err.message}`);
+    } finally {
+      setIsScanningLocal(false);
+      setTimeout(() => setLocalActionMessage(null), 6000);
+    }
+  };
+
+  const handleActivateDiscoveredModel = async (provider: string, modelId: string) => {
+    try {
+      setSaving(true);
+      const updated = await api.updateLLMSettings({
+        provider,
+        model: modelId,
+        local_context_window: localContextWindow,
+        local_rolling_context: localRollingContext,
+        local_thinking_enabled: localThinkingEnabled,
+        fallback_enabled: fallbackEnabled,
+      });
+      setSettings(updated);
+      setSelectedProvider(provider);
+      setSelectedModel(modelId);
+      setSaveSuccess(true);
+      setLocalActionMessage(`Activated '${modelId}' as the primary inference model.`);
+      setTimeout(() => setSaveSuccess(false), 3000);
+      setTimeout(() => setLocalActionMessage(null), 5000);
+    } catch (err: any) {
+      alert(`Failed to activate model: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleImportGgufToOllama = async (fullPath: string, modelTag: string) => {
+    try {
+      setImportingModelPath(fullPath);
+      setLocalActionMessage(`Importing '${modelTag}' into Ollama via Modelfile...`);
+      const res = await api.importLocalModelToOllama(fullPath, modelTag);
+      if (res.success) {
+        setLocalActionMessage(`Successfully imported '${modelTag}' into Ollama!`);
+        await handleScanLocalModels(true);
+      } else {
+        setLocalActionMessage(`Import failed: ${res.message}`);
+      }
+    } catch (err: any) {
+      setLocalActionMessage(`Import failed: ${err.message}`);
+    } finally {
+      setImportingModelPath(null);
+      setTimeout(() => setLocalActionMessage(null), 6000);
     }
   };
 
@@ -423,7 +507,7 @@ export function SettingsView() {
   const addAvailableModels: ModelCatalogInfo[] = addProviderInfo.models || [];
 
   return (
-    <div className="space-y-8 max-w-5xl pb-16">
+    <div className="space-y-8 max-w-7xl 2xl:max-w-[1700px] mx-auto pb-16">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
@@ -829,9 +913,256 @@ export function SettingsView() {
       </div>
 
       {/* ========================================================================= */}
+      {/* SECTION 1.4: AUTONOMOUS LOCAL AI MODEL DISCOVERY (OLLAMA, LM STUDIO & DISK) */}
+      {/* ========================================================================= */}
+      <div className="p-6 rounded-xl border border-cyan-900/60 bg-gradient-to-br from-slate-950 via-slate-900/80 to-cyan-950/20 backdrop-blur-md space-y-6 shadow-xl shadow-cyan-950/10">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <span>Autonomous Local AI Model Discovery</span>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                  Zero Data Egress
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Automatically searches Ollama daemon, LM Studio local server, Jan, Hugging Face cache, and filesystem models, providing instant zero-config execution access.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none px-2.5 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800">
+              <input
+                type="checkbox"
+                checked={autoImportGguf}
+                onChange={(e) => setAutoImportGguf(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0"
+              />
+              <span className="text-slate-300">Auto-Import Disk GGUF to Ollama</span>
+            </label>
+
+            <button
+              onClick={() => handleScanLocalModels(true)}
+              disabled={isScanningLocal}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-cyan-600/20"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isScanningLocal ? "animate-spin" : ""}`} />
+              <span>{isScanningLocal ? "Searching Local Models..." : "Auto-Discover Local Models"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Engine Probing & Detection Status Badges */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
+          {/* 1. Ollama Daemon Status */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-slate-400 font-medium flex items-center gap-1.5">
+                <Server className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Ollama Engine (:11434)</span>
+              </div>
+              <div className="font-semibold text-slate-200">
+                {localScanResult?.providers_detected?.ollama?.running ? (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Running (v{localScanResult.providers_detected.ollama.version || "latest"})
+                  </span>
+                ) : (
+                  <span className="text-slate-500">Service Unreachable</span>
+                )}
+              </div>
+            </div>
+            <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+              {localScanResult?.providers_detected?.ollama?.models_count ?? 0} Models
+            </span>
+          </div>
+
+          {/* 2. LM Studio Server Status */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-slate-400 font-medium flex items-center gap-1.5">
+                <Laptop className="w-3.5 h-3.5 text-blue-400" />
+                <span>LM Studio Server (:1234)</span>
+              </div>
+              <div className="font-semibold text-slate-200">
+                {localScanResult?.providers_detected?.lmstudio?.running ? (
+                  <span className="text-blue-400 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    Live API Active
+                  </span>
+                ) : (
+                  <span className="text-slate-500">Server Offline</span>
+                )}
+              </div>
+            </div>
+            <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-blue-500/10 text-blue-300 border border-blue-500/20">
+              {localScanResult?.providers_detected?.lmstudio?.live_models_count ?? 0} Live
+            </span>
+          </div>
+
+          {/* 3. Filesystem GGUF & Repository Models */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between">
+            <div className="space-y-1">
+              <div className="text-slate-400 font-medium flex items-center gap-1.5">
+                <FolderSearch className="w-3.5 h-3.5 text-purple-400" />
+                <span>GGUF Disk Repositories</span>
+              </div>
+              <div className="font-semibold text-slate-200">
+                <span>~/.lmstudio, HF Cache &amp; Dirs</span>
+              </div>
+            </div>
+            <span className="px-2 py-0.5 rounded font-mono text-[11px] bg-purple-500/10 text-purple-300 border border-purple-500/20">
+              {(localScanResult?.providers_detected?.lmstudio?.disk_models_count ?? 0) +
+                (localScanResult?.providers_detected?.filesystem_gguf?.count ?? 0)}{" "}
+              Files
+            </span>
+          </div>
+        </div>
+
+        {/* Discovered Local Models Grid */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Available Local AI Models ({localScanResult?.all_models?.length ?? 0})</span>
+            </h3>
+            {localScanResult && (
+              <span className="text-[11px] text-slate-400 font-mono">
+                Last Scanned: {new Date(localScanResult.scanned_at * 1000).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+
+          {!localScanResult || localScanResult.all_models.length === 0 ? (
+            <div className="p-8 rounded-xl border border-slate-800/80 bg-slate-950/40 text-center space-y-3">
+              <Search className="w-8 h-8 text-slate-600 mx-auto" />
+              <div className="text-sm font-semibold text-slate-300">No local models scanned yet</div>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Click &quot;Auto-Discover Local Models&quot; to probe running Ollama or LM Studio daemons and search your disk for GGUF model files.
+              </p>
+              <button
+                onClick={() => handleScanLocalModels(true)}
+                disabled={isScanningLocal}
+                className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-2"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isScanningLocal ? "animate-spin" : ""}`} />
+                <span>Search Local AI Models</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {localScanResult.all_models.map((m: DiscoveredLocalModel) => {
+                const isCurrentlyActive =
+                  settings.active_model.toLowerCase() === m.id.toLowerCase() &&
+                  settings.active_provider.toLowerCase() === m.provider.toLowerCase();
+                const isRunningInVram =
+                  m.status === "running_in_vram" ||
+                  runningLocalModels.some((rm) => rm.name === m.id || rm.model === m.id);
+
+                return (
+                  <div
+                    key={`${m.provider}-${m.id}`}
+                    className={`p-4 rounded-xl border transition-all flex flex-col justify-between space-y-3 ${
+                      isCurrentlyActive
+                        ? "bg-cyan-950/30 border-cyan-500/60 ring-1 ring-cyan-500/30 shadow-lg shadow-cyan-950/20"
+                        : "bg-slate-950/70 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/40"
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="font-bold text-sm text-white truncate" title={m.name}>
+                          {m.name}
+                        </div>
+                        {isCurrentlyActive ? (
+                          <span className="shrink-0 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono font-bold flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                            ACTIVE
+                          </span>
+                        ) : isRunningInVram ? (
+                          <span className="shrink-0 px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-mono flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                            IN VRAM
+                          </span>
+                        ) : (
+                          <span className="shrink-0 px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-mono">
+                            {m.size_gb > 0 ? `${m.size_gb} GB` : "READY"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                        <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-mono">
+                          {m.source}
+                        </span>
+                        {m.quantization && (
+                          <span className="px-2 py-0.5 rounded bg-purple-950/50 border border-purple-800/50 text-purple-300 font-mono">
+                            {m.quantization}
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded bg-blue-950/50 border border-blue-800/50 text-blue-300 font-mono uppercase">
+                          {m.provider}
+                        </span>
+                      </div>
+
+                      {m.full_path && (
+                        <div
+                          className="text-[10px] font-mono text-slate-500 truncate"
+                          title={m.full_path}
+                        >
+                          {m.full_path}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/60 flex items-center gap-2">
+                      {isCurrentlyActive ? (
+                        <div className="w-full py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Selected Primary Engine</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleActivateDiscoveredModel(m.provider, m.id)}
+                          className="flex-1 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                        >
+                          <Zap className="w-3.5 h-3.5" />
+                          <span>Use Model</span>
+                        </button>
+                      )}
+
+                      {/* Import to Ollama button if it is a raw disk file and not in Ollama */}
+                      {m.full_path && !m.source.includes("Ollama") && (
+                        <button
+                          onClick={() => handleImportGgufToOllama(m.full_path!, m.id)}
+                          disabled={Boolean(importingModelPath)}
+                          className="px-2.5 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                          title="Import this GGUF model directly into Ollama via Modelfile"
+                        >
+                          {importingModelPath === m.full_path ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <HardDrive className="w-3.5 h-3.5" />
+                          )}
+                          <span>Import</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
       {/* SECTION 1.5: LOCAL ENGINE HARDWARE TUNING & PERFORMANCE OPTIMIZATIONS     */}
       {/* ========================================================================= */}
-      {(selectedProvider === "ollama" || settings.active_provider === "ollama") && (
+      {(selectedProvider === "ollama" || selectedProvider === "lmstudio" || settings.active_provider === "ollama" || settings.active_provider === "lmstudio") && (
         <div className="p-6 rounded-xl border border-purple-900/60 bg-gradient-to-br from-slate-950 via-slate-900/80 to-purple-950/20 backdrop-blur-md space-y-6 shadow-xl shadow-purple-950/10 animate-in fade-in">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
             <div className="flex items-center gap-3">
@@ -1232,7 +1563,7 @@ export function SettingsView() {
             >
               {addAvailableModels.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} {m.free ? "— [FREE]" : ""}
+                  {m.name}
                 </option>
               ))}
             </select>
