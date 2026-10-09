@@ -398,7 +398,7 @@ class AuditExporter:
                     value={
                         "id": req.id,
                         "title": req.title,
-                        "category": req.category.value,
+                        "category": req.category.value if hasattr(req.category, "value") else str(req.category),
                         "description": req.description,
                         "minimum_years_experience": req.minimum_years_experience,
                     },

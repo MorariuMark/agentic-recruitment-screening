@@ -14,6 +14,8 @@ ENV/
 
 # Database & Local Data
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 data/*.db
 data/screening.db

@@ -209,12 +209,13 @@ class MatchingAgent:
         is_interpretive = is_interpretive_requirement(requirement)
         type_hint = "INTERPRETIVE / LOGISTICAL / SOFT-SKILL" if is_interpretive else "OBJECTIVE QUALIFICATION"
 
+        cat_val = requirement.category.value if hasattr(requirement.category, "value") else str(requirement.category)
         prompt = (
             f"Job Requirement to Evaluate:\n"
             f"- ID: {requirement.id}\n"
             f"- Title: {requirement.title}\n"
             f"- Type: {type_hint}\n"
-            f"- Category: {requirement.category.value}\n"
+            f"- Category: {cat_val}\n"
             f"- Description: {requirement.description}\n"
             f"- Minimum Years Required: {requirement.minimum_years_experience or 'N/A'}\n\n"
             f"Candidate Profile Evidence Chunks:\n{evidence_text}\n\n"
@@ -398,7 +399,7 @@ class MatchingAgent:
                         citations=[],
                     )
 
-            max_workers = min(len(job_description.requirements), 6)
+            max_workers = min(len(job_description.requirements), 4)
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 matches = list(executor.map(_evaluate_single, job_description.requirements))
 

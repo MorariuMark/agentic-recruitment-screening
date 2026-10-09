@@ -407,10 +407,21 @@ class GroqClient(BaseLLMClient):
         if use_json_object:
             kwargs["response_format"] = {"type": "json_object"}
 
-        response = self.client.chat.completions.create(**kwargs)
-        raw_content = response.choices[0].message.content or "{}"
-        parsed_dict = clean_and_parse_json(raw_content)
-        return response_model.model_validate(parsed_dict)
+        try:
+            response = self.client.chat.completions.create(**kwargs)
+            raw_content = response.choices[0].message.content or "{}"
+            self._capture_usage(response, prompt, raw_content)
+            parsed_dict = clean_and_parse_json(raw_content)
+            return response_model.model_validate(parsed_dict)
+        except Exception as err:
+            if use_json_object and self.compatibility_mode == "auto":
+                kwargs.pop("response_format", None)
+                response = self.client.chat.completions.create(**kwargs)
+                raw_content = response.choices[0].message.content or "{}"
+                self._capture_usage(response, prompt, raw_content)
+                parsed_dict = clean_and_parse_json(raw_content)
+                return response_model.model_validate(parsed_dict)
+            raise err
 
 
 class NvidiaNimClient(BaseLLMClient):
@@ -527,7 +538,8 @@ class GeminiClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            timeout=60.0,
+            timeout=15.0,
+            max_retries=0,
         )
 
     def generate_text(
@@ -1053,6 +1065,53 @@ def _is_local_port_open(host: str, port: int, timeout: float = 0.15) -> bool:
         return False
 
 
+_MODEL_COOLDOWNS: Dict[Tuple[str, str], float] = {}
+
+
+def record_model_failure(provider: str, model: str, error: Exception) -> None:
+    """
+    Marks a provider/model target in temporary cooldown to prevent cascading repeated retries
+    across concurrent threads or batch evaluation items.
+    """
+    err_str = str(error).lower()
+    # Permanent or long-lasting failures: 404 Not Found, 410 Gone, 402 Insufficient credits
+    if any(code in err_str for code in ["404", "not_found", "not found", "410", "gone", "402", "credit"]):
+        cooldown = 1800.0  # 30 minutes
+    # Rate limit or quota exhaustion
+    elif any(code in err_str for code in ["429", "rate_limit", "quota", "resource_exhausted"]):
+        if any(w in err_str for w in ["per day", "daily", "day limit", "quota per day", "hours"]):
+            cooldown = 900.0   # 15 minutes for daily quota exhaustion
+        else:
+            cooldown = 45.0    # 45 seconds for short burst TPM rate limits
+    else:
+        cooldown = 30.0        # 30 seconds for general errors / timeouts
+
+    _MODEL_COOLDOWNS[(provider.lower(), model)] = time.time() + cooldown
+    logger.warning(
+        "Failover circuit breaker: Marked [%s / %s] in cooldown for %.1fs. Error snippet: %s",
+        provider,
+        model,
+        cooldown,
+        err_str[:120],
+    )
+
+
+def is_model_in_cooldown(provider: str, model: str) -> bool:
+    """Returns True if the provider/model is currently under failure cooldown."""
+    expires = _MODEL_COOLDOWNS.get((provider.lower(), model), 0.0)
+    return time.time() < expires
+
+
+def clear_model_cooldown(provider: str, model: str) -> None:
+    """Removes model from failure cooldown upon confirmed healthy generation."""
+    _MODEL_COOLDOWNS.pop((provider.lower(), model), None)
+
+
+def clear_all_model_cooldowns() -> None:
+    """Resets all active failover circuit breaker cooldowns."""
+    _MODEL_COOLDOWNS.clear()
+
+
 class DynamicLLMClient(BaseLLMClient):
     """
     Dynamic LLM client proxy with multi-tier failover protection.
@@ -1148,7 +1207,8 @@ class DynamicLLMClient(BaseLLMClient):
                 add_candidate(t_prov, t_mod, key=t_key, url=t_url)
 
             if chain:
-                return chain
+                healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1])]
+                return healthy_chain if healthy_chain else chain
 
         # 1. Primary configured model (Default automatic chain)
         primary_prov = settings.llm_provider.lower()
@@ -1159,16 +1219,16 @@ class DynamicLLMClient(BaseLLMClient):
         intra_fallbacks = {
             "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
             "groq": ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"],
-            "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.3-70b-instruct"],
-            "gemini": ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash"],
+            "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-large-2-instruct"],
+            "gemini": ["gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-lite-latest"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
         }
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
             add_candidate(primary_prov, fallback_mod)
 
-        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> OpenRouter -> NVIDIA -> Ollama)
-        provider_priority = ["groq", "gemini", "agnes", "openrouter", "nvidia_nim", "ollama"]
+        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> NVIDIA -> Gemini -> Agnes -> OpenRouter -> Ollama)
+        provider_priority = ["groq", "nvidia_nim", "gemini", "agnes", "openrouter", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue
@@ -1178,7 +1238,7 @@ class DynamicLLMClient(BaseLLMClient):
                 add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_api_key)
             elif p == "gemini" and settings.gemini_api_key:
                 add_candidate("gemini", settings.gemini_model or "gemini-flash-latest", key=settings.gemini_api_key)
-                add_candidate("gemini", "gemini-2.0-flash", key=settings.gemini_api_key)
+                add_candidate("gemini", "gemini-3.8-flash", key=settings.gemini_api_key)
             elif p == "agnes" and settings.agnes_api_key:
                 add_candidate("agnes", settings.agnes_model or "agnes-2.5-flash", key=settings.agnes_api_key)
                 add_candidate("agnes", "agnes-2.5-flash", key=settings.agnes_api_key)
@@ -1187,7 +1247,7 @@ class DynamicLLMClient(BaseLLMClient):
                 add_candidate("openrouter", settings.openrouter_model or "openrouter/free", key=settings.openrouter_api_key)
             elif p == "nvidia_nim" and settings.nvidia_nim_api_key:
                 add_candidate("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct", key=settings.nvidia_nim_api_key)
-                add_candidate("nvidia_nim", "meta/llama-3.1-8b-instruct", key=settings.nvidia_nim_api_key)
+                add_candidate("nvidia_nim", "nvidia/llama-3.1-nemotron-70b-instruct", key=settings.nvidia_nim_api_key)
             elif p == "ollama":
                 # Quick probe to see if local Ollama is responding
                 if _is_local_port_open("127.0.0.1", 11434):
@@ -1195,6 +1255,11 @@ class DynamicLLMClient(BaseLLMClient):
 
         if not getattr(settings, "fallback_enabled", True):
             return chain[:1]
+
+        # Circuit breaker: prioritize healthy candidates not currently under failure cooldown
+        healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1])]
+        if healthy_chain:
+            return healthy_chain
 
         return chain
 
@@ -1263,9 +1328,11 @@ class DynamicLLMClient(BaseLLMClient):
                         primary_prov,
                         primary_mod,
                     )
+                clear_model_cooldown(prov, mod)
                 return result
             except Exception as err:
                 last_error = err
+                record_model_failure(prov, mod, err)
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
                     logger.warning(
@@ -1356,9 +1423,11 @@ class DynamicLLMClient(BaseLLMClient):
                         primary_prov,
                         primary_mod,
                     )
+                clear_model_cooldown(prov, mod)
                 return result
             except Exception as err:
                 last_error = err
+                record_model_failure(prov, mod, err)
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
                     logger.warning(

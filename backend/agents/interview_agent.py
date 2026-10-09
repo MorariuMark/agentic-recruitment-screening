@@ -59,7 +59,7 @@ class InterviewAgent:
         for match in evaluation_result.requirement_matches:
             req = req_map.get(match.requirement_id)
             title = req.title if req else match.requirement_id
-            category = req.category.value if req else "unknown"
+            category = req.category.value if (req and hasattr(req.category, "value")) else (str(req.category) if req else "unknown")
 
             citations_text = "; ".join([f'"{c.quote}"' for c in match.citations]) or "No citations"
             clarification_line = f"  Clarification Screening Question: {match.clarification_question}\n" if getattr(match, "clarification_question", None) else ""

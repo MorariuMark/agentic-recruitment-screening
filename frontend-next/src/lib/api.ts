@@ -43,19 +43,23 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit & { timeoutMs?: number } = {}
+    options: RequestInit & { timeoutMs?: number; preferDirectBackend?: boolean } = {}
   ): Promise<T> {
-    const { timeoutMs = 60000, ...fetchOptions } = options;
+    const { timeoutMs = 60000, preferDirectBackend = false, ...fetchOptions } = options;
     const headers = new Headers(options.headers || {});
     if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
 
     // Determine primary URL and fallback URL:
-    // Primary: relative path in browser ("") or configured base
-    // Fallback: direct loopback http://127.0.0.1:8000 if primary is relative, or relative if primary was direct
-    const primaryUrl = `${this.base}${endpoint}`;
-    const fallbackUrl = this.base ? endpoint : `http://127.0.0.1:8000${endpoint}`;
+    // If preferDirectBackend is set (e.g. for multi-second LLM workflows like match/evaluate),
+    // start directly with loopback http://127.0.0.1:8000 to avoid Next.js dev server rewrite proxy socket timeouts.
+    let primaryUrl = `${this.base}${endpoint}`;
+    let fallbackUrl = this.base ? endpoint : `http://127.0.0.1:8000${endpoint}`;
+    if (preferDirectBackend && typeof window !== "undefined" && !this.base) {
+      primaryUrl = `http://127.0.0.1:8000${endpoint}`;
+      fallbackUrl = endpoint;
+    }
 
     const executeFetch = async (targetUrl: string): Promise<T> => {
       const controller = new AbortController();
@@ -150,8 +154,17 @@ class ApiClient {
             primaryErr.message.includes("fetch failed") ||
             primaryErr.message.includes("network")));
 
-      if (isNetworkError && primaryUrl !== fallbackUrl && typeof window !== "undefined") {
-        console.warn(`[ApiClient] Request to ${primaryUrl} failed with network error; seamlessly retrying via fallback ${fallbackUrl}...`);
+      const isProxyOrGatewayError =
+        typeof primaryErr?.message === "string" &&
+        (primaryErr.message.includes("500 Internal Server Error: Internal Server Error") ||
+          primaryErr.message.includes("HTTP 502") ||
+          primaryErr.message.includes("HTTP 504") ||
+          primaryErr.message.includes("socket hang up") ||
+          primaryErr.message.includes("ECONNRESET") ||
+          primaryErr.message.includes("Failed to proxy"));
+
+      if ((isNetworkError || isProxyOrGatewayError) && primaryUrl !== fallbackUrl && typeof window !== "undefined") {
+        console.warn(`[ApiClient] Request to ${primaryUrl} encountered proxy/network failure (${primaryErr.message}); seamlessly retrying via fallback ${fallbackUrl}...`);
         return await executeFetch(fallbackUrl);
       }
       throw primaryErr;
@@ -316,6 +329,7 @@ class ApiClient {
         job_description: jobDescription,
       }),
       timeoutMs: 180000,
+      preferDirectBackend: true,
       signal,
     });
   }
@@ -354,6 +368,7 @@ class ApiClient {
         job_id: jobId,
       }),
       timeoutMs: 180000,
+      preferDirectBackend: true,
       signal,
     });
   }
@@ -383,6 +398,7 @@ class ApiClient {
         target_duration_minutes: targetDurationMinutes,
       }),
       timeoutMs: 180000,
+      preferDirectBackend: true,
       signal,
     });
   }

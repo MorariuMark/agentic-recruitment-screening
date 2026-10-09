@@ -436,8 +436,8 @@ export function SettingsView() {
       },
       {
         provider: "gemini",
-        model: "gemini-2.0-flash",
-        name: "Gemini 2.0 Flash",
+        model: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
         free: true,
         rate_limits: "15 RPM | 1M TPM | 1,500 RPD",
       },

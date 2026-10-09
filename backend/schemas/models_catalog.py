@@ -333,6 +333,17 @@ CATALOG_PROVIDERS: Dict[str, ProviderInfo] = {
         env_key_var="GEMINI_API_KEY",
         models=[
             ModelInfo(
+                id="gemini-3.8-flash",
+                name="Gemini 3.8 Flash (Latest Production)",
+                provider="gemini",
+                free=True,
+                rate_limits="15 RPM | 1,000,000 TPM | 1,500 RPD",
+                context_window="1,000,000",
+                category="Flagship Production",
+                compatibility="Google AI Studio OpenAI Endpoint",
+                description="Google's recommended flagship model for agentic workflows.",
+            ),
+            ModelInfo(
                 id="gemini-flash-latest",
                 name="Gemini Flash (Latest Stable)",
                 provider="gemini",
