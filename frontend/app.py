@@ -1608,7 +1608,7 @@ with tab_interview:
     if not st.session_state.evaluation_result:
         st.info("Complete candidate evaluation and review first.")
     else:
-        duration = st.slider("Target Interview Length (Minutes)", min_value=15, max_value=90, value=45, step=15)
+        duration = st.number_input("Target Interview Length (Minutes)", min_value=5, max_value=240, value=45, step=5)
 
         if st.button("Generate Interview Guide", type="primary"):
             with st.spinner("Synthesizing questions and rubrics based on identified gaps..."):
@@ -1640,14 +1640,22 @@ with tab_interview:
 
                 with st.expander(f"Question {idx} [{archetype_title}] - {q.estimated_minutes} min"):
                     st.markdown(f"##### *'{q.question_text}'*")
+                    if getattr(q, "rationale_for_asking", None):
+                        st.markdown(f"**Rationale:** {q.rationale_for_asking}")
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.markdown("<div style='font-size: 0.8rem; font-weight: 600; color: #166534; text-transform: uppercase;'>Expected Positive Signals</div>", unsafe_allow_html=True)
-                        for sig in q.expected_positive_signals:
+                        st.markdown("<div style='font-size: 0.8rem; font-weight: 600; color: #166534; text-transform: uppercase;'>Expected Answers / Good Response</div>", unsafe_allow_html=True)
+                        if getattr(q, "expected_answer", None):
+                            st.markdown(f"**Model Answer:** {q.expected_answer}")
+                        expected_signals = getattr(q, "expected_answers", []) or q.expected_positive_signals
+                        for sig in expected_signals:
                             st.markdown(f"- {sig}")
                     with col2:
-                        st.markdown("<div style='font-size: 0.8rem; font-weight: 600; color: #991b1b; text-transform: uppercase;'>Potential Red Flags</div>", unsafe_allow_html=True)
-                        for rf in q.red_flags:
+                        st.markdown("<div style='font-size: 0.8rem; font-weight: 600; color: #991b1b; text-transform: uppercase;'>Bad Answers / Warning Signs</div>", unsafe_allow_html=True)
+                        if getattr(q, "bad_answer", None):
+                            st.markdown(f"**Poor Answer:** {q.bad_answer}")
+                        bad_signals = getattr(q, "bad_answers", []) or q.red_flags
+                        for rf in bad_signals:
                             st.markdown(f"- {rf}")
 
             if plan.interviewer_tips:

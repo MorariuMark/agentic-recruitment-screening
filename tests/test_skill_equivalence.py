@@ -338,3 +338,78 @@ def test_matching_agent_benefit_of_doubt_guardrail():
     assert match.benefit_of_doubt is True
     assert "Benefit of the Doubt" in match.reasoning
 
+
+def test_high_school_diploma_not_treated_as_master():
+    """Verify 'High School Diploma' does not match 'ma' (Master of Arts) and does not satisfy Bachelor's Degree."""
+    edus = [
+        Education(degree_title="High School Diploma", field_of_study="Nature Science", institution_name="AMG")
+    ]
+    res = SkillEquivalenceService.evaluate_degree_hierarchy(
+        education_list=edus,
+        requirement_title="Academic Degree",
+        requirement_description="Bachelor's Degree required.",
+    )
+    assert res is not None
+    is_satisfied, cand_deg, req_deg = res
+    assert is_satisfied is False
+    assert cand_deg == "High School Diploma"
+
+
+def test_degree_hierarchy_discipline_mismatch_never_satisfies():
+    """Verify candidate with Engineering degree is not evaluated as meeting an Economic Studies degree requirement."""
+    edus = [
+        Education(degree_title="Bachelor's Degree", field_of_study="Applied Electronics", institution_name="UPT"),
+        Education(degree_title="High School Diploma", field_of_study="Nature Science", institution_name="AMG"),
+    ]
+    res = SkillEquivalenceService.evaluate_degree_hierarchy(
+        education_list=edus,
+        requirement_title="University Degree in Economic Studies",
+        requirement_description="University Degree in Economic Studies",
+    )
+    # Must be None because candidate has no degree in Economics/Business family
+    assert res is None
+
+
+def test_matching_agent_preserves_field_mismatch_unmet_status():
+    """Verify MatchingAgent does not override LLM's NOT_MET verdict when degree field doesn't match."""
+    from backend.agents.matching_agent import MatchingAgent
+    from tests.test_agents import MockTestLLM
+
+    class MockFieldMismatchLLM(MockTestLLM):
+        def generate_structured(self, prompt, response_model, system_prompt=None, temperature=0.0):
+            if response_model == RequirementMatch:
+                return RequirementMatch(
+                    requirement_id="req_econ",
+                    status=MatchStatus.NOT_MET,
+                    score=0.0,
+                    reasoning="Candidate holds a degree in Applied Electronics. None of these credentials correspond to a university degree in Economic Studies. Therefore the candidate does not meet this objective qualification.",
+                    citations=[],
+                )
+            return super().generate_structured(prompt, response_model, system_prompt, temperature)
+
+    agent = MatchingAgent(llm_client=MockFieldMismatchLLM())
+    candidate = AnonymizedCandidate(
+        candidate_id=uuid4(),
+        anonymized_education=[
+            Education(degree_title="Bachelor's Degree (In Progress)", field_of_study="Applied Electronics", institution_name="UPT"),
+            Education(degree_title="High School Diploma", field_of_study="Nature Science", institution_name="AMG"),
+        ],
+        sanitized_text="4th-year Applied Electronics student.",
+        demographic_data={},
+    )
+    req = JobRequirement(
+        id="req_econ",
+        title="University Degree in Economic Studies",
+        category=RequirementCategory.MUST_HAVE,
+        description="University Degree in Economic Studies",
+    )
+    match = agent.evaluate_requirement(
+        candidate_id=candidate.candidate_id,
+        requirement=req,
+        candidate=candidate,
+    )
+    assert match.status == MatchStatus.NOT_MET
+    assert match.score == 0.0
+    assert "Degree Hierarchy" not in match.reasoning
+
+

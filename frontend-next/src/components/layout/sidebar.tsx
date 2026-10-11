@@ -69,7 +69,7 @@ export function Sidebar({
       id: "interview" as NavTab,
       label: "Interview Studio",
       icon: MessageSquareCode,
-      description: "Tailored STAR guides",
+      description: "Tailored interview guides",
     },
   ];
 

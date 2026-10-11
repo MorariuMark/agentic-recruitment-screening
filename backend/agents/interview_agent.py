@@ -26,12 +26,16 @@ Guiding Principles:
 1. Question Archetypes:
    - "gap_verification": Specifically probe unmet or partially met requirements. Test if the candidate has transferable skills or conceptual understanding despite lacking explicit resume evidence.
    - "technical_deep_dive": Probe candidate claims of deep competence (met requirements with high scores). Drill into architecture, failure modes, trade-offs, and optimization.
-   - "behavioral_star": Probe collaboration, handling production incidents, or resolving technical disagreements.
+   - "behavioral": Probe collaboration, handling production incidents, conflict resolution, or resolving technical disagreements.
 2. Structure & Quality:
    - Formulate clear, open-ended question prompts (not simple yes/no questions).
-   - Detail concrete "expected_positive_signals" (architectural concepts, metrics, best practices).
-   - Detail concrete "red_flags" (hand-waving, superficial buzzwords, lack of depth, unverified assertions).
-   - Allocate realistic minutes per question (sum should fit within total_estimated_minutes).
+   - "expected_answer": Provide a detailed, realistic model response illustrating what a strong, qualified candidate would say (architectural concepts, trade-offs, metrics, best practices).
+   - "expected_answers": List 2-4 key bullet points that must be present in an ideal response.
+   - "bad_answer": Provide a detailed, realistic example of a poor or bad answer displaying red flags, superficial buzzwords, hand-waving, incorrect assumptions, or evasiveness.
+   - "bad_answers": List 2-4 red flag indicators or warning signs in candidate answers.
+   - "rationale_for_asking": Explain clearly why this question is being asked based on the candidate's screening gaps or verified claims.
+   - "difficulty": Select appropriate difficulty level ("junior", "mid", "senior", "principal").
+   - Allocate realistic minutes per question (sum should fit within the target interview duration).
 3. Grounding: Focus strictly on the requirements and findings in the provided evaluation report."""
 
 
@@ -87,6 +91,15 @@ class InterviewAgent:
             f"Requirement Evaluation Breakdown:\n{evaluation_summary}\n\n"
             f"Generate a {target_minutes}-minute interview guide tailored to probe this candidate's "
             f"identified gaps and verify claimed technical strengths.\n"
+            f"For each question, formulate clear open-ended prompts and provide:\n"
+            f"- question_text\n"
+            f"- rationale_for_asking (why we are probing this)\n"
+            f"- expected_answer (detailed model good answer)\n"
+            f"- expected_answers (bullet points of good answer criteria)\n"
+            f"- bad_answer (detailed example of an unacceptable or poor answer)\n"
+            f"- bad_answers (bullet points of red flags / poor answers)\n"
+            f"- difficulty ('junior', 'mid', 'senior', or 'principal')\n"
+            f"- estimated_minutes\n\n"
             f"Set candidate_id to '{candidate.candidate_id}' and job_id to '{job_description.id}'."
         )
 
@@ -101,7 +114,12 @@ class InterviewAgent:
         # 4. Guarantee IDs and target duration alignment
         plan.candidate_id = candidate.candidate_id
         plan.job_id = job_description.id
-        if not plan.total_estimated_minutes:
+        if not plan.total_estimated_minutes or plan.total_estimated_minutes == 45:
             plan.total_estimated_minutes = target_minutes
+        plan.total_duration_minutes = plan.total_estimated_minutes
+        if not plan.executive_summary and plan.interview_focus_summary:
+            plan.executive_summary = plan.interview_focus_summary
+        elif not plan.interview_focus_summary and plan.executive_summary:
+            plan.interview_focus_summary = plan.executive_summary
 
         return plan

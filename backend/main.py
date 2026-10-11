@@ -57,6 +57,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as e:
             logger.warning(f"Phoenix health check failed: {e}")
 
+    # Non-blocking background pre-warming of local SentenceTransformers embedding weights
+    try:
+        import asyncio
+        from backend.services.vector_store import get_cached_embedding_function
+        asyncio.create_task(asyncio.to_thread(get_cached_embedding_function))
+        logger.info("Dispatched background pre-warming for local vector embedding model.")
+    except Exception as warm_err:
+        logger.warning(f"Could not dispatch embedding pre-warming: {warm_err}")
+
     yield
 
     logger.info("Shutting down Agentic Recruitment Screening Backend...")

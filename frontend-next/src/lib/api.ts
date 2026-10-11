@@ -11,6 +11,7 @@ import {
   CVUploadResponse,
   InterviewPlan,
   JobDescription,
+  JobRecommendationResponse,
   JobRequirement,
   LLMSettings,
   LocalModelScanResult,
@@ -246,6 +247,12 @@ class ApiClient {
 
   async exportCandidateCV(candidateId: string): Promise<any> {
     return this.request(`/api/v1/cv/${candidateId}/export`);
+  }
+
+  async getRecommendedJobs(candidateId: string, limit: number = 10, signal?: AbortSignal): Promise<JobRecommendationResponse> {
+    return this.request(`/api/v1/candidates/${candidateId}/recommended-jobs?limit=${limit}`, {
+      signal,
+    });
   }
 
   async uploadSingleCV(file: File, signal?: AbortSignal): Promise<CVUploadResponse> {

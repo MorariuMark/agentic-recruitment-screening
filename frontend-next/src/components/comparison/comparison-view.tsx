@@ -561,7 +561,7 @@ ${report.candidates
                       onClick={() => onOpenInterview(cand.candidate_id)}
                       className="py-1.5 px-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold text-center border border-blue-500/30 transition-colors cursor-pointer"
                     >
-                      STAR Guide
+                      Interview Guide
                     </button>
                   </div>
                 </div>

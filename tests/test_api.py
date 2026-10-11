@@ -252,3 +252,67 @@ def test_delete_candidate_endpoint(api_client):
     assert res_404.status_code == 404
 
 
+def test_candidate_job_recommendations_endpoint(api_client, monkeypatch):
+    """Verify GET /api/v1/candidates/{candidate_id}/recommended-jobs ranks database jobs by fit score."""
+    from backend.db.repository import DatabaseRepository
+    from backend.db.models import JobRequisitionModel, JobRequirementModel
+
+    cid = uuid4()
+    mock_anon = AnonymizedCandidate(
+        candidate_id=cid,
+        anonymized_work_experiences=[],
+        anonymized_skills=["Python", "FastAPI", "Docker", "PostgreSQL"],
+        sanitized_text="Senior Python Backend Engineer specializing in FastAPI microservices and Docker containers.",
+    )
+    routes._CANDIDATE_ANONYMIZED_STORE[cid] = mock_anon
+
+    # Mock DatabaseRepository.list_jobs to return 2 test jobs
+    j1_id = str(uuid4())
+    j2_id = str(uuid4())
+    job1 = JobRequisitionModel(
+        id=j1_id,
+        title="Senior Python Backend Engineer",
+        department="Engineering",
+        requirements=[
+            JobRequirementModel(id="req_py", title="Python", category="must_have", weight=2.0),
+            JobRequirementModel(id="req_fa", title="FastAPI", category="must_have", weight=1.5),
+            JobRequirementModel(id="req_dk", title="Docker", category="nice_to_have", weight=1.0),
+        ]
+    )
+    job2 = JobRequisitionModel(
+        id=j2_id,
+        title="Frontend React Specialist",
+        department="UI/UX",
+        requirements=[
+            JobRequirementModel(id="req_react", title="React & Next.js", category="must_have", weight=2.0),
+            JobRequirementModel(id="req_css", title="Tailwind CSS", category="must_have", weight=1.0),
+        ]
+    )
+
+    async def mock_list_jobs(limit=100):
+        return [job1, job2]
+
+    monkeypatch.setattr(DatabaseRepository, "list_jobs", mock_list_jobs)
+
+    res = api_client.get(f"/api/v1/candidates/{cid}/recommended-jobs?limit=10")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["candidate_id"] == str(cid)
+    assert data["total_database_jobs"] == 2
+    assert len(data["recommendations"]) == 2
+
+    # Top rank should be the Python Engineer role
+    rec1 = data["recommendations"][0]
+    rec2 = data["recommendations"][1]
+    assert rec1["rank"] == 1
+    assert rec1["title"] == "Senior Python Backend Engineer"
+    assert rec1["overall_score"] >= rec2["overall_score"]
+    assert "Python" in rec1["matching_skills"] or "FastAPI" in rec1["matching_skills"]
+    assert rec2["rank"] == 2
+
+    # Non-existent candidate returns 404
+    res_404 = api_client.get(f"/api/v1/candidates/{uuid4()}/recommended-jobs")
+    assert res_404.status_code == 404
+
+
+

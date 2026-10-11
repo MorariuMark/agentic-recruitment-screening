@@ -6,6 +6,7 @@ Retrieves candidate evidence chunks via ChromaDB and performs grounded LLM reaso
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import time
 from typing import List, Optional
 from uuid import UUID
 
@@ -98,34 +99,16 @@ def generate_clarification_question(requirement: JobRequirement) -> str:
 
 
 MATCHING_SYSTEM_PROMPT = """You are an objective, evidence-driven HR Technical Evaluator.
-Your responsibility is to determine if a candidate's background satisfies a specific Job Requirement.
+Determine if candidate evidence chunks satisfy the specified Job Requirement.
 
-CRITICAL DISTINCTION: OBJECTIVE QUALIFICATIONS vs. INTERPRETIVE / SUBJECTIVE / LOGISTICAL CRITERIA
+Evaluation Principles:
+- "met": Positive evidence meeting requirement (score: 0.8-1.0). Extract exact verbatim citation quotes.
+- "partial": Related or adjacent evidence (score: 0.4-0.79). Extract exact verbatim citation quotes.
+- "clarification_needed": Interpretive, logistical, or soft-skill requirement (e.g. shifts, travel, relocation, willingness to learn, teamwork) where the CV is silent. DO NOT mark as not_met; set score: 0.5, is_objective: false, and provide a clear Yes/No screening question in clarification_question.
+- "not_met": Objective credential or skill (degree, years of experience, programming language, tool) is genuinely absent (score: 0.0-0.39, citations: []).
 
-1. Objective Criteria:
-   - Verifiable skills and credentials: years of experience, specific programming languages/frameworks, degrees, diplomas, certifications/licenses, spoken languages.
-   - If evidence is genuinely absent for an objective criterion, assign status: "not_met" (score: 0.0 - 0.39), set is_objective: true, clarification_question: null.
-
-2. Interpretive / Subjective / Logistical Criteria:
-   - Items rarely stated as verifiable factual achievements in a CV, including:
-     * Shift availability (night shifts, rotating shifts, weekend work, on-call duty)
-     * Logistics & willingness (willingness to travel, relocation readiness, schedule flexibility)
-     * Soft skills & behavioral traits (attention to detail, eagerness to learn, growth mindset, work under pressure, team player)
-   - RULES FOR INTERPRETIVE / SUBJECTIVE ITEMS:
-     * If the CV has explicit positive evidence (e.g. prior experience working night shifts or projects demonstrating rapid learning), assign "met" (score 0.8-1.0) or "partial" (score 0.5-0.79).
-     * If the CV is SILENT or does not explicitly state it, DO NOT disqualify the candidate with "not_met"!
-     * Instead, assign status: "clarification_needed", set is_objective: false, score: 0.5, and provide a clear Yes/No screening question in clarification_question (e.g., "Are you available and willing to work rotating night shifts? [Yes / No]").
-     * Candidate must NOT be penalized with an objective rejection for silent logistical or soft-skill criteria.
-
-Evaluation Status Principles:
-- "met": Demonstrated positive evidence meeting the requirement (Score: 0.8 - 1.0).
-- "partial": Adjacent, related, or partial evidence (Score: 0.4 - 0.79).
-- "clarification_needed": Interpretive/logistical/soft-skill requirement where CV is silent. Requires applicant/recruiter Yes/No confirmation (Score: 0.5, confidence: 0.9 - 1.0).
-- "not_met": Objective requirement (degree, years of experience, tech qualification, language) is genuinely absent or inadequate (Score: 0.0 - 0.39).
-
-Verbatim Grounding (STRICT):
-- Extract direct, exact verbatim substrings from candidate chunks for positive claims.
-- For "clarification_needed" or "not_met", citations should be empty []."""
+Grounding Rule:
+- All citation quotes MUST be exact, verbatim substrings from candidate chunks. Do not paraphrase."""
 
 
 class MatchingAgent:
@@ -276,7 +259,7 @@ class MatchingAgent:
                         )
                         match_result.gap_analysis = None
 
-            # B. Hierarchical Academic Degree Scale (e.g. MSc / PhD satisfies required Bachelor)
+            # B. Hierarchical Academic Degree Scale (e.g. MSc / PhD satisfies required Bachelor in matching field)
             if candidate and candidate.anonymized_education:
                 deg_eval = SkillEquivalenceService.evaluate_degree_hierarchy(
                     education_list=candidate.anonymized_education,
@@ -286,13 +269,26 @@ class MatchingAgent:
                 if deg_eval is not None:
                     is_satisfied, cand_degree, req_degree = deg_eval
                     if is_satisfied and match_result.status != MatchStatus.MET:
-                        match_result.status = MatchStatus.MET
-                        match_result.score = 1.0
-                        match_result.reasoning = (
-                            f"{match_result.reasoning} [Degree Hierarchy: Candidate holds {cand_degree}, "
-                            f"which satisfies or exceeds required {req_degree}.]"
-                        )
-                        match_result.gap_analysis = None
+                        # Guard: Do not override if LLM reasoning explicitly documented a field or qualification mismatch
+                        reasoning_lower = match_result.reasoning.lower()
+                        mismatch_markers = [
+                            "none of these credentials correspond",
+                            "does not correspond",
+                            "different field",
+                            "unrelated field",
+                            "wrong field",
+                            "not in",
+                            "no degree in",
+                            "does not meet this objective qualification",
+                        ]
+                        if not any(m in reasoning_lower for m in mismatch_markers):
+                            match_result.status = MatchStatus.MET
+                            match_result.score = 1.0
+                            match_result.reasoning = (
+                                f"{match_result.reasoning} [Degree Hierarchy: Candidate holds {cand_degree}, "
+                                f"which satisfies or exceeds required {req_degree}.]"
+                            )
+                            match_result.gap_analysis = None
 
             # C. Cumulative Tenure Aggregation across Work History
             if candidate and candidate.anonymized_work_experiences and requirement.minimum_years_experience:
@@ -400,8 +396,19 @@ class MatchingAgent:
                     )
 
             max_workers = min(len(job_description.requirements), 4)
+            provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
+            is_rate_sensitive = "groq" in provider_type
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                matches = list(executor.map(_evaluate_single, job_description.requirements))
+                if is_rate_sensitive:
+                    futures = []
+                    for idx, req in enumerate(job_description.requirements):
+                        if 0 < idx < max_workers:
+                            time.sleep(0.15)  # 150ms gentle stagger to prevent instantaneous TPM rate-limit burst
+                        futures.append(executor.submit(_evaluate_single, req))
+                    matches = [f.result() for f in futures]
+                else:
+                    matches = list(executor.map(_evaluate_single, job_description.requirements))
 
         # 3. Compute deterministic score, citation verification, and recommendation
         evaluation_result = self.scoring_engine.compute_evaluation(

@@ -50,6 +50,7 @@ import { LiveProcessTimer, DurationBadge, useProcessTimer } from "@/components/u
 import { ComplianceDossierModal } from "@/components/compliance/compliance-dossier-modal";
 import { DocumentViewer } from "@/components/evaluation/document-viewer";
 import { ParsedJdViewer } from "@/components/evaluation/parsed-jd-viewer";
+import { JobRecommendationsModal } from "@/components/evaluation/job-recommendations-modal";
 
 export interface RequirementMeta {
   title: string;
@@ -203,6 +204,7 @@ export function EvaluationView({
 
   // UI Interactive States
   const [showComplianceModal, setShowComplianceModal] = useState(false);
+  const [showRecommendationsModal, setShowRecommendationsModal] = useState(false);
   const [showDocViewer, setShowDocViewer] = useState(true);
   const [showFullJdModal, setShowFullJdModal] = useState(false);
   const [activeCitation, setActiveCitation] = useState<string | null>(null);
@@ -616,6 +618,17 @@ export function EvaluationView({
                 >
                   <FileCheck2 className="w-3.5 h-3.5 text-indigo-400" />
                   <span>EU AI Act Dossier</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowRecommendationsModal(true)}
+                  disabled={!activeCandidateId}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-200 text-xs font-semibold transition-all cursor-pointer shadow-sm hover:border-emerald-400/60 disabled:opacity-50"
+                  title="Recommend Top 10 matching jobs from database for this candidate"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Recommend Jobs (Top 10)</span>
                 </button>
 
                 <button
@@ -1961,6 +1974,19 @@ export function EvaluationView({
           </div>
         </div>
       )}
+
+      {/* Recommended Jobs from Database Modal */}
+      <JobRecommendationsModal
+        isOpen={showRecommendationsModal}
+        onClose={() => setShowRecommendationsModal(false)}
+        candidateId={activeCandidateId}
+        candidateName={activeCandidate?.masked_name || candidateDetail?.masked_name}
+        activeJobId={activeJobId}
+        jobs={jobs}
+        onSelectJob={(jobId) => {
+          handleSelectJobChange(jobId);
+        }}
+      />
     </div>
   );
 }

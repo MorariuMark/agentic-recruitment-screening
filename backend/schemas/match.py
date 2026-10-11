@@ -69,3 +69,35 @@ class MatchEvaluationResult(BaseModel):
     recruiter_notes: Optional[str] = Field(default=None, description="Recruiter audit comments from the HITL gate")
     token_usage: Optional[TokenUsageInfo] = Field(default=None, description="Token consumption and model latency telemetry")
 
+
+class JobRecommendationItem(BaseModel):
+    """Ranked job fit recommendation for a candidate."""
+    rank: int = Field(ge=1, description="Recommendation rank position (1 to 10)")
+    job_id: UUID = Field(description="Target job requisition ID")
+    title: str = Field(description="Job title")
+    department: Optional[str] = Field(default=None, description="Department name")
+    location: Optional[str] = Field(default=None, description="Job location")
+    work_model: Optional[str] = Field(default=None, description="Remote, Hybrid, or On-site")
+    employment_type: Optional[str] = Field(default=None, description="Full-time, Contract, etc.")
+    seniority_level: Optional[str] = Field(default=None, description="Junior, Mid, Senior, Lead, etc.")
+    overall_score: float = Field(ge=0.0, le=100.0, description="Fit score out of 100")
+    must_have_score: float = Field(ge=0.0, le=100.0, description="Score on core requirements")
+    nice_to_have_score: float = Field(default=0.0, ge=0.0, le=100.0, description="Score on nice-to-have criteria")
+    recommendation: Recommendation = Field(description="Recommendation tier")
+    must_have_gaps_count: int = Field(default=0, ge=0, description="Gaps count")
+    total_requirements_count: int = Field(default=0, ge=0, description="Total criteria count")
+    matching_criteria_count: int = Field(default=0, ge=0, description="Matching criteria count")
+    matching_skills: List[str] = Field(default_factory=list, description="Candidate skills that match this job")
+    key_strengths: List[str] = Field(default_factory=list, description="Key candidate alignments")
+    has_full_evaluation: bool = Field(default=False, description="True if full grounded evaluation exists in database")
+    evaluation_id: Optional[UUID] = Field(default=None, description="Evaluation ID if full evaluation exists")
+
+
+class JobRecommendationResponse(BaseModel):
+    """Collection of recommended jobs for a candidate ranked by fit score."""
+    candidate_id: UUID = Field(description="Candidate identifier")
+    candidate_name: str = Field(description="Masked candidate name")
+    total_database_jobs: int = Field(description="Total number of jobs evaluated from database")
+    recommendations: List[JobRecommendationItem] = Field(description="Top 10 job recommendations ranked descending by score")
+
+

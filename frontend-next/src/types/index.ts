@@ -257,21 +257,33 @@ export interface MatchEvaluationResult {
 }
 
 export interface InterviewQuestion {
-  question_id: string;
+  id?: string;
+  question_id?: string;
   target_requirement_id: string;
+  archetype?: string;
   question_text: string;
-  expected_answer_rubric: string;
-  difficulty: "junior" | "mid" | "senior" | "principal";
-  rationale_for_asking: string;
-  target_duration_minutes: number;
+  expected_answer?: string;
+  expected_answers?: string[];
+  expected_positive_signals?: string[];
+  bad_answer?: string;
+  bad_answers?: string[];
+  red_flags?: string[];
+  expected_answer_rubric?: string;
+  difficulty?: "junior" | "mid" | "senior" | "principal" | string;
+  rationale_for_asking?: string;
+  estimated_minutes?: number;
+  target_duration_minutes?: number;
 }
 
 export interface InterviewPlan {
   id: string;
   candidate_id: string;
   job_id: string;
+  total_estimated_minutes?: number;
   total_duration_minutes: number;
+  interview_focus_summary?: string;
   executive_summary: string;
+  interviewer_tips?: string[];
   questions: InterviewQuestion[];
 }
 
@@ -610,5 +622,35 @@ export interface TokenUsageAnalytics {
     status: string;
   }>;
 }
+
+export interface JobRecommendationItem {
+  rank: number;
+  job_id: string;
+  title: string;
+  department?: string | null;
+  location?: string | null;
+  work_model?: string | null;
+  employment_type?: string | null;
+  seniority_level?: string | null;
+  overall_score: number;
+  must_have_score: number;
+  nice_to_have_score: number;
+  recommendation: Recommendation;
+  must_have_gaps_count: number;
+  total_requirements_count: number;
+  matching_criteria_count: number;
+  matching_skills: string[];
+  key_strengths: string[];
+  has_full_evaluation: boolean;
+  evaluation_id?: string | null;
+}
+
+export interface JobRecommendationResponse {
+  candidate_id: string;
+  candidate_name: string;
+  total_database_jobs: number;
+  recommendations: JobRecommendationItem[];
+}
+
 
 

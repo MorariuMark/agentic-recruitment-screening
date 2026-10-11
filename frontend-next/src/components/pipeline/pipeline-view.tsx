@@ -1858,7 +1858,7 @@ export function PipelineView({
                               <button
                                 onClick={() => onOpenInterview(candidate.id)}
                                 className="px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-medium border border-blue-500/20 transition-colors cursor-pointer"
-                                title="Generate role-tailored STAR interview guide"
+                                title="Generate role-tailored interview guide"
                               >
                                 Interview
                               </button>

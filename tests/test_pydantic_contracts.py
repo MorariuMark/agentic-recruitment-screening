@@ -166,3 +166,45 @@ def test_interview_plan_schemas_validation():
     )
     assert len(plan.questions) == 1
     assert plan.questions[0].archetype == QuestionArchetype.TECHNICAL_DEEP_DIVE
+    assert plan.questions[0].expected_answer != ""
+    assert plan.questions[0].bad_answer != ""
+    assert plan.total_duration_minutes == 45
+    assert plan.executive_summary == "Probe vector indexing mechanics."
+
+
+def test_interview_expected_and_bad_answers_and_custom_duration():
+    """Verify expected_answer, bad_answer, custom duration bounds, and behavioral archetype."""
+    q = InterviewQuestion(
+        id="q_behavioral_lead",
+        target_requirement_id="req_leadership",
+        archetype=QuestionArchetype.BEHAVIORAL,
+        question_text="Tell me about a high-severity production outage and how you resolved team tension.",
+        expected_answer="Candidate explains structured incident response, blameless post-mortem, and actionable remediation.",
+        expected_answers=["Communicates with stakeholders", "Leads blameless post-mortem", "Implements regression tests"],
+        bad_answer="Candidate blames junior engineers, avoids accountability, and claims bugs are inevitable.",
+        bad_answers=["Shifts blame to teammates", "Shows no empathy", "No post-mortem process"],
+        estimated_minutes=25,
+        difficulty="senior",
+        rationale_for_asking="Probe conflict resolution and incident leadership under pressure."
+    )
+
+    # Custom 75-minute duration interview plan
+    plan = InterviewPlan(
+        candidate_id=uuid4(),
+        job_id=uuid4(),
+        questions=[q],
+        total_estimated_minutes=75,
+        interview_focus_summary="Probe incident ownership and production stability."
+    )
+
+    assert plan.total_estimated_minutes == 75
+    assert plan.total_duration_minutes == 75
+    assert plan.target_duration_minutes == 75
+    assert QuestionArchetype.BEHAVIORAL == "behavioral"
+    assert "STAR" not in QuestionArchetype.BEHAVIORAL.value
+
+    # Verify expected and bad answer propagation
+    assert "blameless post-mortem" in plan.questions[0].expected_answer
+    assert "Shifts blame" in plan.questions[0].bad_answers[0]
+    assert plan.questions[0].expected_positive_signals == plan.questions[0].expected_answers
+    assert plan.questions[0].red_flags == plan.questions[0].bad_answers

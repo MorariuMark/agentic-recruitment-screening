@@ -332,6 +332,24 @@ class DatabaseRepository:
             return await _op(s)
 
     @staticmethod
+    async def list_evaluations_for_candidate(
+        candidate_id: Union[UUID, str],
+        session: Optional[AsyncSession] = None,
+    ) -> List[MatchEvaluationModel]:
+        """Lists all evaluations for a specific candidate across all job requisitions."""
+        cid_str = str(candidate_id)
+
+        async def _op(s: AsyncSession) -> List[MatchEvaluationModel]:
+            stmt = select(MatchEvaluationModel).where(MatchEvaluationModel.candidate_id == cid_str).order_by(desc(MatchEvaluationModel.overall_score))
+            res = await s.execute(stmt)
+            return list(res.scalars().all())
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
     async def update_hitl_validation(
         evaluation_id: Union[UUID, str],
         decision: str,

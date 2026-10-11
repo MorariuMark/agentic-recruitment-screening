@@ -129,6 +129,52 @@ export function useProcessTimer(): UseProcessTimerReturn {
 }
 
 // ---------------------------------------------------------------------------
+// Process Run History & Dynamic Estimation Helpers
+// ---------------------------------------------------------------------------
+
+const TIMER_STORAGE_KEY_PREFIX = "atos_timer_runs_";
+
+export function getTimerHistory(key: string): number[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(`${TIMER_STORAGE_KEY_PREFIX}${key}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((n) => typeof n === "number" && n > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordTimerRun(key: string, durationSec: number): void {
+  if (typeof window === "undefined" || durationSec <= 0) return;
+  try {
+    const history = getTimerHistory(key);
+    // Keep the last 5 runs
+    const updated = [...history.slice(-4), parseFloat(durationSec.toFixed(1))];
+    localStorage.setItem(`${TIMER_STORAGE_KEY_PREFIX}${key}`, JSON.stringify(updated));
+  } catch {}
+}
+
+export function computeEstimatedRange(history: number[], fallbackText?: string): string {
+  if (!history || history.length === 0) {
+    return fallbackText || "Est. 8 - 25s";
+  }
+  if (history.length === 1) {
+    const run = history[0];
+    const min = Math.max(1, parseFloat((run * 0.85).toFixed(1)));
+    const max = parseFloat((run * 1.25).toFixed(1));
+    return `Est. ${min}s - ${max}s (based on last run: ${run.toFixed(1)}s)`;
+  }
+  const min = Math.min(...history);
+  const max = Math.max(...history);
+  if (min === max) {
+    return `Est. ~${min.toFixed(1)}s (last ${history.length} runs)`;
+  }
+  return `Est. ${min.toFixed(1)}s - ${max.toFixed(1)}s (last ${history.length} runs)`;
+}
+
+// ---------------------------------------------------------------------------
 // Visual Components
 // ---------------------------------------------------------------------------
 
@@ -148,6 +194,7 @@ interface LiveProcessTimerProps {
   modelName?: string;
   tokenUsage?: any;
   variant?: "default" | "expanded";
+  timerKey?: string;
 }
 
 export function LiveProcessTimer({
@@ -166,13 +213,30 @@ export function LiveProcessTimer({
   modelName = "Active AI Model",
   tokenUsage,
   variant = "default",
+  timerKey,
 }: LiveProcessTimerProps) {
   const isRunning = timer ? timer.isRunning : (directIsRunning ?? false);
   const elapsedSeconds = timer ? timer.elapsedSeconds : (directElapsedSeconds ?? 0);
   const completedDuration = timer ? timer.completedDuration : directCompletedDuration;
   const onCancel = directOnCancel || (timer ? timer.cancelTimer : undefined);
   const displayLabel = title || label || "Processing with AI...";
-  const displayEstimate = estimatedTimeText || estimateText || "Est. 8 - 25s";
+
+  // Dynamic estimation derived from history of last runs
+  const resolvedTimerKey = timerKey || (title || label || "general_task").toLowerCase().replace(/[^a-z0-9]/g, "_");
+  const [historyRuns, setHistoryRuns] = useState<number[]>([]);
+
+  useEffect(() => {
+    setHistoryRuns(getTimerHistory(resolvedTimerKey));
+  }, [resolvedTimerKey, isRunning]);
+
+  useEffect(() => {
+    if (completedDuration && completedDuration > 0) {
+      recordTimerRun(resolvedTimerKey, completedDuration);
+      setHistoryRuns(getTimerHistory(resolvedTimerKey));
+    }
+  }, [completedDuration, resolvedTimerKey]);
+
+  const displayEstimate = computeEstimatedRange(historyRuns, estimatedTimeText || estimateText);
 
   const [streamedTokens, setStreamedTokens] = useState(0);
 

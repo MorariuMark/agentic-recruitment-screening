@@ -34,7 +34,14 @@ from backend.db.repository import DatabaseRepository
 from backend.schemas.cv import AnonymizedCandidate, CVTaggedExport, ParsedCV
 from backend.schemas.interview import InterviewPlan, InterviewQuestion
 from backend.schemas.job import JobDescription, JobExtractionResult, JDTaggedExport, JobRequirement, RequirementCategory
-from backend.schemas.match import MatchEvaluationResult, MatchStatus, Recommendation, RequirementMatch
+from backend.schemas.match import (
+    JobRecommendationItem,
+    JobRecommendationResponse,
+    MatchEvaluationResult,
+    MatchStatus,
+    Recommendation,
+    RequirementMatch,
+)
 from backend.schemas.token_usage import TokenUsageAnalytics, TokenUsageInfo
 from backend.schemas.models_catalog import CATALOG_PROVIDERS, get_model_info, get_providers_catalog
 from backend.services.audit_exporter import AuditExporter
@@ -142,7 +149,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
             title=r.title,
             category=RequirementCategory(r.category),
             weight=r.weight,
-            description=r.description,
+            description=r.description or "",
             minimum_years_experience=r.minimum_years_experience,
         )
         for r in (job_model.requirements or [])
@@ -303,7 +310,7 @@ class InterviewGenerateRequest(BaseModel):
     candidate_id: UUID = Field(description="UUID of candidate")
     evaluation_id: UUID = Field(description="UUID of evaluation report")
     job_description: JobDescription = Field(description="Job description being interviewed for")
-    target_duration_minutes: int = Field(default=45, ge=15, le=120, description="Target interview length")
+    target_duration_minutes: int = Field(default=45, ge=5, le=240, description="Target interview length")
 
 
 class JobUrlParseRequest(BaseModel):
@@ -1301,6 +1308,257 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
         "candidate_id": cid_str,
         "message": f"Candidate {cid_str} successfully deleted.",
     }
+
+
+@router.get(
+    "/candidates/{candidate_id}/recommended-jobs",
+    response_model=JobRecommendationResponse,
+    summary="Recommend top matching jobs from database for the candidate, ranked by fit score",
+)
+async def recommend_jobs_for_candidate(
+    candidate_id: UUID,
+    limit: int = Query(default=10, ge=1, le=50, description="Max jobs to return (defaults to top 10)"),
+) -> JobRecommendationResponse:
+    """
+    Scans all stored job descriptions from the database, scores candidate alignment
+    using existing evaluations where available, or semantic vector retrieval and skill overlap,
+    ranking the top fits by score.
+    """
+    cand_record = await DatabaseRepository.get_candidate(candidate_id)
+    raw: Dict[str, Any] = {}
+    anon: Dict[str, Any] = {}
+    masked_name = ""
+    candidate_skills: List[str] = []
+    sanitized_text = ""
+
+    if cand_record:
+        raw = cand_record.raw_cv_json or {}
+        anon = cand_record.anonymized_cv_json or {}
+        masked_name = cand_record.full_name_redacted or f"Candidate-{str(candidate_id)[:8].upper()}"
+        candidate_skills = list(raw.get("skills") or anon.get("anonymized_skills") or [])
+        sanitized_text = cand_record.sanitized_text or ""
+    elif candidate_id in _CANDIDATE_ANONYMIZED_STORE:
+        cand_anon_obj = _CANDIDATE_ANONYMIZED_STORE[candidate_id]
+        masked_name = f"Candidate-{str(candidate_id)[:8].upper()}"
+        candidate_skills = cand_anon_obj.anonymized_skills or []
+        sanitized_text = cand_anon_obj.sanitized_text or ""
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {candidate_id} not found in database or session cache.",
+        )
+
+    job_records = await DatabaseRepository.list_jobs(limit=100)
+    if not job_records:
+        return JobRecommendationResponse(
+            candidate_id=candidate_id,
+            candidate_name=masked_name,
+            total_database_jobs=0,
+            recommendations=[],
+        )
+
+    eval_records = await DatabaseRepository.list_evaluations_for_candidate(candidate_id)
+    eval_map: Dict[str, Any] = {str(e.job_id): e for e in eval_records}
+    for eid, ev in _EVALUATION_STORE.items():
+        if ev.candidate_id == candidate_id:
+            eval_map[str(ev.job_id)] = ev
+
+    candidate_skills_lower = [s.strip().lower() for s in candidate_skills if s and s.strip()]
+    candidate_text_lower = sanitized_text.lower()
+
+    scored_items: List[Dict[str, Any]] = []
+
+    for job_model in job_records:
+        job = _reconstruct_job_from_db(job_model)
+        jid_str = str(job.id)
+
+        if jid_str in eval_map:
+            ev = eval_map[jid_str]
+            if isinstance(ev, MatchEvaluationModel):
+                ev_result = _reconstruct_evaluation_from_db(ev)
+            else:
+                ev_result = ev
+
+            matching_skills = [
+                s for s in candidate_skills
+                if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in job.requirements)
+            ]
+            strengths = [
+                m.title or m.requirement_id
+                for m in ev_result.requirement_matches
+                if m.status == MatchStatus.MET
+            ][:4]
+            matching_criteria_count = sum(
+                1 for m in ev_result.requirement_matches
+                if m.status in (MatchStatus.MET, MatchStatus.PARTIAL)
+            )
+
+            scored_items.append({
+                "job_id": job.id,
+                "title": job.title,
+                "department": job.department,
+                "location": job.location,
+                "work_model": job.work_model,
+                "employment_type": job.employment_type,
+                "seniority_level": job.seniority_level,
+                "overall_score": round(float(ev_result.overall_score), 1),
+                "must_have_score": round(float(ev_result.must_have_score), 1),
+                "nice_to_have_score": round(float(ev_result.nice_to_have_score), 1),
+                "recommendation": ev_result.recommendation,
+                "must_have_gaps_count": int(ev_result.must_have_gaps_count),
+                "total_requirements_count": len(job.requirements),
+                "matching_criteria_count": matching_criteria_count,
+                "matching_skills": matching_skills[:6],
+                "key_strengths": strengths,
+                "has_full_evaluation": True,
+                "evaluation_id": ev_result.id,
+            })
+        else:
+            reqs = job.requirements or []
+            must_haves = [r for r in reqs if r.category == RequirementCategory.MUST_HAVE]
+            nice_to_haves = [r for r in reqs if r.category == RequirementCategory.NICE_TO_HAVE]
+
+            def _score_req_list(req_list: List[JobRequirement]) -> Tuple[float, int, List[str]]:
+                if not req_list:
+                    return 100.0, 0, []
+                total_weight = sum(r.weight for r in req_list) or 1.0
+                accum_score = 0.0
+                gaps = 0
+                matched_req_titles = []
+
+                for r in req_list:
+                    r_title_lower = (r.title or "").lower()
+                    r_desc_lower = (r.description or "").lower()
+
+                    skill_hit = any(
+                        s in r_title_lower or s in r_desc_lower or r_title_lower in s
+                        for s in candidate_skills_lower
+                    )
+                    text_hit = (
+                        (r.title and r_title_lower in candidate_text_lower)
+                        or any(w in candidate_text_lower for w in r_title_lower.split() if len(w) > 4)
+                    )
+
+                    sem_hit = False
+                    sem_dist = 1.0
+                    try:
+                        chunks = _vector_store.query_candidate_chunks(
+                            candidate_id=candidate_id,
+                            query_text=r.title or r.description or "",
+                            n_results=1,
+                        )
+                        if chunks and "distance" in chunks[0]:
+                            sem_dist = chunks[0]["distance"]
+                            if sem_dist < 0.60:
+                                sem_hit = True
+                    except Exception:
+                        pass
+
+                    if skill_hit and sem_hit:
+                        item_score = max(0.85, 1.0 - sem_dist * 0.5)
+                        matched_req_titles.append(r.title or r.id)
+                    elif skill_hit or sem_hit:
+                        item_score = 0.75 if skill_hit else max(0.65, 1.0 - sem_dist)
+                        matched_req_titles.append(r.title or r.id)
+                    elif text_hit:
+                        item_score = 0.50
+                    else:
+                        item_score = 0.15
+                        gaps += 1
+
+                    accum_score += item_score * r.weight
+
+                pct_score = (accum_score / total_weight) * 100.0
+                return min(100.0, max(0.0, pct_score)), gaps, matched_req_titles
+
+            mh_score, mh_gaps, mh_matched = _score_req_list(must_haves)
+            nth_score, _, nth_matched = _score_req_list(nice_to_haves)
+
+            if must_haves and nice_to_haves:
+                ov_score = round(mh_score * 0.75 + nth_score * 0.25, 1)
+            elif must_haves:
+                ov_score = round(mh_score, 1)
+            elif nice_to_haves:
+                ov_score = round(nth_score, 1)
+            else:
+                ov_score = 50.0
+
+            if ov_score >= 70.0 and mh_gaps == 0:
+                rec_tier = Recommendation.STRONG_MATCH
+            elif ov_score >= 50.0 and mh_gaps <= 1:
+                rec_tier = Recommendation.BORDERLINE
+            else:
+                rec_tier = Recommendation.REJECT
+
+            matching_skills = [
+                s for s in candidate_skills
+                if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in reqs)
+            ]
+
+            all_matched = mh_matched + nth_matched
+            scored_items.append({
+                "job_id": job.id,
+                "title": job.title,
+                "department": job.department,
+                "location": job.location,
+                "work_model": job.work_model,
+                "employment_type": job.employment_type,
+                "seniority_level": job.seniority_level,
+                "overall_score": ov_score,
+                "must_have_score": round(mh_score, 1),
+                "nice_to_have_score": round(nth_score, 1),
+                "recommendation": rec_tier,
+                "must_have_gaps_count": mh_gaps,
+                "total_requirements_count": len(reqs),
+                "matching_criteria_count": len(all_matched),
+                "matching_skills": matching_skills[:6],
+                "key_strengths": all_matched[:4],
+                "has_full_evaluation": False,
+                "evaluation_id": None,
+            })
+
+    scored_items.sort(
+        key=lambda x: (
+            x["overall_score"],
+            -x["must_have_gaps_count"],
+            x["must_have_score"],
+        ),
+        reverse=True,
+    )
+
+    top_items = scored_items[:limit]
+    final_recommendations: List[JobRecommendationItem] = []
+    for rank_idx, item in enumerate(top_items, start=1):
+        final_recommendations.append(
+            JobRecommendationItem(
+                rank=rank_idx,
+                job_id=item["job_id"],
+                title=item["title"],
+                department=item["department"],
+                location=item["location"],
+                work_model=item["work_model"],
+                employment_type=item["employment_type"],
+                seniority_level=item["seniority_level"],
+                overall_score=item["overall_score"],
+                must_have_score=item["must_have_score"],
+                nice_to_have_score=item["nice_to_have_score"],
+                recommendation=item["recommendation"],
+                must_have_gaps_count=item["must_have_gaps_count"],
+                total_requirements_count=item["total_requirements_count"],
+                matching_criteria_count=item["matching_criteria_count"],
+                matching_skills=item["matching_skills"],
+                key_strengths=item["key_strengths"],
+                has_full_evaluation=item["has_full_evaluation"],
+                evaluation_id=item["evaluation_id"],
+            )
+        )
+
+    return JobRecommendationResponse(
+        candidate_id=candidate_id,
+        candidate_name=masked_name,
+        total_database_jobs=len(job_records),
+        recommendations=final_recommendations,
+    )
 
 
 @router.get(

@@ -4,13 +4,17 @@ Agent responsible for fetching job description content from URLs across web plat
 extracting structured atomic requirements via LLM, and detecting missing critical criteria.
 """
 
+import html
 import json
+import logging
 import re
 from typing import Any, List, Optional
 from uuid import uuid4
 from bs4 import BeautifulSoup
 import httpx
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("recruitment_screening.job_parser")
 
 from backend.agents.llm_factory import BaseLLMClient, get_llm_client
 from backend.schemas.job import (
@@ -187,6 +191,128 @@ def _try_extract_oracle_hcm(html_content: str, url: str, timeout: float = 15.0) 
             return text if len(text.strip()) >= 50 else None
     except Exception:
         return None
+
+
+def _try_extract_greenhouse(html_content: str, url: str, timeout: float = 15.0) -> Optional[str]:
+    """
+    Detects and extracts job postings hosted on or embedded from Greenhouse ATS
+    (e.g. teams.emag.ro/?gh_jid=..., boards.greenhouse.io, boards.eu.greenhouse.io).
+    """
+    # 1. Resolve Greenhouse Job ID
+    jid_match = re.search(r"[?&](?:gh_jid|gh_job_id|token)=([0-9]+)", url)
+    if not jid_match:
+        jid_match = re.search(r"greenhouse\.io/(?:embed/)?(?:[^/]+/)?jobs/([0-9]+)", url)
+    if not jid_match:
+        jid_match = re.search(r"/jobs/([0-9]+)", url)
+    if not jid_match:
+        jid_match = re.search(r"[?&](?:gh_jid|token)=([0-9]+)", html_content)
+    if not jid_match:
+        return None
+    jid = jid_match.group(1)
+
+    # 2. Resolve Greenhouse Board Token
+    board = None
+    for_match = re.search(r"[?&]for=([a-zA-Z0-9_-]+)", url)
+    if for_match:
+        board = for_match.group(1)
+    if not board:
+        script_match = re.search(r"greenhouse\.io/embed/job_board/js\?for=([a-zA-Z0-9_-]+)", html_content)
+        if script_match:
+            board = script_match.group(1)
+    if not board:
+        iframe_match = re.search(r"greenhouse\.io/embed/job_app\?for=([a-zA-Z0-9_-]+)", html_content)
+        if iframe_match:
+            board = iframe_match.group(1)
+    if not board:
+        path_match = re.search(r"(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/([^/?#]+)", url)
+        if path_match and path_match.group(1) not in ("embed", "v1", "jobs"):
+            board = path_match.group(1)
+    if not board:
+        m_generic = re.search(r"for=([a-zA-Z0-9_-]+)", html_content)
+        if m_generic:
+            board = m_generic.group(1)
+
+    if not board or not jid:
+        return None
+
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs/{jid}"
+    try:
+        with httpx.Client(headers=BROWSER_HEADERS, timeout=timeout, verify=False) as client:
+            res = client.get(api_url)
+            if res.status_code == 200:
+                data = res.json()
+                sections = []
+                title = data.get("title")
+                if title:
+                    sections.append(f"Job Title: {title.strip()}")
+                company = data.get("company_name") or board.replace("-", " ").title()
+                sections.append(f"Company: {company}")
+                loc = (data.get("location") or {}).get("name")
+                if loc:
+                    sections.append(f"Location: {loc.strip()}")
+                depts = [d["name"] for d in data.get("departments", []) if d.get("name")]
+                if depts:
+                    sections.append(f"Department: {', '.join(depts)}")
+                offices = [o["name"] for o in data.get("offices", []) if o.get("name")]
+                if offices and not loc:
+                    sections.append(f"Office: {', '.join(offices)}")
+
+                raw_body = html.unescape(data.get("content") or "")
+                desc_text = _clean_html_string(raw_body)
+                if desc_text:
+                    sections.append(f"\nJob Description & Requirements:\n{desc_text}")
+                text = "\n".join(sections)
+                if len(text.strip()) >= 50:
+                    return text
+    except Exception as e:
+        logger.warning(f"Failed Greenhouse extraction for board={board}, jid={jid}: {e}")
+
+    return None
+
+
+def _try_extract_lever(html_content: str, url: str, timeout: float = 15.0) -> Optional[str]:
+    """
+    Detects and extracts job postings hosted on Lever ATS (jobs.lever.co/{company}/{job_id}).
+    """
+    lever_match = re.search(r"jobs\.lever\.co/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)", url)
+    if not lever_match:
+        lever_match = re.search(r"lever\.co/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)", html_content)
+    if not lever_match:
+        return None
+    company, jid = lever_match.group(1), lever_match.group(2)
+    api_url = f"https://api.lever.co/v0/postings/{company}/{jid}"
+    try:
+        with httpx.Client(headers=BROWSER_HEADERS, timeout=timeout, verify=False) as client:
+            res = client.get(api_url)
+            if res.status_code == 200:
+                data = res.json()
+                sections = []
+                title = data.get("text")
+                if title:
+                    sections.append(f"Job Title: {title}")
+                sections.append(f"Company: {company.title()}")
+                cats = data.get("categories") or {}
+                loc = cats.get("location")
+                if loc:
+                    sections.append(f"Location: {loc}")
+                team = cats.get("team") or cats.get("department")
+                if team:
+                    sections.append(f"Department: {team}")
+                desc = _clean_html_string(data.get("descriptionPlain") or data.get("description") or "")
+                if desc:
+                    sections.append(f"\nJob Description:\n{desc}")
+                for list_item in data.get("lists", []):
+                    heading = list_item.get("text", "")
+                    content = _clean_html_string(list_item.get("content", ""))
+                    if heading or content:
+                        sections.append(f"\n{heading}:\n{content}")
+                text = "\n".join(sections)
+                if len(text.strip()) >= 50:
+                    return text
+    except Exception as e:
+        logger.warning(f"Failed Lever extraction for company={company}, jid={jid}: {e}")
+
+    return None
 
 
 def _try_extract_json_ld(soup: BeautifulSoup) -> Optional[str]:
@@ -382,6 +508,16 @@ def fetch_url_content(url: str, timeout_seconds: float = 15.0) -> str:
     oracle_text = _try_extract_oracle_hcm(html_content, cleaned_url, timeout=timeout_seconds)
     if oracle_text:
         return oracle_text[:15000]
+
+    # 1.5 Check for Greenhouse ATS (e.g. teams.emag.ro/?gh_jid=..., boards.greenhouse.io)
+    greenhouse_text = _try_extract_greenhouse(html_content, cleaned_url, timeout=timeout_seconds)
+    if greenhouse_text:
+        return greenhouse_text[:15000]
+
+    # 1.6 Check for Lever ATS (e.g. jobs.lever.co/...)
+    lever_text = _try_extract_lever(html_content, cleaned_url, timeout=timeout_seconds)
+    if lever_text:
+        return lever_text[:15000]
 
     soup = BeautifulSoup(html_content, "html.parser")
 

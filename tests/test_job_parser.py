@@ -491,3 +491,113 @@ def test_job_parser_agent_omitted_field_fallbacks():
     assert any("location" in r.id.lower() or "on-site" in r.id.lower() for r in jd.requirements)
 
 
+def test_greenhouse_extraction_logic(monkeypatch):
+    """Verify Greenhouse ATS job extraction from embedded widget page."""
+    wrapper_html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Careers at eMAG</title>
+        <script src="https://boards.eu.greenhouse.io/embed/job_board/js?for=emag"></script>
+    </head>
+    <body><div id="grnhse_app"></div></body>
+    </html>
+    """
+    greenhouse_json = {
+        "title": "Finance Business Partner",
+        "company_name": "eMAG",
+        "location": {"name": "Headquarters eMAG Group, Bucharest"},
+        "departments": [{"name": "Finance"}],
+        "content": "&lt;p&gt;Lead strategic financial planning &amp; budgeting initiatives.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;5+ years experience in Corporate Finance&lt;/li&gt;&lt;/ul&gt;"
+    }
+
+    class MockResponse:
+        def __init__(self, text="", json_data=None, status_code=200):
+            self.text = text
+            self._json = json_data
+            self.status_code = status_code
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._json
+
+    class MockHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def get(self, url, **kwargs):
+            if "boards-api.greenhouse.io" in url:
+                return MockResponse(json_data=greenhouse_json)
+            return MockResponse(text=wrapper_html)
+
+    monkeypatch.setattr("httpx.Client", MockHttpClient)
+
+    extracted = fetch_url_content("https://teams.emag.ro/jobs/?gh_jid=4971547101")
+    assert "Job Title: Finance Business Partner" in extracted
+    assert "Company: eMAG" in extracted
+    assert "Location: Headquarters eMAG Group, Bucharest" in extracted
+    assert "Department: Finance" in extracted
+    assert "Lead strategic financial planning & budgeting initiatives." in extracted
+    assert "5+ years experience in Corporate Finance" in extracted
+
+
+def test_lever_extraction_logic(monkeypatch):
+    """Verify Lever ATS job extraction via Lever posting API."""
+    wrapper_html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Job at Acme</title></head>
+    <body><div id="app"></div></body>
+    </html>
+    """
+    lever_json = {
+        "text": "Senior Staff Architect",
+        "categories": {
+            "location": "Berlin, Germany",
+            "department": "Platform Engineering"
+        },
+        "descriptionPlain": "We are seeking a Senior Staff Architect to lead platform migration.",
+        "lists": [
+            {
+                "text": "Requirements",
+                "content": "<ul><li>10+ years in distributed systems</li><li>Golang & Kubernetes</li></ul>"
+            }
+        ]
+    }
+
+    class MockResponse:
+        def __init__(self, text="", json_data=None, status_code=200):
+            self.text = text
+            self._json = json_data
+            self.status_code = status_code
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._json
+
+    class MockHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def get(self, url, **kwargs):
+            if "api.lever.co" in url:
+                return MockResponse(json_data=lever_json)
+            return MockResponse(text=wrapper_html)
+
+    monkeypatch.setattr("httpx.Client", MockHttpClient)
+
+    extracted = fetch_url_content("https://jobs.lever.co/acme/987654321")
+    assert "Job Title: Senior Staff Architect" in extracted
+    assert "Company: Acme" in extracted
+    assert "Location: Berlin, Germany" in extracted
+    assert "Department: Platform Engineering" in extracted
+    assert "We are seeking a Senior Staff Architect" in extracted
+    assert "10+ years in distributed systems" in extracted
+
+
+

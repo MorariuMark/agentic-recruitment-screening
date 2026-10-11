@@ -145,6 +145,7 @@ DEGREE_LEVELS = {
     "dr.": 4,
     "dphil": 4,
     "master": 3,
+    "masters": 3,
     "msc": 3,
     "m.sc": 3,
     "ma": 3,
@@ -153,6 +154,7 @@ DEGREE_LEVELS = {
     "mba": 3,
     "magister": 3,
     "bachelor": 2,
+    "bachelors": 2,
     "bsc": 2,
     "b.sc": 2,
     "ba": 2,
@@ -164,6 +166,70 @@ DEGREE_LEVELS = {
     "diploma": 1,
     "high school": 1,
 }
+
+DISCIPLINE_CLUSTERS = [
+    {
+        "family": "economics_business",
+        "keywords": [
+            "economic", "economics", "economy", "economie", "economice", "finance", "financial",
+            "finante", "accounting", "contabilitate", "business", "business administration",
+            "afaceri", "management", "commerce", "comert", "banking", "bancar", "audit"
+        ],
+    },
+    {
+        "family": "computer_science_it",
+        "keywords": [
+            "computer science", "informatics", "informatica", "software", "information technology",
+            "calculatoare", "computing", "cybersecurity", "data science"
+        ],
+    },
+    {
+        "family": "engineering",
+        "keywords": [
+            "engineering", "inginerie", "electrical", "electronics", "electronica",
+            "telecommunications", "telecomunicatii", "mechanical", "mecanica", "civil", "constructii",
+            "mechatronics", "mecatronica", "automotive", "autovehicule", "automation", "automatica"
+        ],
+    },
+    {
+        "family": "law",
+        "keywords": [
+            "law", "legal", "drept", "jurisprudence", "juridice"
+        ],
+    },
+    {
+        "family": "natural_sciences",
+        "keywords": [
+            "mathematics", "matematica", "physics", "fizica", "chemistry", "chimie", "biology", "biologie"
+        ],
+    },
+    {
+        "family": "medicine_health",
+        "keywords": [
+            "medicine", "medicina", "pharmacy", "farmacie", "nursing", "health", "sanatate"
+        ],
+    },
+    {
+        "family": "humanities_social",
+        "keywords": [
+            "psychology", "psihologie", "sociology", "sociologie", "human resources", "resurse umane",
+            "languages", "filologie", "letters", "litere", "journalism", "jurnalism"
+        ],
+    },
+]
+
+
+def detect_academic_disciplines(text: str) -> set:
+    """Extracts academic disciplines from text (e.g., economics, CS, engineering)."""
+    text_lower = text.lower()
+    disciplines = set()
+    for cluster in DISCIPLINE_CLUSTERS:
+        for kw in cluster["keywords"]:
+            if re.search(r"\b" + re.escape(kw) + r"\b", text_lower):
+                disciplines.add(cluster["family"])
+                break
+    return disciplines
+
 
 TECH_NAME_MAP = {
     "aws": "AWS",
@@ -395,7 +461,7 @@ class SkillEquivalenceService:
     ) -> Optional[Tuple[bool, str, str]]:
         """
         Determines whether candidate's degree satisfies or exceeds required academic level
-        (e.g., MSc/PhD strictly satisfies Bachelor's requirement).
+        (e.g., MSc/PhD strictly satisfies Bachelor's requirement in matching or compatible discipline).
 
         Returns:
             Tuple of (is_satisfied, candidate_degree, required_degree)
@@ -403,34 +469,55 @@ class SkillEquivalenceService:
         """
         req_text = f"{requirement_title} {requirement_description}".lower()
 
-        # Check if this requirement is asking for a degree
+        # Check if this requirement is asking for an academic degree
         is_degree_req = any(kw in req_text for kw in [
-            "bachelor", "master", "phd", "degree", "diploma", "bsc", "msc", "licenta"
+            "bachelor", "master", "phd", "degree", "diploma", "bsc", "msc", "licenta", "university", "universitate"
         ])
         if not is_degree_req:
             return None
+
+        # Detect if requirement specifically demands an academic discipline (e.g. Economics, CS, Engineering)
+        req_disciplines = detect_academic_disciplines(req_text)
 
         # Target degree required level
         target_level = 2  # default Bachelor level
         target_degree_str = "Bachelor's Degree"
         for term, level in DEGREE_LEVELS.items():
             if re.search(r"\b" + re.escape(term) + r"\b", req_text):
-                target_level = max(target_level, level)
-                target_degree_str = term.upper()
+                if level > target_level:
+                    target_level = level
+                    target_degree_str = term.upper()
 
         if not education_list:
             return None
 
-        # Check highest degree achieved by candidate
+        # Check candidate's degrees and ensure matching academic discipline
         highest_cand_level = 0
         best_cand_degree = "No Degree"
+        has_matching_discipline = False if req_disciplines else True
+
         for edu in education_list:
-            d_title = edu.degree_title.lower()
+            d_title = (edu.degree_title or "").lower()
+            d_field = (edu.field_of_study or "").lower()
+            edu_full = f"{d_title} {d_field}".strip()
+
+            edu_disciplines = detect_academic_disciplines(edu_full)
+            if req_disciplines and bool(req_disciplines & edu_disciplines):
+                has_matching_discipline = True
+
+            # If the requirement demands a specific discipline, only evaluate degrees within that discipline
+            if req_disciplines and not bool(req_disciplines & edu_disciplines):
+                continue
+
             for term, level in DEGREE_LEVELS.items():
-                if term in d_title:
+                if re.search(r"\b" + re.escape(term) + r"\b", d_title):
                     if level > highest_cand_level:
                         highest_cand_level = level
                         best_cand_degree = edu.degree_title
+
+        if req_disciplines and not has_matching_discipline:
+            # Candidate holds no degree in the required discipline
+            return None
 
         if highest_cand_level >= target_level:
             return (True, best_cand_degree, target_degree_str)
