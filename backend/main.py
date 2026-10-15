@@ -57,12 +57,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as e:
             logger.warning(f"Phoenix health check failed: {e}")
 
-    # Non-blocking background pre-warming of local SentenceTransformers embedding weights
+    # Non-blocking background pre-warming of local models and embedding weights
     try:
         import asyncio
         from backend.services.vector_store import get_cached_embedding_function
+        from backend.schemas.models_catalog import sync_all_local_models
+        from backend.services.ollama_service import OllamaService
         asyncio.create_task(asyncio.to_thread(get_cached_embedding_function))
-        logger.info("Dispatched background pre-warming for local vector embedding model.")
+        asyncio.create_task(asyncio.to_thread(sync_all_local_models))
+        asyncio.create_task(asyncio.to_thread(OllamaService().get_hardware_profile))
+        logger.info("Dispatched background pre-warming for local models and vector embedding model.")
     except Exception as warm_err:
         logger.warning(f"Could not dispatch embedding pre-warming: {warm_err}")
 

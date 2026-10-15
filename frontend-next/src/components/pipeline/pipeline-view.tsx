@@ -17,6 +17,7 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock,
   Download,
@@ -199,6 +200,12 @@ export function PipelineView({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRecommendation, setFilterRecommendation] = useState<string>("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterRecommendation]);
   const [isUploadingBatch, setIsUploadingBatch] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [batchProgress, setBatchProgress] = useState<{
@@ -517,6 +524,13 @@ export function PipelineView({
     const rec = (c.latest_evaluation?.recommendation || "").toLowerCase();
     return rec === filterRecommendation.toLowerCase();
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const paginatedCandidates = filteredCandidates.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize
+  );
 
   return (
     <div className="space-y-6">
@@ -1683,7 +1697,8 @@ export function PipelineView({
                 </div>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-900/90 border-b border-slate-800 text-slate-300 font-semibold text-xs uppercase tracking-wider">
                     <tr>
@@ -1699,7 +1714,7 @@ export function PipelineView({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
-                    {filteredCandidates.map((candidate) => {
+                    {paginatedCandidates.map((candidate) => {
                       const evalData = candidate.latest_evaluation;
                       const badge = evalData
                         ? getRecommendationBadge(evalData.recommendation)
@@ -1877,7 +1892,71 @@ export function PipelineView({
                   </tbody>
                 </table>
               </div>
-            )}
+
+              {/* Pagination Controls */}
+              {filteredCandidates.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-slate-900/60 border-t border-slate-800 text-xs text-slate-400">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>
+                      Showing{" "}
+                      <strong className="text-slate-200">
+                        {(safePage - 1) * pageSize + 1}
+                      </strong>{" "}
+                      to{" "}
+                      <strong className="text-slate-200">
+                        {Math.min(safePage * pageSize, filteredCandidates.length)}
+                      </strong>{" "}
+                      of{" "}
+                      <strong className="text-slate-200">
+                        {filteredCandidates.length}
+                      </strong>{" "}
+                      candidates
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-2">
+                      <span className="text-[11px] text-slate-500">Per page:</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="bg-slate-950 border border-slate-800 rounded px-2 py-0.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+                      >
+                        <option value={15}>15</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 font-medium transition-colors cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Prev</span>
+                    </button>
+
+                    <span className="px-2 font-mono text-slate-300 font-medium">
+                      Page {safePage} of {totalPages}
+                    </span>
+
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={safePage >= totalPages}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 font-medium transition-colors cursor-pointer"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           </div>
         </div>
       )}

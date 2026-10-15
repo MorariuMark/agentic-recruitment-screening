@@ -412,15 +412,50 @@ class SkillEquivalenceService:
             Tuple of (is_satisfied, candidate_language_level, required_language_level)
             or None if requirement is not language-specific.
         """
+        title_lower = requirement_title.lower()
         req_text = f"{requirement_title} {requirement_description}".lower()
 
+        # 1. Exclude non-language requirements (location, relocation, presence, work permit, visa, etc.)
+        location_keywords = [
+            "location", "on-site", "presence", "relocat", "residen", "work permit", "visa",
+            "office", "travel", "shift", "driving licence", "driver licence"
+        ]
+        if any(lk in title_lower for lk in location_keywords):
+            return None
+
+        # 2. Identify target language using word-boundary patterns so "Germany" never matches "German"
+        SUPPORTED_LANGS = [
+            ("german", [r"\bgerman\b", r"\bdeutsch\b", r"\bdeutsche\b", r"\bdeutschen\b"]),
+            ("english", [r"\benglish\b", r"\benglisch\b", r"\benglische\b"]),
+            ("french", [r"\bfrench\b", r"\bfranzösisch\b"]),
+            ("spanish", [r"\bspanish\b", r"\bspanisch\b"]),
+            ("italian", [r"\bitalian\b", r"\bitalienisch\b"]),
+            ("romanian", [r"\bromanian\b", r"\brumänisch\b"]),
+            ("dutch", [r"\bdutch\b", r"\bniederländisch\b"]),
+        ]
+
         target_lang = None
-        for lang in ["german", "english", "french", "spanish", "italian", "romanian", "dutch"]:
-            if lang in req_text:
-                target_lang = lang
+        for lang_name, patterns in SUPPORTED_LANGS:
+            if any(re.search(p, req_text) for p in patterns):
+                target_lang = lang_name
                 break
 
         if not target_lang:
+            return None
+
+        # 3. Ensure requirement explicitly demands language competency, not just incidental mention
+        lang_competency_keywords = [
+            "language", "sprache", "fluent", "fluency", "fließend", "proficien",
+            "verbal", "spoken", "written", "bilingual", "multilingual",
+            "cefr", "mother tongue", "muttersprache", "conversational", "konversationssicher",
+            "verhandlungssicher", "gut in wort und schrift", "communication"
+        ]
+        is_lang_competency = (
+            any(kw in req_text for kw in lang_competency_keywords)
+            or any(re.search(rf"\b{l}\b\s+(level|skill|speaker|knowledge)", req_text) for l, _ in SUPPORTED_LANGS)
+            or any(re.search(r"\b" + re.escape(term) + r"\b", req_text) for term in ["b1", "b2", "c1", "c2", "a1", "a2"])
+        )
+        if not is_lang_competency:
             return None
 
         # Determine target CEFR level from requirement text
@@ -467,16 +502,26 @@ class SkillEquivalenceService:
             Tuple of (is_satisfied, candidate_degree, required_degree)
             or None if requirement is not academic degree-related.
         """
+        title_lower = requirement_title.lower()
         req_text = f"{requirement_title} {requirement_description}".lower()
 
-        # Check if this requirement is asking for an academic degree
-        is_degree_req = any(kw in req_text for kw in [
+        # 1. If requirement is explicitly about the study field / major / discipline (e.g. "Relevant Study Field"),
+        # degree level hierarchy (e.g. Master's >= Bachelor's) must NOT override discipline alignment.
+        field_keywords = [
+            "study field", "field of study", "major", "discipline",
+            "studiengang", "fachrichtung", "studienrichtung"
+        ]
+        if any(fk in title_lower for fk in field_keywords):
+            return None
+
+        # 2. Check if this requirement is asking for an academic degree level
+        is_degree_req = any(re.search(r"\b" + re.escape(kw) + r"\b", req_text) for kw in [
             "bachelor", "master", "phd", "degree", "diploma", "bsc", "msc", "licenta", "university", "universitate"
         ])
         if not is_degree_req:
             return None
 
-        # Detect if requirement specifically demands an academic discipline (e.g. Economics, CS, Engineering)
+        # 3. Detect if requirement specifically demands an academic discipline (e.g. Economics, CS, Engineering)
         req_disciplines = detect_academic_disciplines(req_text)
 
         # Target degree required level
@@ -536,14 +581,23 @@ class SkillEquivalenceService:
         where the skill or tool is listed.
         """
         target = skill_or_tool.lower().strip()
+        if not target:
+            return 0.0
+
+        pat = re.compile(rf"\b{re.escape(target)}\b", re.IGNORECASE)
         total_months = 0
 
         for exp in experiences:
-            # Check if skill is in skills_used or description
-            skills_lower = [s.lower() for s in exp.skills_used]
-            desc_lower = " ".join(exp.work_description).lower()
+            matched = False
+            for s in exp.skills_used:
+                if target == s.lower() or pat.search(s):
+                    matched = True
+                    break
+            if not matched:
+                if pat.search(exp.job_title) or any(pat.search(d) for d in exp.work_description):
+                    matched = True
 
-            if any(target in s for s in skills_lower) or target in desc_lower or target in exp.job_title.lower():
+            if matched:
                 duration = exp.duration_months or 12  # default 1 year per role if unstated
                 total_months += duration
 

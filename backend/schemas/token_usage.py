@@ -4,8 +4,8 @@ Pydantic contracts for token tracking, live token counters, model performance me
 and Agnes-style usage analytics dashboards.
 """
 
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, Union
+from pydantic import BaseModel, Field, field_validator
 
 
 class TokenUsageInfo(BaseModel):
@@ -67,3 +67,35 @@ class TokenUsageAnalytics(BaseModel):
     activity_heatmap: List[ActivityHeatmapItem] = Field(default_factory=list, description="Annual/monthly activity calendar grid")
     daily_trend: List[DailyUsageTrend] = Field(default_factory=list, description="Trend points for the selected time range")
     recent_logs: List[Dict[str, Any]] = Field(default_factory=list, description="Recent execution logs for detailed auditing")
+
+
+class ActionAuditInfo(BaseModel):
+    """Execution telemetry and audit provenance for structured JSON exports."""
+    model_name: str = Field(default="unknown", description="Name/identifier of the model that performed the action")
+    provider: Optional[str] = Field(default=None, description="LLM provider: groq, gemini, agnes, ollama, etc.")
+    tokens_consumed: Dict[str, int] = Field(
+        default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        description="Tokens consumed by the inference call: prompt_tokens, completion_tokens, total_tokens",
+    )
+    duration_ms: float = Field(default=0.0, description="Duration of action in milliseconds")
+    duration_seconds: float = Field(default=0.0, description="Duration of action in seconds")
+    initial_document_text_length: int = Field(default=0, description="Character count of the initial document text stream")
+    initial_document_word_count: int = Field(default=0, description="Word count of the initial document text stream")
+    action_timestamp: Optional[str] = Field(default=None, description="ISO timestamp of when the action was performed")
+
+    @field_validator("tokens_consumed", mode="before")
+    @classmethod
+    def _coerce_tokens_consumed(cls, v: Any) -> Dict[str, int]:
+        if v is None:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        if hasattr(v, "prompt_tokens") and hasattr(v, "completion_tokens"):
+            p = int(getattr(v, "prompt_tokens", 0) or 0)
+            c = int(getattr(v, "completion_tokens", 0) or 0)
+            t = int(getattr(v, "total_tokens", 0) or (p + c))
+            return {"prompt_tokens": p, "completion_tokens": c, "total_tokens": t}
+        if isinstance(v, dict):
+            p = int(v.get("prompt_tokens", 0) or 0)
+            c = int(v.get("completion_tokens", 0) or 0)
+            t = int(v.get("total_tokens", 0) or (p + c))
+            return {"prompt_tokens": p, "completion_tokens": c, "total_tokens": t}
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}

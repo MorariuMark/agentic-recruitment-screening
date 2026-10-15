@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Timer, Clock, XCircle, CheckCircle2, Square, Loader2, Zap, Sparkles } from "lucide-react";
+import { api, ActiveProgressState } from "@/lib/api";
 
 export interface UseProcessTimerReturn {
   isRunning: boolean;
@@ -238,25 +239,83 @@ export function LiveProcessTimer({
 
   const displayEstimate = computeEstimatedRange(historyRuns, estimatedTimeText || estimateText);
 
-  const [streamedTokens, setStreamedTokens] = useState(0);
+  // Real-time backend progress polling
+  const [backendProgress, setBackendProgress] = useState<ActiveProgressState | null>(null);
+  const stepStartTimeRef = useRef<number>(performance.now());
+  const lastCompletedStepsRef = useRef<number>(0);
+  const maxProgressRef = useRef<number>(2);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    if (isRunning) {
-      setStreamedTokens(80);
-      interval = setInterval(() => {
-        setStreamedTokens((prev) => {
-          if (prev >= 1600) return prev;
-          return prev + Math.floor(Math.random() * 15) + 10;
-        });
-      }, 400);
-    } else {
-      setStreamedTokens(0);
+    if (!isRunning) {
+      setBackendProgress(null);
+      lastCompletedStepsRef.current = 0;
+      maxProgressRef.current = 2;
+      return;
     }
-    return () => {
-      if (interval) clearInterval(interval);
+
+    stepStartTimeRef.current = performance.now();
+    lastCompletedStepsRef.current = 0;
+    maxProgressRef.current = 2;
+
+    const knownTaskKey =
+      timerKey === "cv_upload" || timerKey === "jd_parse" || timerKey === "match_evaluation"
+        ? timerKey
+        : undefined;
+
+    let cancelled = false;
+    const poll = async () => {
+      const state = await api.getActiveProgress(knownTaskKey);
+      if (cancelled || !state) return;
+      if (state.active) {
+        if (state.completed_steps !== lastCompletedStepsRef.current) {
+          lastCompletedStepsRef.current = state.completed_steps;
+          stepStartTimeRef.current = performance.now();
+        }
+        setBackendProgress(state);
+      }
     };
-  }, [isRunning]);
+
+    poll();
+    const interval = setInterval(poll, 550);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isRunning, timerKey]);
+
+  // Compute accurate, non-freezing progress percentage
+  const avgHistoryDuration =
+    historyRuns.length > 0
+      ? historyRuns.reduce((acc, v) => acc + v, 0) / historyRuns.length
+      : 32;
+
+  let computedPercent = 3;
+  const totalSteps = backendProgress?.active && backendProgress.total_steps > 0 ? backendProgress.total_steps : 0;
+  const completedSteps = backendProgress?.active ? backendProgress.completed_steps : 0;
+
+  if (totalSteps > 0) {
+    const baseSlice = (completedSteps / totalSteps) * 100;
+    const singleSlice = 100 / totalSteps;
+    const stepElapsedSec = Math.max(0, (performance.now() - stepStartTimeRef.current) / 1000);
+    const expectedStepSec = Math.max(3.5, avgHistoryDuration / totalSteps);
+    // Smoothly approach 88% of the current step's slice while waiting on the LLM call
+    const intraStepFraction = 0.88 * (1 - Math.exp(-stepElapsedSec / expectedStepSec));
+    computedPercent = Math.min(98, baseSlice + singleSlice * intraStepFraction);
+  } else {
+    // Asymptotic fallback when step count hasn't arrived yet: approaches 92% smoothly over avgHistoryDuration
+    const tau = Math.max(12, avgHistoryDuration * 0.75);
+    computedPercent = Math.min(92, Math.max(3, 92 * (1 - Math.exp(-elapsedSeconds / tau))));
+  }
+
+  if (isRunning) {
+    if (computedPercent > maxProgressRef.current) {
+      maxProgressRef.current = computedPercent;
+    } else {
+      computedPercent = maxProgressRef.current;
+    }
+  }
+
+  const progressPercent = Math.round(computedPercent);
 
   if (!isRunning && !completedDuration && !tokenUsage) {
     return null;
@@ -269,7 +328,48 @@ export function LiveProcessTimer({
     return `${mins > 0 ? `${mins}m ` : ""}${secs}.${tenths}s`;
   };
 
-  const effectiveModelName = tokenUsage?.display_name || modelName;
+  const liveTokenUsage = tokenUsage || backendProgress?.token_usage;
+  const effectiveModelName = liveTokenUsage?.display_name || modelName;
+  const activePhaseText =
+    backendProgress?.active && backendProgress.phase
+      ? backendProgress.phase
+      : description || "Executing multi-stage AI pipeline & semantic verification...";
+
+  // Determine task-appropriate 4-stage pipeline milestones
+  const inferredTaskType =
+    backendProgress?.task_key ||
+    (resolvedTimerKey.includes("eval") || resolvedTimerKey.includes("match")
+      ? "match_evaluation"
+      : resolvedTimerKey.includes("jd") || resolvedTimerKey.includes("job")
+      ? "jd_parse"
+      : "cv_upload");
+
+  const stageLabels =
+    inferredTaskType === "match_evaluation"
+      ? [
+          "1. Evidence Retrieval",
+          "2. Criterion Grounding",
+          "3. Strictness Calibration",
+          "4. Verdict Synthesis",
+        ]
+      : inferredTaskType === "jd_parse"
+      ? [
+          "1. Source Extraction",
+          "2. Atomic Criteria AI",
+          "3. Weight Calibration",
+          "4. Schema Validation",
+        ]
+      : [
+          "1. Document OCR",
+          "2. PII Scrubbing",
+          "3. Entity Extraction",
+          "4. Vector Indexing",
+        ];
+
+  const activeStageIndex =
+    totalSteps === 4
+      ? Math.min(3, completedSteps)
+      : Math.min(3, Math.floor((progressPercent / 100) * 4));
 
   if (isRunning) {
     if (variant === "expanded") {
@@ -295,11 +395,15 @@ export function LiveProcessTimer({
                   </h3>
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
                     <Sparkles className="w-3 h-3 text-cyan-300" />
-                    <span>Inference Active</span>
+                    <span>
+                      {totalSteps > 0
+                        ? `Step ${Math.min(totalSteps, completedSteps + 1)} of ${totalSteps} (${progressPercent}%)`
+                        : `${progressPercent}% Complete`}
+                    </span>
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 mt-1 truncate">
-                  {description || "Autonomous parsing, cryptographic PII isolation, and vector chunk indexing."}
+                <p className="text-xs text-cyan-200/90 font-medium mt-1 truncate">
+                  {activePhaseText}
                 </p>
               </div>
             </div>
@@ -330,7 +434,14 @@ export function LiveProcessTimer({
 
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm">
               <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />
-              <span>{effectiveModelName}: ~{streamedTokens.toLocaleString()} tokens</span>
+              <span>
+                {effectiveModelName}
+                {liveTokenUsage?.total_tokens > 0
+                  ? `: ${liveTokenUsage.total_tokens.toLocaleString()} tokens`
+                  : totalSteps > 0
+                  ? ` • ${completedSteps}/${totalSteps} steps done`
+                  : " • Active"}
+              </span>
             </span>
 
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-medium bg-slate-800/90 text-slate-300 border border-slate-700/60 shadow-sm">
@@ -338,38 +449,51 @@ export function LiveProcessTimer({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span>{displayEstimate} • Live inference streaming</span>
+              <span>{displayEstimate}</span>
             </span>
           </div>
 
-          {/* Animated Gradient Progress & 4 Pipeline Phases */}
+          {/* Real-Time Progress Bar & Dynamic Pipeline Phases */}
           <div className="space-y-2 pt-1">
-            <div className="h-1.5 w-full bg-slate-800/90 rounded-full overflow-hidden border border-slate-700/50 relative">
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-300">
+              <span className="truncate max-w-[75%] text-slate-300">{activePhaseText}</span>
+              <span className="text-cyan-300 font-bold">{progressPercent}%</span>
+            </div>
+            <div className="h-2 w-full bg-slate-800/90 rounded-full overflow-hidden border border-slate-700/50 relative">
               <div
-                className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-indigo-500 rounded-full animate-pulse transition-all duration-300"
+                className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 rounded-full transition-all duration-300 ease-out"
                 style={{
-                  width: `${Math.min(95, Math.max(15, (elapsedSeconds / 18) * 100))}%`,
+                  width: `${progressPercent}%`,
                 }}
               />
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1">
-              <div className="flex items-center gap-1.5 text-blue-300 font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="truncate">1. Document OCR</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-cyan-300 font-medium">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0"></span>
-                <span className="truncate">2. PII Scrubbing</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-indigo-300 font-medium">
-                <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0"></span>
-                <span className="truncate">3. Entity Extraction</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-slate-400 font-medium">
-                <span className="w-2 h-2 rounded-full bg-slate-600 shrink-0"></span>
-                <span className="truncate">4. Vector Embedding</span>
-              </div>
+              {stageLabels.map((stageLabel, idx) => {
+                const isDone = idx < activeStageIndex;
+                const isCurrent = idx === activeStageIndex;
+                return (
+                  <div
+                    key={stageLabel}
+                    className={`flex items-center gap-1.5 font-medium ${
+                      isDone
+                        ? "text-emerald-300"
+                        : isCurrent
+                        ? "text-cyan-300"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {isDone ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : isCurrent ? (
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0"></span>
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-slate-600 shrink-0"></span>
+                    )}
+                    <span className="truncate">{stageLabel}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -378,56 +502,74 @@ export function LiveProcessTimer({
 
     return (
       <div
-        className={`flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 rounded-xl border border-blue-500/30 bg-blue-950/40 backdrop-blur-md shadow-lg shadow-blue-950/40 animate-in fade-in duration-200 ${className}`}
+        className={`flex flex-col gap-2.5 p-3.5 rounded-xl border border-blue-500/30 bg-blue-950/40 backdrop-blur-md shadow-lg shadow-blue-950/40 animate-in fade-in duration-200 ${className}`}
       >
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 shrink-0">
-            <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-            <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-            </span>
-          </div>
-
-          <div className="flex flex-col text-left">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-semibold text-slate-100">{displayLabel}</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                ⏱ {formatDisplay(elapsedSeconds)}
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                <span>⚡</span>
-                <span>{effectiveModelName}: ~{streamedTokens.toLocaleString()} tok</span>
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto min-w-0">
+            <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 shrink-0">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+              <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
               </span>
             </div>
-            {description && (
-              <span className="text-[11px] text-slate-300 mt-0.5">
-                {description}
+
+            <div className="flex flex-col text-left min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-slate-100">{displayLabel}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                  ⏱ {formatDisplay(elapsedSeconds)}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  {totalSteps > 0
+                    ? `Step ${Math.min(totalSteps, completedSteps + 1)}/${totalSteps} • ${progressPercent}%`
+                    : `${progressPercent}%`}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <span>⚡</span>
+                  <span>
+                    {effectiveModelName}
+                    {liveTokenUsage?.total_tokens > 0
+                      ? `: ${liveTokenUsage.total_tokens.toLocaleString()} tok`
+                      : ""}
+                  </span>
+                </span>
+              </div>
+              <span className="text-[11px] text-cyan-200/90 mt-0.5 truncate">
+                {activePhaseText}
               </span>
-            )}
-            {displayEstimate && (
-              <span className="text-[10px] text-slate-400 mt-0.5">
-                {displayEstimate} • Live inference streaming...
-              </span>
-            )}
+              {displayEstimate && (
+                <span className="text-[10px] text-slate-400 mt-0.5">
+                  {displayEstimate} • Synchronized with AI backend pipeline
+                </span>
+              )}
+            </div>
           </div>
+
+          {onCancel && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onCancel();
+              }}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 hover:border-rose-400 text-rose-200 hover:text-rose-100 text-xs font-medium shadow-sm transition-all cursor-pointer w-full sm:w-auto active:scale-95 shrink-0"
+              title="Immediately abort the ongoing AI task"
+            >
+              <Square className="w-3 h-3 fill-current" />
+              <span>{cancelLabel}</span>
+            </button>
+          )}
         </div>
 
-        {onCancel && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onCancel();
-            }}
-            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 hover:border-rose-400 text-rose-200 hover:text-rose-100 text-xs font-medium shadow-sm transition-all cursor-pointer w-full sm:w-auto active:scale-95 shrink-0"
-            title="Immediately abort the ongoing AI task"
-          >
-            <Square className="w-3 h-3 fill-current" />
-            <span>{cancelLabel}</span>
-          </button>
-        )}
+        {/* Synchronized Progress Bar */}
+        <div className="h-1.5 w-full bg-slate-800/90 rounded-full overflow-hidden border border-slate-700/50">
+          <div
+            className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 rounded-full transition-all duration-300 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
       </div>
     );
   }

@@ -308,11 +308,44 @@ def test_candidate_job_recommendations_endpoint(api_client, monkeypatch):
     assert rec1["title"] == "Senior Python Backend Engineer"
     assert rec1["overall_score"] >= rec2["overall_score"]
     assert "Python" in rec1["matching_skills"] or "FastAPI" in rec1["matching_skills"]
+    assert rec1["justification"] is not None and len(rec1["justification"]) > 10
     assert rec2["rank"] == 2
+    assert isinstance(rec2["missing_requirements"], list)
 
     # Non-existent candidate returns 404
     res_404 = api_client.get(f"/api/v1/candidates/{uuid4()}/recommended-jobs")
     assert res_404.status_code == 404
+
+
+def test_active_progress_endpoint(api_client):
+    """Verify GET /api/v1/progress/active returns live backend task step status."""
+    from backend.services.progress_tracker import progress_tracker
+
+    progress_tracker.start_task(
+        "match_evaluation",
+        label="Evaluating candidate against Backend Engineer",
+        total_steps=5,
+        phase="Evaluating criterion 1/5: Python",
+    )
+    progress_tracker.update_task(
+        "match_evaluation",
+        completed_steps=3,
+        phase="Evaluating criterion 3/5: Docker",
+        item_completed="Docker",
+    )
+
+    res = api_client.get("/api/v1/progress/active?task_key=match_evaluation")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["active"] is True
+    assert data["task_key"] == "match_evaluation"
+    assert data["completed_steps"] == 3
+    assert data["total_steps"] == 5
+    assert data["percentage"] == 60.0
+
+    progress_tracker.finish_task("match_evaluation")
+
+
 
 
 

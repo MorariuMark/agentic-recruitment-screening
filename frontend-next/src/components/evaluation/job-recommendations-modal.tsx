@@ -48,8 +48,31 @@ export function JobRecommendationsModal({
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getRecommendedJobs(candidateId, 10);
-      setData(res);
+      const res = await api.getRecommendedJobs(candidateId, 10, undefined, activeJobId || undefined);
+      const currentJob = jobs.find((j) => j.id === activeJobId);
+      const currentTitle = (currentJob?.title || "").trim().toLowerCase();
+      const seenTitles = new Set<string>();
+      const filtered: JobRecommendationItem[] = [];
+
+      for (const rec of res?.recommendations || []) {
+        const normTitle = (rec.title || "").trim().toLowerCase();
+        if (rec.job_id === activeJobId || (currentTitle && normTitle === currentTitle)) {
+          continue;
+        }
+        if (seenTitles.has(normTitle)) {
+          continue;
+        }
+        seenTitles.add(normTitle);
+        filtered.push({
+          ...rec,
+          rank: filtered.length + 1,
+        });
+      }
+
+      setData({
+        ...res,
+        recommendations: filtered,
+      });
     } catch (err: any) {
       console.error("Failed to fetch recommended jobs:", err);
       setError(err?.message || "Failed to load job recommendations from database.");
@@ -199,6 +222,11 @@ export function JobRecommendationsModal({
                             <h3 className="text-sm font-bold text-white hover:text-blue-300 transition-colors truncate">
                               {rec.title}
                             </h3>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${recBadge.className}`}
+                            >
+                              {recBadge.label}
+                            </span>
                             {isCurrent && (
                               <span className="px-2 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/40 text-[10px] font-semibold text-blue-300">
                                 Current Audit Job
@@ -238,24 +266,42 @@ export function JobRecommendationsModal({
                             )}
                           </div>
 
-                          {/* Strengths / Matching Skills Tags */}
-                          {(rec.matching_skills.length > 0 || rec.key_strengths.length > 0) && (
+                          {/* Grounded Match Justification */}
+                          {rec.justification && (
+                            <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/70 border border-slate-800/80 rounded-lg px-2.5 py-2 mt-1">
+                              {rec.justification}
+                            </p>
+                          )}
+
+                          {/* Strengths / Matching Skills & Missing Requirements Tags */}
+                          {(rec.matching_skills.length > 0 ||
+                            rec.key_strengths.length > 0 ||
+                            (rec.missing_requirements && rec.missing_requirements.length > 0)) && (
                             <div className="flex items-center gap-1.5 flex-wrap pt-1">
                               {rec.matching_skills.map((skill, sIdx) => (
                                 <span
-                                  key={sIdx}
-                                  className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-[10px] font-mono text-emerald-300"
+                                  key={`skill-${sIdx}`}
+                                  className="px-2 py-0.5 rounded-md bg-emerald-950/50 border border-emerald-500/30 text-[10px] font-mono text-emerald-300"
                                 >
                                   +{skill}
                                 </span>
                               ))}
                               {rec.key_strengths.map((st, stIdx) => (
                                 <span
-                                  key={stIdx}
-                                  className="px-2 py-0.5 rounded-md bg-slate-900/80 border border-slate-800 text-[10px] text-slate-300 max-w-[200px] truncate"
+                                  key={`str-${stIdx}`}
+                                  className="px-2 py-0.5 rounded-md bg-slate-900/80 border border-slate-800 text-[10px] text-slate-300 max-w-[220px] truncate"
                                   title={st}
                                 >
                                   ✓ {st}
+                                </span>
+                              ))}
+                              {(rec.missing_requirements || []).map((gap, gIdx) => (
+                                <span
+                                  key={`gap-${gIdx}`}
+                                  className="px-2 py-0.5 rounded-md bg-amber-950/40 border border-amber-500/30 text-[10px] text-amber-300 max-w-[220px] truncate"
+                                  title={`Potential gap: ${gap}`}
+                                >
+                                  ⚠ Gap: {gap}
                                 </span>
                               ))}
                             </div>

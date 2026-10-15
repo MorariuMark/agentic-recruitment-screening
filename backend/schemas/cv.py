@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.schemas.token_usage import ActionAuditInfo
+
 
 def _flatten_to_string_list(val: Any) -> List[str]:
     """
@@ -335,6 +337,7 @@ class ParsedCV(BaseModel):
     miscellaneous: List[str] = Field(default_factory=list, description="All miscellaneous, unmapped, or out-of-scope details, facts, hobbies, interests, activities, memberships, side notes, or observations extracted so no detail is ignored or overlooked")
     unused_details: List[str] = Field(default_factory=list, description="Extracted non-technical details not used in matching (demographics, personal info, administrative items)")
     raw_text: str = Field(default="", description="Original extracted text")
+    audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata including model name, token usage, latency, and initial document length")
 
     @model_validator(mode="before")
     @classmethod
@@ -540,3 +543,4 @@ class CVTaggedExport(BaseModel):
     items: List[TaggedDetailItem] = Field(default_factory=list, description="All tagged items")
     parsed_cv: ParsedCV = Field(description="Underlying raw parsed CV structure")
     anonymized_candidate: AnonymizedCandidate = Field(description="Sanitized representation passed to matching")
+    audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata for downstream verification")

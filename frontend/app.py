@@ -1218,6 +1218,14 @@ with tab_cv:
         with col_cv_btn:
             try:
                 cv_export_payload = api_client.export_candidate_cv(st.session_state.candidate_id)
+                if isinstance(cv_export_payload, dict):
+                    meta = cv_export_payload.get("audit_metadata") or (cv_export_payload.get("parsed_cv") or {}).get("audit_metadata") or {}
+                    if meta:
+                        cv_export_payload.setdefault("model_name", meta.get("model_name"))
+                        cv_export_payload.setdefault("tokens_consumed", meta.get("tokens_consumed"))
+                        cv_export_payload.setdefault("duration", f"{meta.get('duration_seconds', 0)}s")
+                        cv_export_payload.setdefault("duration_ms", meta.get("duration_ms"))
+                        cv_export_payload.setdefault("initial_document_text_length", meta.get("initial_document_text_length"))
                 st.download_button(
                     label="Download Profile JSON",
                     data=json.dumps(cv_export_payload, indent=2),
@@ -1407,6 +1415,14 @@ with tab_jd:
     with col_jd_btn:
         try:
             jd_export_payload = api_client.export_job_description(jd)
+            if isinstance(jd_export_payload, dict):
+                meta = jd_export_payload.get("audit_metadata") or (jd_export_payload.get("job_description") or {}).get("audit_metadata") or {}
+                if meta:
+                    jd_export_payload.setdefault("model_name", meta.get("model_name"))
+                    jd_export_payload.setdefault("tokens_consumed", meta.get("tokens_consumed"))
+                    jd_export_payload.setdefault("duration", f"{meta.get('duration_seconds', 0)}s")
+                    jd_export_payload.setdefault("duration_ms", meta.get("duration_ms"))
+                    jd_export_payload.setdefault("initial_document_text_length", meta.get("initial_document_text_length"))
             st.download_button(
                 label="Download Job JSON",
                 data=json.dumps(jd_export_payload, indent=2),
@@ -1747,11 +1763,12 @@ with tab_settings:
         from backend.schemas.models_catalog import PROVIDERS_CATALOG
         catalog = {pid: p.model_dump() for pid, p in PROVIDERS_CATALOG.items()}
         active_provider = "groq"
-        active_model = "openai/gpt-oss-20b"
+        active_model = "qwen/qwen3.8-27b"
         active_compat = "auto"
         keys_status = {
             "agnes": bool(os.environ.get("AGNES_API_KEY")),
             "groq": bool(os.environ.get("GROQ_API_KEY")),
+            "groq_secondary": bool(os.environ.get("GROQ_SECONDARY_API_KEY")),
             "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
             "nvidia_nim": bool(os.environ.get("NVIDIA_NIM_API_KEY")),
             "gemini": bool(os.environ.get("GEMINI_API_KEY")),

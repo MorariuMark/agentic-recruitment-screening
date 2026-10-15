@@ -82,7 +82,7 @@ export function ModelSelector({
   };
 
   const activeProvider = llmSettings?.active_provider || "groq";
-  const activeModelId = llmSettings?.active_model || "openai/gpt-oss-20b";
+  const activeModelId = llmSettings?.active_model || "qwen/qwen3.8-27b";
   const hasFallbackEvent = Boolean(llmSettings?.last_fallback_event);
   const fallbackCount = llmSettings?.fallback_chain?.length || 0;
   const fallbackEnabled = llmSettings?.fallback_enabled ?? true;

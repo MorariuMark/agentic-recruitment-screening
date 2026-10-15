@@ -5,6 +5,7 @@ import {
   CandidateDetail,
   CandidateSummary,
   JobDescription,
+  JobRecommendationItem,
   MatchEvaluationResult,
   RequirementMatch,
 } from "@/types";
@@ -40,6 +41,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   UserCheck,
   Users2,
@@ -196,6 +198,35 @@ export function EvaluationView({
   const evalTimer = useProcessTimer();
   const [evalDuration, setEvalDuration] = useState<number | null>(null);
 
+  // Verification Strictness Slider State (0 - 100, default 50 = Balanced)
+  const [strictness, setStrictness] = useState<number>(50);
+
+  // Automatic Alternative Job Recommendations when candidate is not a strong match
+  const [alternativeJobs, setAlternativeJobs] = useState<JobRecommendationItem[]>([]);
+  const [loadingAlternatives, setLoadingAlternatives] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("atos_eval_strictness");
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+          setStrictness(parsed);
+        }
+      }
+    }
+  }, []);
+
+  const handleStrictnessChange = (val: number) => {
+    const clamped = Math.max(0, Math.min(100, val));
+    setStrictness(clamped);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("atos_eval_strictness", String(clamped));
+      } catch {}
+    }
+  };
+
   // HITL Decision & Notes State
   const [decision, setDecision] = useState<"strong_match" | "borderline" | "reject">("strong_match");
   const [notes, setNotes] = useState("");
@@ -292,17 +323,56 @@ export function EvaluationView({
   const activeJob = jobs.find((j) => j.id === activeJobId) || jobs[0];
   const activeCandidate = candidates.find((c) => c.id === activeCandidateId);
 
+  // Automatically fetch alternative job recommendations for the candidate
+  const fetchAlternativeJobs = async (candId: string, currentJobId?: string | null) => {
+    if (!candId) {
+      setAlternativeJobs([]);
+      return;
+    }
+    try {
+      setLoadingAlternatives(true);
+      const res = await api.getRecommendedJobs(candId, 10, undefined, currentJobId || undefined);
+      const currentRoleTitle = (activeJob?.title || "").trim().toLowerCase();
+      const seenTitles = new Set<string>();
+      const alternatives: JobRecommendationItem[] = [];
+
+      for (const rec of res?.recommendations || []) {
+        const normTitle = (rec.title || "").trim().toLowerCase();
+        // Never recommend the currently evaluated role or duplicate role titles
+        if (rec.job_id === currentJobId || normTitle === currentRoleTitle) {
+          continue;
+        }
+        if (seenTitles.has(normTitle)) {
+          continue;
+        }
+        seenTitles.add(normTitle);
+        alternatives.push(rec);
+      }
+      setAlternativeJobs(alternatives);
+    } catch (err) {
+      console.warn("Failed to load alternative job recommendations:", err);
+      setAlternativeJobs([]);
+    } finally {
+      setLoadingAlternatives(false);
+    }
+  };
+
   // Execute Semantic Evaluation on demand
-  const handleRunEvaluation = async (candId?: string | null, job?: JobDescription | null) => {
+  const handleRunEvaluation = async (
+    candId?: string | null,
+    job?: JobDescription | null,
+    overrideStrictness?: number
+  ) => {
     const targetCandidateId = candId || activeCandidateId;
     const targetJob = job || activeJob;
     if (!targetCandidateId || !targetJob) return;
 
+    const effectiveStrictness = overrideStrictness !== undefined ? overrideStrictness : strictness;
     const controller = evalTimer.startTimer();
     try {
       setEvaluating(true);
       const [result, cand] = await Promise.all([
-        api.evaluateCandidate(targetCandidateId, targetJob, controller.signal),
+        api.evaluateCandidate(targetCandidateId, targetJob, controller.signal, effectiveStrictness),
         api.getCandidate(targetCandidateId).catch(() => null),
       ]);
       const duration = evalTimer.stopTimer(true);
@@ -314,7 +384,13 @@ export function EvaluationView({
       setDecision(result.recommendation);
       const firstQuote = result.requirement_matches?.find((rm) => rm.citations?.length > 0)?.citations[0]?.quote;
       if (firstQuote) setActiveCitation(firstQuote);
-      await fetchCandidateCohort(targetCandidateId);
+      const postTasks: Promise<any>[] = [fetchCandidateCohort(targetCandidateId)];
+      if (result.recommendation !== "strong_match" || result.overall_score < 70) {
+        postTasks.push(fetchAlternativeJobs(targetCandidateId, targetJob.id));
+      } else {
+        setAlternativeJobs([]);
+      }
+      await Promise.all(postTasks);
     } catch (err: any) {
       if (err.name === "AbortError" || controller.signal.aborted) {
         evalTimer.stopTimer(false);
@@ -337,6 +413,7 @@ export function EvaluationView({
     if (!activeCandidateId || !activeJob) {
       setEvaluation(null);
       setCandidateDetail(null);
+      setAlternativeJobs([]);
       return;
     }
 
@@ -357,13 +434,22 @@ export function EvaluationView({
         setEvaluation(existing);
         setDecision(existing.recommendation);
         setNotes(existing.recruiter_notes || "");
+        if (typeof existing.strictness === "number") {
+          setStrictness(existing.strictness);
+        }
         const firstQuote = existing.requirement_matches?.find((rm) => rm.citations?.length > 0)?.citations[0]?.quote;
         if (firstQuote) setActiveCitation(firstQuote);
+        if (existing.recommendation !== "strong_match" || existing.overall_score < 70) {
+          fetchAlternativeJobs(activeCandidateId, activeJob.id);
+        } else {
+          setAlternativeJobs([]);
+        }
         if (autoRun) {
           onResetAutoRun?.();
         }
       } else {
         setEvaluation(null);
+        setAlternativeJobs([]);
         if (autoRun) {
           onResetAutoRun?.();
           await handleRunEvaluation(activeCandidateId, activeJob);
@@ -737,6 +823,110 @@ export function EvaluationView({
             )}
           </div>
         </div>
+
+        {/* Evaluation Strictness Calibration Slider (0 - 100%) */}
+        <div className="pt-3 border-t border-slate-800/80">
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/90 space-y-2.5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="p-1.5 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-indigo-400">
+                  <SlidersHorizontal className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      Evaluation Strictness Level
+                    </span>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
+                        strictness <= 35
+                          ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                          : strictness <= 64
+                          ? "bg-blue-500/15 border-blue-500/40 text-blue-300"
+                          : strictness <= 84
+                          ? "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                          : "bg-rose-500/15 border-rose-500/40 text-rose-300"
+                      }`}
+                    >
+                      {strictness}% —{" "}
+                      {strictness <= 35
+                        ? "Lenient / Potential-Focused"
+                        : strictness <= 64
+                        ? "Balanced (Recommended)"
+                        : strictness <= 84
+                        ? "Strict (Legacy ~70%)"
+                        : "Forensic Audit"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {strictness <= 35
+                      ? "Generous credit for transferable skills & related domains. Any met requirement without gaps receives a full 100% score."
+                      : strictness <= 64
+                      ? "Balanced calibration: clearly met requirements receive a full 100% score without arbitrary 90% caps, while genuine gaps are flagged."
+                      : strictness <= 84
+                      ? "High bar for strong match: requires explicit tenure & direct tool evidence on must-have criteria (matches previous ~70% behavior)."
+                      : "Maximum rigor: requires verbatim proof for every sub-clause and penalizes any unverified tenure."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Preset Pills & Quick Re-evaluate CTA */}
+              <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                {[
+                  { label: "Lenient (25%)", val: 25 },
+                  { label: "Balanced (50%)", val: 50 },
+                  { label: "Strict (70%)", val: 70 },
+                  { label: "Forensic (90%)", val: 90 },
+                ].map((preset) => (
+                  <button
+                    key={preset.val}
+                    type="button"
+                    onClick={() => handleStrictnessChange(preset.val)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer border ${
+                      strictness === preset.val
+                        ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
+                        : "bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-800"
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+
+                {evaluation && (evaluation.strictness ?? 50) !== strictness && (
+                  <button
+                    type="button"
+                    onClick={() => handleRunEvaluation(activeCandidateId, activeJob, strictness)}
+                    disabled={evaluating}
+                    className="ml-1 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <RotateCw className={`w-3 h-3 ${evaluating ? "animate-spin" : ""}`} />
+                    <span>Apply {strictness}% Strictness</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Range Slider */}
+            <div className="flex items-center gap-3 pt-1">
+              <span className="text-[10px] font-mono font-semibold text-emerald-400 w-16 text-left">
+                0% Lenient
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={strictness}
+                onChange={(e) => handleStrictnessChange(parseInt(e.target.value, 10))}
+                aria-label="Evaluation Strictness Slider"
+                className="flex-1 h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              />
+              <span className="text-[10px] font-mono font-semibold text-rose-400 w-16 text-right">
+                100% Strict
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Live Evaluation Timer & Cancellation Banner */}
@@ -746,11 +936,13 @@ export function EvaluationView({
             isRunning={evalTimer.isRunning}
             elapsedSeconds={evalTimer.elapsedSeconds}
             onCancel={handleCancelEvaluation}
-            label="Evaluating candidate match against requirements with AI Engine..."
-            estimateText="Multi-agent reasoning active (typically 5 - 15s)"
+            label={`Evaluating candidate match against ${activeJob?.requirements?.length || ""} requirements (Strictness: ${strictness}%)...`}
+            estimateText="Synchronized step-by-step with AI requirement verifier"
             cancelLabel="Cancel Evaluation"
             modelName={evaluation?.token_usage?.display_name || "Active AI Model"}
             tokenUsage={evaluation?.token_usage}
+            variant="expanded"
+            timerKey="match_evaluation"
           />
         </div>
       )}
@@ -873,21 +1065,24 @@ export function EvaluationView({
             <div className="p-5 rounded-2xl border border-blue-500/30 bg-gradient-to-r from-blue-950/40 via-slate-900/60 to-slate-900/40 shadow-xl space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-amber-500/15 border border-amber-500/30 text-amber-300">
                       Evaluation Pending
                     </span>
                     <span className="text-xs text-slate-400">
                       • {activeJob.requirements.length} atomic criteria calibrated
                     </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+                      Strictness: {strictness}%
+                    </span>
                   </div>
-                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <h2 className="text-base font-bold text-white flex items-center gap-2 flex-wrap">
                     <span>Audit Ready for {activeCandidate?.masked_name || candidateDetail?.masked_name || "Candidate"}</span>
                     <span className="text-xs font-normal text-slate-400">against</span>
                     <span className="text-blue-300">{activeJob.title}</span>
                   </h2>
                   <p className="text-xs text-slate-300">
-                    Execute semantic analysis to score compliance, extract verbatim CV citations, and generate Article 14 audit trail.
+                    Adjust the <strong>Evaluation Strictness Level</strong> slider above if desired, then execute semantic analysis to score compliance and extract verbatim CV citations.
                   </p>
                 </div>
 
@@ -915,7 +1110,7 @@ export function EvaluationView({
                     ) : (
                       <ShieldCheck className="w-4 h-4" />
                     )}
-                    <span>{evaluating ? "Evaluating..." : "Run AI Semantic Evaluation & Audit"}</span>
+                    <span>{evaluating ? "Evaluating..." : `Run AI Semantic Evaluation (${strictness}% Strictness)`}</span>
                   </button>
                 </div>
               </div>
@@ -1021,11 +1216,133 @@ export function EvaluationView({
         /* 4. ACTIVE EVALUATION DISPLAY (RE-DESIGNED, HIGH-LEGIBILITY LAYOUT)        */
         /* ========================================================================= */
         <div className="space-y-6">
+          {/* Automatic Alternative Job Recommendations Notification Banner when not a strong match */}
+          {(evaluation.recommendation !== "strong_match" || evaluation.overall_score < 70) &&
+            alternativeJobs.length > 0 && (
+              <div className="p-5 rounded-2xl border border-emerald-500/40 bg-gradient-to-r from-emerald-950/50 via-slate-900/90 to-blue-950/40 shadow-xl space-y-4 animate-in fade-in duration-300">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 shrink-0 mt-0.5">
+                      <Sparkles className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm sm:text-base font-bold text-white">
+                          Alternative Job Match Alert: {alternativeJobs.length} Better-Fitting Role
+                          {alternativeJobs.length > 1 ? "s" : ""} Available
+                        </h3>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
+                          Auto-Matched via ChromaDB &amp; Skill Graph
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-1">
+                        <span className="font-semibold text-white">
+                          {activeCandidate?.masked_name || candidateDetail?.masked_name || "This candidate"}
+                        </span>{" "}
+                        scored{" "}
+                        <span className="font-mono font-bold text-amber-300">
+                          {evaluation.overall_score.toFixed(0)}% ({evaluation.recommendation.replace("_", " ").toUpperCase()})
+                        </span>{" "}
+                        on <span className="font-semibold text-slate-200">{activeJob?.title}</span>, but matches the following open requisitions in your database:
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRecommendationsModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 text-xs font-bold transition-all cursor-pointer shrink-0 self-start sm:self-center"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>View All {alternativeJobs.length} Ranked Jobs</span>
+                  </button>
+                </div>
+
+                {/* Top 3 Ranked Alternative Jobs Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  {alternativeJobs.slice(0, 3).map((altJob, idx) => {
+                    const altBadge = getRecommendationBadge(altJob.recommendation);
+                    return (
+                      <div
+                        key={altJob.job_id}
+                        className="p-3.5 rounded-xl border border-slate-800/90 bg-slate-950/75 hover:border-emerald-500/40 transition-all flex flex-col justify-between gap-3 shadow-md"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-mono font-bold text-emerald-300">
+                                  #{idx + 1}
+                                </span>
+                                <h4 className="text-xs font-bold text-white truncate" title={altJob.title}>
+                                  {altJob.title}
+                                </h4>
+                              </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                                {altJob.department || "General"} {altJob.location ? `• ${altJob.location}` : ""}
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <div className="text-sm font-black font-mono text-emerald-400">
+                                {altJob.overall_score.toFixed(1)}%
+                              </div>
+                              <span
+                                className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${altBadge.className}`}
+                              >
+                                {altBadge.label}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Justification */}
+                          {altJob.justification && (
+                            <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-900/90 border border-slate-800/80 rounded-lg p-2 line-clamp-3" title={altJob.justification}>
+                              {altJob.justification}
+                            </p>
+                          )}
+
+                          {/* Matched Skills */}
+                          {altJob.matching_skills && altJob.matching_skills.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {altJob.matching_skills.slice(0, 4).map((sk, sIdx) => (
+                                <span
+                                  key={sIdx}
+                                  className="px-1.5 py-0.5 rounded bg-emerald-950/50 border border-emerald-500/30 text-[10px] font-mono text-emerald-300"
+                                >
+                                  +{sk}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            Must: <strong className="text-slate-200">{altJob.must_have_score.toFixed(0)}%</strong> • Nice:{" "}
+                            <strong className="text-slate-200">{altJob.nice_to_have_score.toFixed(0)}%</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectJobChange(altJob.job_id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold transition-all cursor-pointer"
+                          >
+                            <span>Switch Role</span>
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
           {/* Executive Verdict & KPI Summary Ribbon */}
           <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-md shadow-md space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               {/* Score & Algorithmic Verdict */}
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-baseline gap-2.5">
                   <span className="text-4xl font-black text-white tracking-tight tabular-nums">
                     {evaluation.overall_score.toFixed(0)}%
@@ -1046,6 +1363,11 @@ export function EvaluationView({
                     </span>
                   </div>
                 )}
+
+                <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/25 text-xs font-mono font-semibold text-indigo-300">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Strictness: {evaluation.strictness ?? strictness}%</span>
+                </div>
 
                 <div className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-xs sm:text-sm font-semibold text-emerald-300">
                   <Check className="w-4 h-4 text-emerald-400" />

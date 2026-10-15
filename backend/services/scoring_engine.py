@@ -64,11 +64,14 @@ class ScoringEngine:
         self,
         candidate: AnonymizedCandidate,
         job: JobDescription,
-        matches: List[RequirementMatch]
+        matches: List[RequirementMatch],
+        strictness: int = 50,
     ) -> MatchEvaluationResult:
         """
-        Computes deterministic weighted scores and applies the decision matrix.
+        Computes deterministic weighted scores and applies the decision matrix
+        calibrated by the requested strictness level (0 = lenient, 100 = ultra-strict).
         """
+        strictness_clamped = max(0, min(100, int(strictness if strictness is not None else 50)))
         req_lookup: Dict[str, JobRequirement] = {r.id: r for r in job.requirements}
 
         must_have_weighted_score = 0.0
@@ -90,11 +93,26 @@ class ScoringEngine:
             verified_cits, _ = self.verify_citations(match.citations, candidate.sanitized_text)
             all_citations.extend(verified_cits)
 
+            calibrated_score = float(match.score)
+            calibrated_status = match.status
+
+            # Ensure a requirement marked MET without gaps receives full 100% (1.0) credit
+            # unless strictness is set to ultra-strict (>85) with lower confidence.
+            if calibrated_status == MatchStatus.MET:
+                has_explicit_gap = bool(match.gap_analysis and match.gap_analysis.strip())
+                if strictness_clamped <= 80 and not has_explicit_gap and calibrated_score >= 0.80:
+                    calibrated_score = 1.0
+                elif strictness_clamped <= 90 and not has_explicit_gap and calibrated_score >= 0.88:
+                    calibrated_score = 1.0
+
             updated_matches.append(
                 RequirementMatch(
                     requirement_id=match.requirement_id,
-                    status=match.status,
-                    score=match.score,
+                    title=getattr(match, "title", None) or (req.title if req else None),
+                    jd_summary=getattr(match, "jd_summary", None) or (req.title if req else None),
+                    jd_citation=getattr(match, "jd_citation", None) or (req.description if req else None),
+                    status=calibrated_status,
+                    score=round(min(1.0, max(0.0, calibrated_score)), 4),
                     confidence=match.confidence,
                     reasoning=match.reasoning,
                     citations=verified_cits,
@@ -106,18 +124,22 @@ class ScoringEngine:
                 )
             )
 
-            if match.status == MatchStatus.CLARIFICATION_NEEDED:
+            if calibrated_status == MatchStatus.CLARIFICATION_NEEDED:
                 clarification_count += 1
 
             if category == RequirementCategory.MUST_HAVE:
                 must_have_total_weight += weight
-                must_have_weighted_score += match.score * weight
-                # Non-met and partial must-have requirements count as gaps; clarification_needed does NOT disqualify.
-                if match.status in (MatchStatus.NOT_MET, MatchStatus.PARTIAL):
+                must_have_weighted_score += calibrated_score * weight
+                # Non-met and partial must-have requirements count as gaps;
+                # under very lenient strictness (<= 25), a high-scoring PARTIAL (>= 0.75) does not count as a hard gap.
+                if calibrated_status == MatchStatus.NOT_MET:
                     must_have_gaps_count += 1
+                elif calibrated_status == MatchStatus.PARTIAL:
+                    if not (strictness_clamped <= 25 and calibrated_score >= 0.75):
+                        must_have_gaps_count += 1
             else:
                 nice_to_have_total_weight += weight
-                nice_to_have_weighted_score += match.score * weight
+                nice_to_have_weighted_score += calibrated_score * weight
 
         must_have_score = (
             (must_have_weighted_score / must_have_total_weight) * 100.0
@@ -144,21 +166,26 @@ class ScoringEngine:
             and getattr(m, "is_objective", True)
         )
 
-        # Decision Matrix:
-        # A candidate is REJECTED only for hard objective shortcomings:
-        # - >= 2 hard objective must-have requirements NOT MET (complete lack of qualification/experience), or
-        # - >= 1 must-have gap and overall_score < 50.0, or
-        # - >= 2 must-have gaps where overall_score < 55.0 and at least 1 hard NOT_MET
-        # If candidate has transferable skills or partial competencies with overall_score >= 55.0
-        # and < 2 hard NOT_MET gaps:
-        # - Advanced to BORDERLINE (or STRONG_MATCH if high-scoring and 0 hard gaps). Under no circumstances falsely REJECTED!
-        has_multiple_hard_rejections = hard_not_met_count >= 2
-        is_failing_score = overall_score < 50.0
-        is_subpar_with_hard_gap = must_have_gaps_count >= 2 and overall_score < 55.0 and hard_not_met_count >= 1
+        # Strictness-calibrated thresholds:
+        # At strictness=0 (Lenient): strong_min = 55%, reject_min = 35%, max_hard_gaps_before_reject = 3
+        # At strictness=50 (Balanced): strong_min = 67.5%, reject_min = 47.5%, max_hard_gaps_before_reject = 2
+        # At strictness=70 (Strict): strong_min = 72.5%, reject_min = 52.5%, max_hard_gaps_before_reject = 2
+        # At strictness=100 (Ultra-Strict): strong_min = 80%, reject_min = 60%, max_hard_gaps_before_reject = 1
+        strong_min_score = 55.0 + (strictness_clamped / 100.0) * 25.0
+        reject_min_score = 35.0 + (strictness_clamped / 100.0) * 25.0
+        hard_reject_gap_threshold = 3 if strictness_clamped <= 25 else (1 if strictness_clamped >= 90 else 2)
+
+        has_multiple_hard_rejections = hard_not_met_count >= hard_reject_gap_threshold
+        is_failing_score = overall_score < reject_min_score
+        is_subpar_with_hard_gap = (
+            must_have_gaps_count >= 2
+            and overall_score < (reject_min_score + 5.0)
+            and hard_not_met_count >= 1
+        )
 
         if has_multiple_hard_rejections or (must_have_gaps_count >= 1 and is_failing_score) or is_subpar_with_hard_gap:
             recommendation = Recommendation.REJECT
-        elif must_have_gaps_count >= 1 or clarification_count > 0 or (50.0 <= overall_score < 70.0):
+        elif must_have_gaps_count >= 1 or clarification_count > 0 or (reject_min_score <= overall_score < strong_min_score):
             recommendation = Recommendation.BORDERLINE
         else:
             recommendation = Recommendation.STRONG_MATCH
@@ -178,4 +205,5 @@ class ScoringEngine:
             clarification_count=clarification_count,
             citation_verification_score=round(global_cvs, 4),
             hitl_validated=False,
+            strictness=strictness_clamped,
         )

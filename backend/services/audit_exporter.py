@@ -289,6 +289,7 @@ class AuditExporter:
             items=items,
             parsed_cv=parsed_cv,
             anonymized_candidate=anonymized_candidate,
+            audit_metadata=getattr(parsed_cv, "audit_metadata", None),
         )
 
     @staticmethod
@@ -485,4 +486,5 @@ class AuditExporter:
             tag_counts=tag_counts,
             items=items,
             job_description=job_description,
+            audit_metadata=getattr(job_description, "audit_metadata", None),
         )

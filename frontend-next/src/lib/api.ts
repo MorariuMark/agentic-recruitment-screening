@@ -20,6 +20,18 @@ import {
   TokenUsageAnalytics,
 } from "@/types";
 
+export interface ActiveProgressState {
+  task_key: string;
+  active: boolean;
+  label: string;
+  phase: string;
+  completed_steps: number;
+  total_steps: number;
+  percentage: number;
+  completed_items: string[];
+  token_usage?: any;
+}
+
 const getApiBase = (): string => {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
@@ -112,7 +124,15 @@ class ApiClient {
             const contentType = res.headers.get("content-type") || "";
             if (contentType.includes("application/json")) {
               const errorJson = await res.json();
-              errorDetail = errorJson.detail || errorJson.message || errorDetail;
+              if (Array.isArray(errorJson.detail)) {
+                errorDetail = errorJson.detail
+                  .map((d: any) => (typeof d === "string" ? d : d.msg || d.message || JSON.stringify(d)))
+                  .join("; ");
+              } else if (typeof errorJson.detail === "object" && errorJson.detail !== null) {
+                errorDetail = JSON.stringify(errorJson.detail);
+              } else {
+                errorDetail = errorJson.detail || errorJson.message || errorDetail;
+              }
             } else {
               const errorText = await res.text();
               if (errorText) {
@@ -249,8 +269,16 @@ class ApiClient {
     return this.request(`/api/v1/cv/${candidateId}/export`);
   }
 
-  async getRecommendedJobs(candidateId: string, limit: number = 10, signal?: AbortSignal): Promise<JobRecommendationResponse> {
-    return this.request(`/api/v1/candidates/${candidateId}/recommended-jobs?limit=${limit}`, {
+  async getRecommendedJobs(
+    candidateId: string,
+    limit: number = 10,
+    signal?: AbortSignal,
+    excludeJobId?: string
+  ): Promise<JobRecommendationResponse> {
+    const url = excludeJobId
+      ? `/api/v1/candidates/${candidateId}/recommended-jobs?limit=${limit}&exclude_job_id=${encodeURIComponent(excludeJobId)}`
+      : `/api/v1/candidates/${candidateId}/recommended-jobs?limit=${limit}`;
+    return this.request(url, {
       signal,
     });
   }
@@ -327,13 +355,28 @@ class ApiClient {
     };
   }
 
-  // Matching & Citations
-  async evaluateCandidate(candidateId: string, jobDescription: JobDescription, signal?: AbortSignal): Promise<MatchEvaluationResult> {
+  // Matching & Citations & Live Progress
+  async getActiveProgress(taskKey?: string): Promise<ActiveProgressState | null> {
+    try {
+      const q = taskKey ? `?task_key=${encodeURIComponent(taskKey)}` : "";
+      return await this.request(`/api/v1/progress/active${q}`, { timeoutMs: 4000 });
+    } catch {
+      return null;
+    }
+  }
+
+  async evaluateCandidate(
+    candidateId: string,
+    jobDescription: JobDescription,
+    signal?: AbortSignal,
+    strictness: number = 50
+  ): Promise<MatchEvaluationResult> {
     return this.request("/api/v1/match/evaluate", {
       method: "POST",
       body: JSON.stringify({
         candidate_id: candidateId,
         job_description: jobDescription,
+        strictness: Math.max(0, Math.min(100, Math.round(strictness))),
       }),
       timeoutMs: 180000,
       preferDirectBackend: true,

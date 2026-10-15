@@ -413,3 +413,110 @@ def test_matching_agent_preserves_field_mismatch_unmet_status():
     assert "Degree Hierarchy" not in match.reasoning
 
 
+def test_location_not_confused_with_language_hierarchy():
+    """Verify that a location requirement mentioning Germany is not treated as a German language requirement."""
+    langs = [LanguageSkill(language="German", proficiency="C1 (Listening, Reading, Writing)")]
+
+    # 1. Direct service check: must return None
+    res = SkillEquivalenceService.evaluate_language_hierarchy(
+        languages=langs,
+        requirement_title="Location & On-Site Presence (Regensburg, Germany)",
+        requirement_description="Ability and authorization to work on-site at the Regensburg location in Germany.",
+    )
+    assert res is None
+
+    # 2. MatchingAgent workflow check: LLM rejection on location must NOT be overridden to MET
+    from backend.agents.matching_agent import MatchingAgent
+    from tests.test_agents import MockTestLLM
+
+    class MockLocationLLM(MockTestLLM):
+        def generate_structured(self, prompt, response_model, system_prompt="", temperature=0.0):
+            if response_model == RequirementMatch:
+                return RequirementMatch(
+                    requirement_id="req_loc",
+                    status=MatchStatus.NOT_MET,
+                    score=0.0,
+                    reasoning="Candidate does not have a valid work authorization for Germany, and there is no indication of their ability to work on-site at Regensburg, Germany.",
+                    citations=[],
+                )
+            return super().generate_structured(prompt, response_model, system_prompt, temperature)
+
+    agent = MatchingAgent(llm_client=MockLocationLLM())
+    candidate = AnonymizedCandidate(
+        candidate_id=uuid4(),
+        anonymized_languages=langs,
+        sanitized_text="Speaks German at C1 level.",
+        demographic_data={},
+    )
+    req = JobRequirement(
+        id="req_loc",
+        title="Location & On-Site Presence (Regensburg, Germany)",
+        category=RequirementCategory.MUST_HAVE,
+        description="Ability and authorization to work on-site at the Regensburg location in Germany.",
+    )
+    match = agent.evaluate_requirement(
+        candidate_id=candidate.candidate_id,
+        requirement=req,
+        candidate=candidate,
+    )
+    assert match.status == MatchStatus.NOT_MET
+    assert match.score == 0.0
+    assert "Language Hierarchy" not in match.reasoning
+
+
+def test_study_field_mismatch_not_overridden_by_degree_hierarchy():
+    """Verify that a study field requirement is not overridden by degree hierarchy when study field does not match."""
+    edu = [
+        Education(degree_title="Master of Science", field_of_study="Automotive Electronic Systems", institution_name="TU"),
+        Education(degree_title="Bachelor", field_of_study="Applied Electronics", institution_name="TU"),
+    ]
+
+    # 1. Direct service check: "Relevant Study Field" requirement title must return None
+    res = SkillEquivalenceService.evaluate_degree_hierarchy(
+        education_list=edu,
+        requirement_title="Relevant Study Field",
+        requirement_description="Currently enrolled in a degree program in Industrial Engineering, Business Administration, Business Informatics, Mechanical Engineering or a comparable field.",
+    )
+    assert res is None
+
+    # 2. MatchingAgent workflow check: LLM rejection with "study field does not match" must NOT be overridden to MET
+    from backend.agents.matching_agent import MatchingAgent
+    from tests.test_agents import MockTestLLM
+
+    class MockStudyFieldLLM(MockTestLLM):
+        def generate_structured(self, prompt, response_model, system_prompt="", temperature=0.0):
+            if response_model == RequirementMatch:
+                return RequirementMatch(
+                    requirement_id="req_study",
+                    status=MatchStatus.NOT_MET,
+                    score=0.0,
+                    reasoning="The candidate's study field does not match the required fields.",
+                    citations=[],
+                )
+            return super().generate_structured(prompt, response_model, system_prompt, temperature)
+
+    agent = MatchingAgent(llm_client=MockStudyFieldLLM())
+    candidate = AnonymizedCandidate(
+        candidate_id=uuid4(),
+        anonymized_education=edu,
+        sanitized_text="Master student in Automotive Electronic Systems.",
+        demographic_data={},
+    )
+    req = JobRequirement(
+        id="req_study",
+        title="Relevant Study Field",
+        category=RequirementCategory.MUST_HAVE,
+        description="Currently enrolled in a degree program in Industrial Engineering, Business Administration, Business Informatics, Mechanical Engineering or a comparable field.",
+    )
+    match = agent.evaluate_requirement(
+        candidate_id=candidate.candidate_id,
+        requirement=req,
+        candidate=candidate,
+    )
+    assert match.status == MatchStatus.NOT_MET
+    assert match.score == 0.0
+    assert "Degree Hierarchy" not in match.reasoning
+
+
+
+

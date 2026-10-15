@@ -422,17 +422,17 @@ export function SettingsView() {
     const recommended: FallbackHierarchyItem[] = [
       {
         provider: "groq",
-        model: "openai/gpt-oss-20b",
-        name: "GPT-OSS 20B (OpenAI)",
-        free: true,
-        rate_limits: "30 RPM | 8,000 TPM | 200,000 TPD",
-      },
-      {
-        provider: "groq",
         model: "qwen/qwen3.8-27b",
         name: "Qwen 3.8 27B",
         free: true,
         rate_limits: "30 RPM | 6,000 TPM | 500,000 TPD",
+      },
+      {
+        provider: "groq",
+        model: "openai/gpt-oss-20b",
+        name: "GPT-OSS 20B (OpenAI)",
+        free: true,
+        rate_limits: "30 RPM | 8,000 TPM | 200,000 TPD",
       },
       {
         provider: "gemini",

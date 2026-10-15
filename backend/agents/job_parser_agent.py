@@ -6,8 +6,10 @@ extracting structured atomic requirements via LLM, and detecting missing critica
 
 import html
 import json
+from datetime import datetime, timezone
 import logging
 import re
+import time
 from typing import Any, List, Optional
 from uuid import uuid4
 from bs4 import BeautifulSoup
@@ -17,12 +19,14 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("recruitment_screening.job_parser")
 
 from backend.agents.llm_factory import BaseLLMClient, get_llm_client
+from backend.config import settings
 from backend.schemas.job import (
     JobDescription,
     JobExtractionResult,
     JobRequirement,
     RequirementCategory,
 )
+from backend.schemas.token_usage import ActionAuditInfo
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -606,12 +610,45 @@ class JobParserAgent:
 
         prompt = f"Extract structured job description attributes from the following job posting content:\n\n{text.strip()}"
 
+        start_time = time.perf_counter()
         structured = self.llm_client.generate_structured(
             prompt=prompt,
             response_model=StructuredJobPosting,
             system_prompt=JOB_PARSER_SYSTEM_PROMPT,
             temperature=0.0,
         )
+        end_time = time.perf_counter()
+        duration_ms = round((end_time - start_time) * 1000.0, 2)
+        duration_sec = round(end_time - start_time, 3)
+
+        model_name = (
+            getattr(self.llm_client, "get_model_name", lambda: None)()
+            or getattr(self.llm_client, "model", None)
+            or getattr(settings, "llm_model", "unknown")
+        )
+        provider = getattr(settings, "llm_provider", None)
+
+        raw_usage = getattr(self.llm_client, "get_last_usage", lambda: None)()
+        if raw_usage and hasattr(raw_usage, "prompt_tokens"):
+            tokens_dict = {
+                "prompt_tokens": int(getattr(raw_usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(raw_usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(raw_usage, "total_tokens", 0) or 0),
+            }
+            if getattr(raw_usage, "model", None):
+                model_name = raw_usage.model
+            if getattr(raw_usage, "provider", None):
+                provider = raw_usage.provider
+        elif isinstance(raw_usage, dict):
+            tokens_dict = {
+                "prompt_tokens": int(raw_usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(raw_usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(raw_usage.get("total_tokens", 0) or 0),
+            }
+        else:
+            tokens_dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+        tokens_consumed = tokens_dict
 
         missing_fields: List[str] = []
         warnings: List[str] = []
@@ -778,6 +815,16 @@ class JobParserAgent:
             requirements=job_requirements,
             unused_details=structured.unused_details,
             raw_text=text,
+            audit_metadata=ActionAuditInfo(
+                model_name=str(model_name),
+                provider=provider,
+                tokens_consumed=tokens_consumed,
+                duration_ms=duration_ms,
+                duration_seconds=duration_sec,
+                initial_document_text_length=len(text),
+                initial_document_word_count=len(text.split()),
+                action_timestamp=datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
         return JobExtractionResult(

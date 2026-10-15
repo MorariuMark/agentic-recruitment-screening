@@ -26,6 +26,7 @@ export interface JobDescription {
   raw_text?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  audit_metadata?: ActionAuditInfo | null;
 }
 
 export interface ContactInfo {
@@ -125,6 +126,7 @@ export interface ParsedCV {
   miscellaneous?: string[];
   unused_details?: string[];
   raw_text?: string;
+  audit_metadata?: ActionAuditInfo | null;
 }
 
 export interface AnonymizedCandidate {
@@ -252,8 +254,10 @@ export interface MatchEvaluationResult {
   citation_verification_score: number;
   hitl_validated: boolean;
   recruiter_notes?: string | null;
+  strictness?: number;
   created_at?: string;
   token_usage?: TokenUsageInfo | null;
+  audit_metadata?: ActionAuditInfo | null;
 }
 
 export interface InterviewQuestion {
@@ -555,6 +559,21 @@ export interface ComplianceDossier {
   };
 }
 
+export interface ActionAuditInfo {
+  model_name: string;
+  provider?: string | null;
+  tokens_consumed: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  duration_ms: number;
+  duration_seconds: number;
+  initial_document_text_length: number;
+  initial_document_word_count?: number;
+  action_timestamp?: string | null;
+}
+
 export interface TokenUsageInfo {
   provider: string;
   model: string;
@@ -641,6 +660,8 @@ export interface JobRecommendationItem {
   matching_criteria_count: number;
   matching_skills: string[];
   key_strengths: string[];
+  missing_requirements?: string[];
+  justification?: string | null;
   has_full_evaluation: boolean;
   evaluation_id?: string | null;
 }

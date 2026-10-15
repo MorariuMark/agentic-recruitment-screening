@@ -8,6 +8,8 @@ from typing import Any, List, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
+from backend.schemas.token_usage import ActionAuditInfo
+
 
 class RequirementCategory(str, Enum):
     """Classification of requirement importance."""
@@ -40,6 +42,7 @@ class JobDescription(BaseModel):
     requirements: List[JobRequirement] = Field(default_factory=list, description="List of job requirements")
     unused_details: List[str] = Field(default_factory=list, description="Extracted non-requirement JD sections (perks, company intro, EEO)")
     raw_text: str = Field(default="", description="Original job description text")
+    audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata including model name, token usage, latency, and initial document length")
 
 
 class JobExtractionResult(BaseModel):
@@ -56,3 +59,4 @@ class JDTaggedExport(BaseModel):
     tag_counts: dict = Field(default_factory=dict, description="Summary counts of details by tag")
     items: list = Field(default_factory=list, description="All tagged items (TaggedDetailItem)")
     job_description: JobDescription = Field(description="Underlying structured Job Description")
+    audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata for downstream verification")

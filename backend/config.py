@@ -61,8 +61,12 @@ class Settings(BaseSettings):
         default=None,
         description="API key for Groq Cloud API",
     )
+    groq_secondary_api_key: Optional[str] = Field(
+        default=None,
+        description="Secondary fallback API key for Groq Cloud API when primary hits rate limits",
+    )
     groq_model: str = Field(
-        default="openai/gpt-oss-20b",
+        default="qwen/qwen3.8-27b",
         description="Groq model identifier",
     )
 

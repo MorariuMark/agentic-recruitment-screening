@@ -31,7 +31,7 @@ class ComplianceService:
         if prov == "agnes":
             return getattr(settings, "agnes_model", "agnes-2.5-flash")
         elif prov == "groq":
-            return getattr(settings, "groq_model", "openai/gpt-oss-20b")
+            return getattr(settings, "groq_model", "qwen/qwen3.8-27b")
         elif prov == "openrouter":
             return getattr(settings, "openrouter_model", "openrouter/free")
         elif prov == "nvidia_nim":

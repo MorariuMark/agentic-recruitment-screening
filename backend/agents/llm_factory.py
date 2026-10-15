@@ -139,6 +139,14 @@ class BaseLLMClient(ABC):
         self.last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
         return self.last_usage
 
+    def get_model_name(self) -> str:
+        """Returns the active model identifier used by the client."""
+        return getattr(self, "model", None) or getattr(settings, "llm_model", "unknown")
+
+    def get_last_usage(self) -> Dict[str, int]:
+        """Returns the most recent prompt/completion token consumption."""
+        return getattr(self, "last_usage", None) or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
     @abstractmethod
     def generate_text(
         self,
@@ -351,11 +359,12 @@ class OpenRouterClient(BaseLLMClient):
 
 
 class GroqClient(BaseLLMClient):
-    """Client for Groq Cloud API with ultra-fast inference."""
+    """Client for Groq Cloud API with ultra-fast inference and dual-key failover."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        secondary_api_key: Optional[str] = None,
         model: Optional[str] = None,
         compatibility_mode: Optional[str] = None,
     ) -> None:
@@ -364,16 +373,62 @@ class GroqClient(BaseLLMClient):
         self.api_key = api_key or settings.groq_api_key
         if not self.api_key:
             raise ValueError("GROQ_API_KEY must be provided or set in environment variables.")
+        cfg_secondary = getattr(settings, "groq_secondary_api_key", None)
+        if secondary_api_key and secondary_api_key != self.api_key:
+            self.secondary_api_key = secondary_api_key
+        elif cfg_secondary and cfg_secondary != self.api_key:
+            self.secondary_api_key = cfg_secondary
+        else:
+            self.secondary_api_key = None
+
         self.model = model or settings.groq_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
         self.client = Groq(api_key=self.api_key, timeout=20.0, max_retries=0)
+        self.secondary_client = (
+            Groq(api_key=self.secondary_api_key, timeout=20.0, max_retries=0)
+            if self.secondary_api_key
+            else None
+        )
+        self.last_key_used: str = "primary"
 
     def _get_candidate_models(self) -> List[str]:
         candidates = [self.model]
-        for fallback in ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"]:
+        for fallback in ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]:
             if fallback not in candidates:
                 candidates.append(fallback)
         return candidates
+
+    def _is_rate_limit_error(self, err: Exception) -> bool:
+        err_msg = str(err).lower()
+        return any(
+            x in err_msg
+            for x in ["429", "rate_limit", "rate limit", "ratelimit", "tpm", "rpm", "rpd", "tpd", "quota", "resource_exhausted"]
+        )
+
+    def _execute_chat_completion(self, kwargs: Dict[str, Any]) -> Any:
+        try:
+            res = self.client.chat.completions.create(**kwargs)
+            self.last_key_used = "primary"
+            return res
+        except Exception as primary_err:
+            if self.secondary_client is not None:
+                logger.warning(
+                    "Groq primary key failed for model [%s]: %s. Failing over to secondary Groq API key...",
+                    self.model,
+                    primary_err,
+                )
+                try:
+                    res = self.secondary_client.chat.completions.create(**kwargs)
+                    self.last_key_used = "secondary"
+                    return res
+                except Exception as secondary_err:
+                    logger.error(
+                        "Groq secondary key also failed for model [%s]: %s",
+                        self.model,
+                        secondary_err,
+                    )
+                    raise secondary_err from primary_err
+            raise primary_err
 
     def generate_text(
         self,
@@ -386,11 +441,11 @@ class GroqClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature,
-        )
+        response = self._execute_chat_completion({
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        })
         return response.choices[0].message.content or ""
 
     def generate_structured(
@@ -423,15 +478,16 @@ class GroqClient(BaseLLMClient):
             kwargs["response_format"] = {"type": "json_object"}
 
         try:
-            response = self.client.chat.completions.create(**kwargs)
+            response = self._execute_chat_completion(kwargs)
             raw_content = response.choices[0].message.content or "{}"
             self._capture_usage(response, prompt, raw_content)
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto":
-                kwargs.pop("response_format", None)
-                response = self.client.chat.completions.create(**kwargs)
+            if use_json_object and self.compatibility_mode == "auto" and not self._is_rate_limit_error(err):
+                kwargs_retry = dict(kwargs)
+                kwargs_retry.pop("response_format", None)
+                response = self._execute_chat_completion(kwargs_retry)
                 raw_content = response.choices[0].message.content or "{}"
                 self._capture_usage(response, prompt, raw_content)
                 parsed_dict = clean_and_parse_json(raw_content)
@@ -941,7 +997,12 @@ def create_llm_client(
             compatibility_mode=compatibility_mode,
         )
     elif selected == "groq":
-        return GroqClient(api_key=api_key, model=model, compatibility_mode=compatibility_mode)
+        return GroqClient(
+            api_key=api_key,
+            secondary_api_key=getattr(settings, "groq_secondary_api_key", None),
+            model=model,
+            compatibility_mode=compatibility_mode,
+        )
     elif selected == "openrouter":
         return OpenRouterClient(
             api_key=api_key,
@@ -1043,7 +1104,7 @@ def _get_fallback_primary_model(prov: str) -> str:
     if prov == "agnes":
         return "agnes-2.5-flash"
     elif prov == "groq":
-        return "openai/gpt-oss-20b"
+        return "qwen/qwen3.8-27b"
     elif prov == "nvidia_nim":
         return "meta/llama-3.2-11b-vision-instruct"
     elif prov == "gemini":
@@ -1181,7 +1242,7 @@ class DynamicLLMClient(BaseLLMClient):
         ):
             if not prov or not mod:
                 return
-            target_key = (prov.lower(), mod)
+            target_key = (prov.lower(), mod, key)
             if target_key in seen_targets:
                 return
             cli = self._get_or_create_client(
@@ -1228,29 +1289,42 @@ class DynamicLLMClient(BaseLLMClient):
         # 1. Primary configured model (Default automatic chain)
         primary_prov = settings.llm_provider.lower()
         primary_model = _get_fallback_primary_model(primary_prov)
-        add_candidate(primary_prov, primary_model)
+        primary_key = getattr(settings, f"{primary_prov}_api_key", None)
+        add_candidate(primary_prov, primary_model, key=primary_key)
 
         # 2. Intra-provider backup models for primary provider
         intra_fallbacks = {
             "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
-            "groq": ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"],
+            "groq": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
             "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-large-2-instruct"],
             "gemini": ["gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-lite-latest"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
         }
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
-            add_candidate(primary_prov, fallback_mod)
+            add_candidate(primary_prov, fallback_mod, key=primary_key)
 
-        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> NVIDIA -> Gemini -> Agnes -> OpenRouter -> Ollama)
-        provider_priority = ["groq", "nvidia_nim", "gemini", "agnes", "openrouter", "ollama"]
+        # If primary provider is groq and secondary api key is available, register secondary key candidates
+        if primary_prov == "groq" and getattr(settings, "groq_secondary_api_key", None):
+            add_candidate("groq", primary_model, key=settings.groq_secondary_api_key)
+            for fallback_mod in intra_fallbacks.get("groq", []):
+                add_candidate("groq", fallback_mod, key=settings.groq_secondary_api_key)
+
+        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> NVIDIA NIM -> OpenRouter -> Ollama)
+        provider_priority = ["groq", "gemini", "agnes", "nvidia_nim", "openrouter", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue
 
-            if p == "groq" and settings.groq_api_key:
-                add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_api_key)
-                add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_api_key)
+            if p == "groq":
+                if settings.groq_api_key:
+                    add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_api_key)
+                    add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_api_key)
+                    add_candidate("groq", "openai/gpt-oss-120b", key=settings.groq_api_key)
+                if getattr(settings, "groq_secondary_api_key", None):
+                    add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_secondary_api_key)
+                    add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_secondary_api_key)
+                    add_candidate("groq", "openai/gpt-oss-120b", key=settings.groq_secondary_api_key)
             elif p == "gemini" and settings.gemini_api_key:
                 add_candidate("gemini", settings.gemini_model or "gemini-flash-latest", key=settings.gemini_api_key)
                 add_candidate("gemini", "gemini-3.8-flash", key=settings.gemini_api_key)
@@ -1312,6 +1386,7 @@ class DynamicLLMClient(BaseLLMClient):
                 t_tok = usage.get("total_tokens") or (p_tok + c_tok)
 
                 from backend.services.token_tracker import token_tracker
+                is_key_failover = getattr(client, "last_key_used", None) == "secondary"
                 self._last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
@@ -1320,7 +1395,7 @@ class DynamicLLMClient(BaseLLMClient):
                     total_tokens=t_tok,
                     action=getattr(self, "_current_action", "general"),
                     latency_ms=lat_ms,
-                    status="success" if idx == 0 else "failover",
+                    status="success" if (idx == 0 and not is_key_failover) else "failover",
                 )
 
                 if idx > 0:
@@ -1407,6 +1482,7 @@ class DynamicLLMClient(BaseLLMClient):
                 t_tok = usage.get("total_tokens") or (p_tok + c_tok)
 
                 from backend.services.token_tracker import token_tracker
+                is_key_failover = getattr(client, "last_key_used", None) == "secondary"
                 self._last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
@@ -1415,7 +1491,7 @@ class DynamicLLMClient(BaseLLMClient):
                     total_tokens=t_tok,
                     action=getattr(self, "_current_action", "general"),
                     latency_ms=lat_ms,
-                    status="success" if idx == 0 else "failover",
+                    status="success" if (idx == 0 and not is_key_failover) else "failover",
                 )
 
                 if idx > 0:

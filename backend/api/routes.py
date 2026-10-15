@@ -6,6 +6,7 @@ Human-in-the-Loop (HITL) recruiter validation, and tailored interview guide gene
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
@@ -248,6 +249,7 @@ class MatchEvaluateRequest(BaseModel):
     """Request payload to evaluate an indexed candidate against a job description."""
     candidate_id: UUID = Field(description="UUID of previously uploaded candidate")
     job_description: JobDescription = Field(description="Job description and atomic criteria")
+    strictness: int = Field(default=50, ge=0, le=100, description="Evaluation strictness level from 0 (lenient) to 100 (ultra-strict)")
 
 
 class CandidateCompareRequest(BaseModel):
@@ -352,6 +354,7 @@ class LLMUpdateRequest(BaseModel):
     model: str = Field(description="Target model identifier")
     compatibility_mode: str = Field(default="auto", description="Structured output compatibility mode")
     api_key: Optional[str] = Field(default=None, description="Optional new API key for the target provider")
+    secondary_api_key: Optional[str] = Field(default=None, description="Optional secondary fallback API key")
     base_url: Optional[str] = Field(default=None, description="Optional custom base URL")
     local_context_window: Optional[int] = Field(default=None, description="Local context window in tokens")
     local_rolling_context: Optional[bool] = Field(default=None, description="Enable rolling context window")
@@ -409,6 +412,22 @@ class OllamaPullRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+@router.get(
+    "/progress/active",
+    summary="Fetch real-time backend task step progress and phase telemetry",
+)
+async def get_active_task_progress(task_key: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """Returns real-time step completion and phase telemetry for active AI tasks."""
+    from backend.services.progress_tracker import progress_tracker
+    from backend.services.token_tracker import token_tracker
+
+    state = progress_tracker.get_active_progress(task_key)
+    last_usage = token_tracker.get_last_usage()
+    if last_usage:
+        state["token_usage"] = last_usage.model_dump()
+    return state
+
+
 @router.post(
     "/job/parse-url",
     response_model=JobExtractionResult,
@@ -419,8 +438,25 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     Retrieves the HTML content of the job posting URL, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
+    from backend.services.progress_tracker import progress_tracker
+    progress_tracker.start_task(
+        task_key="job_parse",
+        label="Extracting Job Requisition from URL",
+        phase="Step 1/3: Fetching & sanitizing job posting HTML...",
+        total_steps=3,
+    )
     try:
+        progress_tracker.update_task(
+            task_key="job_parse",
+            completed_steps=1,
+            phase="Step 2/3: Decomposing atomic criteria & weights with AI...",
+        )
         result = await asyncio.to_thread(_job_parser_agent.parse_job_url, request.url)
+        progress_tracker.update_task(
+            task_key="job_parse",
+            completed_steps=2,
+            phase="Step 3/3: Persisting calibrated requisition to database...",
+        )
         try:
             await DatabaseRepository.save_job(
                 job=result.job_description,
@@ -428,13 +464,16 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
             )
         except Exception as db_err:
             logger.warning(f"Failed to persist job to database: {db_err}")
+        progress_tracker.finish_task("job_parse", phase="Job parsing completed")
         return result
     except ValueError as e:
+        progress_tracker.finish_task("job_parse", phase="Failed")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        progress_tracker.finish_task("job_parse", phase="Failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error extracting job description from URL: {str(e)}",
@@ -451,8 +490,25 @@ async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     Parses raw pasted job posting text, extracts structured metadata
     and atomic requirement criteria using LLM, and audits for missing required elements.
     """
+    from backend.services.progress_tracker import progress_tracker
+    progress_tracker.start_task(
+        task_key="job_parse",
+        label="Parsing Job Description Text",
+        phase="Step 1/3: Normalizing job description text...",
+        total_steps=3,
+    )
     try:
+        progress_tracker.update_task(
+            task_key="job_parse",
+            completed_steps=1,
+            phase="Step 2/3: Decomposing atomic criteria & weights with AI...",
+        )
         result = await asyncio.to_thread(_job_parser_agent.parse_job_text, request.text)
+        progress_tracker.update_task(
+            task_key="job_parse",
+            completed_steps=2,
+            phase="Step 3/3: Persisting calibrated requisition to database...",
+        )
         try:
             await DatabaseRepository.save_job(
                 job=result.job_description,
@@ -460,13 +516,16 @@ async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
             )
         except Exception as db_err:
             logger.warning(f"Failed to persist job to database: {db_err}")
+        progress_tracker.finish_task("job_parse", phase="Job parsing completed")
         return result
     except ValueError as e:
+        progress_tracker.finish_task("job_parse", phase="Failed")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        progress_tracker.finish_task("job_parse", phase="Failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error parsing job description text: {str(e)}",
@@ -485,6 +544,7 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
     for structured extraction, scrubs all PII, indexes chunks in ChromaDB, and returns
     the structured candidate profile.
     """
+    from backend.services.progress_tracker import progress_tracker
     try:
         content_bytes = await file.read()
         if not content_bytes:
@@ -523,6 +583,8 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
         token_usage_record = None
         if hasattr(_parser_agent.llm_client, "get_last_usage"):
             token_usage_record = _parser_agent.llm_client.get_last_usage()
+
+        progress_tracker.finish_task("cv_upload", phase=f"Indexed {chunks_indexed} semantic CV chunks")
 
         return CVUploadResponse(
             candidate_id=cid,
@@ -749,6 +811,7 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
             _matching_agent.match_candidate,
             candidate=candidate,
             job_description=request.job_description,
+            strictness=request.strictness,
         )
 
         # Persist job and evaluation report to database
@@ -1318,18 +1381,23 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
 async def recommend_jobs_for_candidate(
     candidate_id: UUID,
     limit: int = Query(default=10, ge=1, le=50, description="Max jobs to return (defaults to top 10)"),
+    exclude_job_id: Optional[UUID] = Query(default=None, description="Optional job ID to exclude from recommendations"),
 ) -> JobRecommendationResponse:
     """
     Scans all stored job descriptions from the database, scores candidate alignment
     using existing evaluations where available, or semantic vector retrieval and skill overlap,
-    ranking the top fits by score.
+    ranking the top fits by score and providing a grounded justification for each role.
+    Excludes the current role and deduplicates duplicate job requisition titles.
     """
+    from backend.services.skill_equivalence import SkillEquivalenceService
+
     cand_record = await DatabaseRepository.get_candidate(candidate_id)
     raw: Dict[str, Any] = {}
     anon: Dict[str, Any] = {}
     masked_name = ""
     candidate_skills: List[str] = []
     sanitized_text = ""
+    cand_anon_obj: Optional[AnonymizedCandidate] = None
 
     if cand_record:
         raw = cand_record.raw_cv_json or {}
@@ -1337,6 +1405,10 @@ async def recommend_jobs_for_candidate(
         masked_name = cand_record.full_name_redacted or f"Candidate-{str(candidate_id)[:8].upper()}"
         candidate_skills = list(raw.get("skills") or anon.get("anonymized_skills") or [])
         sanitized_text = cand_record.sanitized_text or ""
+        try:
+            _, cand_anon_obj, _ = _reconstruct_candidate_from_db(cand_record)
+        except Exception:
+            cand_anon_obj = _CANDIDATE_ANONYMIZED_STORE.get(candidate_id)
     elif candidate_id in _CANDIDATE_ANONYMIZED_STORE:
         cand_anon_obj = _CANDIDATE_ANONYMIZED_STORE[candidate_id]
         masked_name = f"Candidate-{str(candidate_id)[:8].upper()}"
@@ -1357,6 +1429,18 @@ async def recommend_jobs_for_candidate(
             recommendations=[],
         )
 
+    exclude_title_norm: Optional[str] = None
+    if exclude_job_id:
+        for jm in job_records:
+            if str(jm.id) == str(exclude_job_id):
+                if jm.title:
+                    exclude_title_norm = re.sub(r"\s+", " ", jm.title.strip().lower())
+                break
+        if not exclude_title_norm:
+            ex_job = await DatabaseRepository.get_job(exclude_job_id)
+            if ex_job and ex_job.title:
+                exclude_title_norm = re.sub(r"\s+", " ", ex_job.title.strip().lower())
+
     eval_records = await DatabaseRepository.list_evaluations_for_candidate(candidate_id)
     eval_map: Dict[str, Any] = {str(e.job_id): e for e in eval_records}
     for eid, ev in _EVALUATION_STORE.items():
@@ -1366,156 +1450,326 @@ async def recommend_jobs_for_candidate(
     candidate_skills_lower = [s.strip().lower() for s in candidate_skills if s and s.strip()]
     candidate_text_lower = sanitized_text.lower()
 
-    scored_items: List[Dict[str, Any]] = []
+    COMMON_STOPWORDS = {
+        "experience", "years", "knowledge", "ability", "software", "development",
+        "engineer", "engineering", "working", "building", "systems", "proven",
+        "required", "strong", "skills", "understanding", "responsible", "qualification",
+        "qualifications", "field", "degree", "bachelor", "master", "technical",
+        "good", "great", "must", "have", "with", "from", "plus", "role", "work",
+        "practical", "depth", "deep", "solid", "hands-on", "hands", "on", "in", "and", "or",
+        "to", "for", "of", "a", "an", "is", "as", "at", "by", "candidate", "demonstrated",
+    }
 
-    for job_model in job_records:
-        job = _reconstruct_job_from_db(job_model)
-        jid_str = str(job.id)
+    def _extract_tech_terms(text: str) -> List[str]:
+        words = re.findall(r"[a-zA-Z0-9\+#\.-]+", text.lower())
+        return [w for w in words if len(w) > 1 and w not in COMMON_STOPWORDS]
 
-        if jid_str in eval_map:
-            ev = eval_map[jid_str]
-            if isinstance(ev, MatchEvaluationModel):
-                ev_result = _reconstruct_evaluation_from_db(ev)
-            else:
-                ev_result = ev
+    def _calculate_job_recommendations_sync() -> List[Dict[str, Any]]:
+        cand_skills_set = set(candidate_skills_lower)
+        if cand_anon_obj:
+            for sk in (cand_anon_obj.anonymized_skills or []):
+                if sk and sk.strip():
+                    cand_skills_set.add(sk.strip().lower())
+            for exp in (cand_anon_obj.anonymized_work_experiences or []):
+                for sk in (exp.skills_used or []):
+                    if sk and sk.strip():
+                        cand_skills_set.add(sk.strip().lower())
 
-            matching_skills = [
-                s for s in candidate_skills
-                if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in job.requirements)
-            ]
-            strengths = [
-                m.title or m.requirement_id
-                for m in ev_result.requirement_matches
-                if m.status == MatchStatus.MET
-            ][:4]
-            matching_criteria_count = sum(
-                1 for m in ev_result.requirement_matches
-                if m.status in (MatchStatus.MET, MatchStatus.PARTIAL)
-            )
+        total_years = (
+            raw.get("total_years_experience")
+            or anon.get("total_years_experience")
+            or ((cand_record.raw_cv_json or {}) if cand_record else {}).get("total_years_experience")
+        )
+        if total_years is not None:
+            try:
+                total_years = float(total_years)
+            except (ValueError, TypeError):
+                total_years = None
 
-            scored_items.append({
-                "job_id": job.id,
-                "title": job.title,
-                "department": job.department,
-                "location": job.location,
-                "work_model": job.work_model,
-                "employment_type": job.employment_type,
-                "seniority_level": job.seniority_level,
-                "overall_score": round(float(ev_result.overall_score), 1),
-                "must_have_score": round(float(ev_result.must_have_score), 1),
-                "nice_to_have_score": round(float(ev_result.nice_to_have_score), 1),
-                "recommendation": ev_result.recommendation,
-                "must_have_gaps_count": int(ev_result.must_have_gaps_count),
-                "total_requirements_count": len(job.requirements),
-                "matching_criteria_count": matching_criteria_count,
-                "matching_skills": matching_skills[:6],
-                "key_strengths": strengths,
-                "has_full_evaluation": True,
-                "evaluation_id": ev_result.id,
-            })
-        else:
+        scored: List[Dict[str, Any]] = []
+
+        for job_model in job_records:
+            if exclude_job_id and str(job_model.id) == str(exclude_job_id):
+                continue
+
+            job = _reconstruct_job_from_db(job_model)
+            jid_str = str(job.id)
+            job_norm_title = re.sub(r"\s+", " ", (job.title or "").strip().lower())
+
+            if exclude_title_norm and job_norm_title == exclude_title_norm:
+                continue
+
             reqs = job.requirements or []
-            must_haves = [r for r in reqs if r.category == RequirementCategory.MUST_HAVE]
-            nice_to_haves = [r for r in reqs if r.category == RequirementCategory.NICE_TO_HAVE]
+            if len(reqs) < 2 and len(job_records) > 3:
+                continue
 
-            def _score_req_list(req_list: List[JobRequirement]) -> Tuple[float, int, List[str]]:
-                if not req_list:
-                    return 100.0, 0, []
-                total_weight = sum(r.weight for r in req_list) or 1.0
-                accum_score = 0.0
-                gaps = 0
-                matched_req_titles = []
+            if jid_str in eval_map:
+                ev = eval_map[jid_str]
+                if isinstance(ev, MatchEvaluationModel):
+                    ev_result = _reconstruct_evaluation_from_db(ev)
+                else:
+                    ev_result = ev
 
-                for r in req_list:
-                    r_title_lower = (r.title or "").lower()
-                    r_desc_lower = (r.description or "").lower()
+                matching_skills = [
+                    s for s in candidate_skills
+                    if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in job.requirements)
+                ]
+                strengths = [
+                    m.title or m.requirement_id
+                    for m in ev_result.requirement_matches
+                    if m.status == MatchStatus.MET
+                ][:4]
+                missing_reqs = [
+                    m.title or m.requirement_id
+                    for m in ev_result.requirement_matches
+                    if m.status == MatchStatus.NOT_MET
+                ][:3]
+                matching_criteria_count = sum(
+                    1 for m in ev_result.requirement_matches
+                    if m.status in (MatchStatus.MET, MatchStatus.PARTIAL)
+                )
+                ov_val = round(float(ev_result.overall_score), 1)
+                mh_val = round(float(ev_result.must_have_score), 1)
+                total_reqs_cnt = len(job.requirements)
+                gaps_cnt = int(ev_result.must_have_gaps_count)
 
-                    skill_hit = any(
-                        s in r_title_lower or s in r_desc_lower or r_title_lower in s
-                        for s in candidate_skills_lower
+                # Synthesize grounded justification from full evaluation
+                strengths_str = ", ".join(strengths[:3]) if strengths else (", ".join(matching_skills[:3]) if matching_skills else "core competencies")
+                if ev_result.recommendation == Recommendation.STRONG_MATCH:
+                    justification = (
+                        f"Verified AI Match ({ov_val:.0f}% overall, {mh_val:.0f}% Must-Have): Candidate satisfies "
+                        f"{matching_criteria_count}/{total_reqs_cnt} criteria with 0 critical gaps. "
+                        f"Strong proven alignment in {strengths_str}."
                     )
-                    text_hit = (
-                        (r.title and r_title_lower in candidate_text_lower)
-                        or any(w in candidate_text_lower for w in r_title_lower.split() if len(w) > 4)
+                elif ev_result.recommendation == Recommendation.BORDERLINE:
+                    gap_note = f" Missing/partial on {', '.join(missing_reqs[:2])}." if missing_reqs else f" {gaps_cnt} must-have gap(s) flagged."
+                    justification = (
+                        f"Borderline Fit ({ov_val:.0f}% overall, {mh_val:.0f}% Must-Have): Aligns with "
+                        f"{matching_criteria_count}/{total_reqs_cnt} criteria including {strengths_str}.{gap_note}"
+                    )
+                else:
+                    gap_note = f" Unmet core requirements: {', '.join(missing_reqs[:3])}." if missing_reqs else ""
+                    justification = (
+                        f"Low Fit ({ov_val:.0f}% overall): Satisfies only {matching_criteria_count}/{total_reqs_cnt} "
+                        f"criteria with {gaps_cnt} must-have gap(s).{gap_note}"
                     )
 
-                    sem_hit = False
-                    sem_dist = 1.0
-                    try:
-                        chunks = _vector_store.query_candidate_chunks(
-                            candidate_id=candidate_id,
-                            query_text=r.title or r.description or "",
-                            n_results=1,
+                scored.append({
+                    "job_id": job.id,
+                    "title": job.title,
+                    "department": job.department,
+                    "location": job.location,
+                    "work_model": job.work_model,
+                    "employment_type": job.employment_type,
+                    "seniority_level": job.seniority_level,
+                    "overall_score": ov_val,
+                    "must_have_score": mh_val,
+                    "nice_to_have_score": round(float(ev_result.nice_to_have_score), 1),
+                    "recommendation": ev_result.recommendation,
+                    "must_have_gaps_count": gaps_cnt,
+                    "total_requirements_count": total_reqs_cnt,
+                    "matching_criteria_count": matching_criteria_count,
+                    "matching_skills": matching_skills[:6],
+                    "key_strengths": strengths,
+                    "missing_requirements": missing_reqs,
+                    "justification": justification,
+                    "has_full_evaluation": True,
+                    "evaluation_id": ev_result.id,
+                })
+            else:
+                must_haves = [r for r in reqs if r.category == RequirementCategory.MUST_HAVE]
+                nice_to_haves = [r for r in reqs if r.category == RequirementCategory.NICE_TO_HAVE]
+                transferable_notes: List[str] = []
+
+                def _score_single_req(r: JobRequirement) -> Tuple[float, bool, Optional[str], Optional[str]]:
+                    r_title = r.title or ""
+                    r_desc = r.description or ""
+                    r_title_lower = r_title.lower()
+                    r_desc_lower = r_desc.lower()
+
+                    req_terms = _extract_tech_terms(r_title_lower) or _extract_tech_terms(r_desc_lower)
+
+                    # 1. Exact / whole-word skill matching
+                    matched_skill_name: Optional[str] = None
+                    for sk in cand_skills_set:
+                        if len(sk) <= 1:
+                            continue
+                        pattern = rf"(?i)\b{re.escape(sk)}\b"
+                        if re.search(pattern, r_title) or (len(sk) > 3 and re.search(pattern, r_desc)):
+                            matched_skill_name = sk
+                            break
+
+                    # 2. Term ratio in candidate profile
+                    term_hits = sum(1 for t in req_terms if (len(t) > 2 and t in candidate_text_lower) or any(t in sk for sk in cand_skills_set))
+                    term_ratio = term_hits / len(req_terms) if req_terms else 0.0
+
+                    # 3. Equivalence (degree / language)
+                    equiv_hit = False
+                    if cand_anon_obj:
+                        if cand_anon_obj.anonymized_education:
+                            deg = SkillEquivalenceService.evaluate_degree_hierarchy(
+                                cand_anon_obj.anonymized_education, r_title, r_desc
+                            )
+                            if deg and deg[0]:
+                                equiv_hit = True
+                        if not equiv_hit and cand_anon_obj.anonymized_languages:
+                            lang = SkillEquivalenceService.evaluate_language_hierarchy(
+                                cand_anon_obj.anonymized_languages, r_title, r_desc
+                            )
+                            if lang and lang[0]:
+                                equiv_hit = True
+
+                    # 4. Transferable skill detection
+                    trans_hit = False
+                    if not matched_skill_name and not equiv_hit and cand_anon_obj:
+                        tr = SkillEquivalenceService.find_transferable_skill(
+                            cand_anon_obj.anonymized_skills,
+                            cand_anon_obj.anonymized_work_experiences,
+                            r_title,
+                            r_desc,
                         )
-                        if chunks and "distance" in chunks[0]:
-                            sem_dist = chunks[0]["distance"]
-                            if sem_dist < 0.60:
-                                sem_hit = True
-                    except Exception:
-                        pass
+                        if tr:
+                            trans_hit = True
+                            transferable_notes.append(f"{tr[0]} → {tr[1]}")
 
-                    if skill_hit and sem_hit:
-                        item_score = max(0.85, 1.0 - sem_dist * 0.5)
-                        matched_req_titles.append(r.title or r.id)
-                    elif skill_hit or sem_hit:
-                        item_score = 0.75 if skill_hit else max(0.65, 1.0 - sem_dist)
-                        matched_req_titles.append(r.title or r.id)
-                    elif text_hit:
-                        item_score = 0.50
+                    # 5. Tenure check
+                    min_yrs = r.minimum_years_experience
+                    tenure_penalty = 1.0
+                    if min_yrs and min_yrs > 0 and total_years is not None:
+                        if total_years < min_yrs * 0.5:
+                            tenure_penalty = 0.20
+                        elif total_years < min_yrs:
+                            tenure_penalty = max(0.40, round(total_years / min_yrs, 2))
+
+                    if equiv_hit:
+                        base = 1.0
+                    elif matched_skill_name:
+                        base = 1.0 if term_ratio >= 0.5 else 0.85
+                    elif trans_hit:
+                        base = 0.65
+                    elif term_ratio >= 0.70:
+                        base = 0.55
+                    elif term_ratio >= 0.40:
+                        base = 0.35
                     else:
-                        item_score = 0.15
-                        gaps += 1
+                        base = 0.0
 
-                    accum_score += item_score * r.weight
+                    final_score = round(base * tenure_penalty, 2)
+                    is_gap = final_score < 0.50
+                    matched_label = r_title if not is_gap else None
+                    unmet_label = r_title if is_gap else None
+                    return final_score, is_gap, matched_label, unmet_label
 
-                pct_score = (accum_score / total_weight) * 100.0
-                return min(100.0, max(0.0, pct_score)), gaps, matched_req_titles
+                mh_results = [_score_single_req(r) for r in must_haves]
+                nth_results = [_score_single_req(r) for r in nice_to_haves]
 
-            mh_score, mh_gaps, mh_matched = _score_req_list(must_haves)
-            nth_score, _, nth_matched = _score_req_list(nice_to_haves)
+                mh_gaps = sum(1 for res in mh_results if res[1])
+                mh_weight = sum(r.weight for r in must_haves) or 1.0
+                nth_weight = sum(r.weight for r in nice_to_haves) or 1.0
 
-            if must_haves and nice_to_haves:
-                ov_score = round(mh_score * 0.75 + nth_score * 0.25, 1)
-            elif must_haves:
-                ov_score = round(mh_score, 1)
-            elif nice_to_haves:
-                ov_score = round(nth_score, 1)
+                mh_score = (sum(r.weight * res[0] for r, res in zip(must_haves, mh_results)) / mh_weight) * 100.0 if must_haves else 100.0
+                nth_score = (sum(r.weight * res[0] for r, res in zip(nice_to_haves, nth_results)) / nth_weight) * 100.0 if nice_to_haves else 100.0
+
+                mh_matched = [res[2] for res in mh_results if res[2]]
+                mh_unmet = [res[3] for res in mh_results if res[3]]
+                nth_matched = [res[2] for res in nth_results if res[2]]
+                nth_unmet = [res[3] for res in nth_results if res[3]]
+
+                if must_haves and nice_to_haves:
+                    raw_ov = mh_score * 0.75 + nth_score * 0.25
+                elif must_haves:
+                    raw_ov = mh_score
+                elif nice_to_haves:
+                    raw_ov = nth_score
+                else:
+                    raw_ov = 50.0
+
+                # Deterministic Calibration: align preview tier with ScoringEngine
+                if mh_gaps >= 2 or (mh_gaps >= 1 and raw_ov < 50.0):
+                    rec_tier = Recommendation.REJECT
+                    ov_score = round(min(raw_ov, 45.0), 1)
+                elif mh_gaps == 1 or raw_ov < 70.0:
+                    rec_tier = Recommendation.BORDERLINE
+                    ov_score = round(min(raw_ov, 65.0), 1)
+                else:
+                    rec_tier = Recommendation.STRONG_MATCH
+                    ov_score = round(raw_ov, 1)
+
+                matching_skills = [
+                    s for s in candidate_skills
+                    if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in reqs)
+                ]
+
+                all_matched = mh_matched + nth_matched
+                all_unmet = (mh_unmet + nth_unmet)[:3]
+                strengths_preview = ", ".join(all_matched[:3]) if all_matched else (", ".join(matching_skills[:3]) if matching_skills else "general profile alignment")
+                skills_preview = f" Matched CV skills: {', '.join(matching_skills[:4])}." if matching_skills else ""
+                trans_preview = f" Transferable: {', '.join(transferable_notes[:2])}." if transferable_notes else ""
+
+                if rec_tier == Recommendation.STRONG_MATCH:
+                    justification = (
+                        f"Strong Fit ({ov_score:.0f}% overall, {mh_score:.0f}% Must-Have): Satisfies "
+                        f"{len(mh_matched)}/{len(must_haves)} Must-Have and {len(nth_matched)}/{len(nice_to_haves)} Nice-to-Have "
+                        f"criteria ({strengths_preview}).{skills_preview}{trans_preview}"
+                    )
+                elif rec_tier == Recommendation.BORDERLINE:
+                    unmet_note = f" Gap in: {', '.join(mh_unmet[:2])}." if mh_unmet else ""
+                    justification = (
+                        f"Potential / Borderline Fit ({ov_score:.0f}% overall, {mh_score:.0f}% Must-Have): Matches "
+                        f"{len(all_matched)}/{len(reqs)} criteria including {strengths_preview}.{skills_preview}{trans_preview}{unmet_note}"
+                    )
+                else:
+                    unmet_note = f" Missing core requirements: {', '.join(all_unmet[:3])}." if all_unmet else ""
+                    justification = (
+                        f"Low Fit ({ov_score:.0f}% overall): Aligns with {len(all_matched)}/{len(reqs)} criteria "
+                        f"({mh_gaps} Must-Have gaps).{unmet_note}"
+                    )
+
+                scored.append({
+                    "job_id": job.id,
+                    "title": job.title,
+                    "department": job.department,
+                    "location": job.location,
+                    "work_model": job.work_model,
+                    "employment_type": job.employment_type,
+                    "seniority_level": job.seniority_level,
+                    "overall_score": ov_score,
+                    "must_have_score": round(mh_score, 1),
+                    "nice_to_have_score": round(nth_score, 1),
+                    "recommendation": rec_tier,
+                    "must_have_gaps_count": mh_gaps,
+                    "total_requirements_count": len(reqs),
+                    "matching_criteria_count": len(all_matched),
+                    "matching_skills": matching_skills[:6],
+                    "key_strengths": all_matched[:4],
+                    "missing_requirements": all_unmet,
+                    "justification": justification,
+                    "has_full_evaluation": False,
+                    "evaluation_id": None,
+                })
+
+        # Deduplicate recommendations by normalized role title:
+        # Keep only the single most comprehensive and highest-scoring requisition per role title
+        deduped_by_title: Dict[str, Dict[str, Any]] = {}
+        for item in scored:
+            title_norm = re.sub(r"\s+", " ", (item.get("title") or "").strip().lower())
+            if not title_norm:
+                continue
+            if exclude_title_norm and title_norm == exclude_title_norm:
+                continue
+            if title_norm not in deduped_by_title:
+                deduped_by_title[title_norm] = item
             else:
-                ov_score = 50.0
+                existing = deduped_by_title[title_norm]
+                if (item["overall_score"], item["total_requirements_count"]) > (
+                    existing["overall_score"],
+                    existing["total_requirements_count"],
+                ):
+                    deduped_by_title[title_norm] = item
 
-            if ov_score >= 70.0 and mh_gaps == 0:
-                rec_tier = Recommendation.STRONG_MATCH
-            elif ov_score >= 50.0 and mh_gaps <= 1:
-                rec_tier = Recommendation.BORDERLINE
-            else:
-                rec_tier = Recommendation.REJECT
+        return list(deduped_by_title.values())
 
-            matching_skills = [
-                s for s in candidate_skills
-                if any(s.lower() in (r.title or "").lower() or s.lower() in (r.description or "").lower() for r in reqs)
-            ]
-
-            all_matched = mh_matched + nth_matched
-            scored_items.append({
-                "job_id": job.id,
-                "title": job.title,
-                "department": job.department,
-                "location": job.location,
-                "work_model": job.work_model,
-                "employment_type": job.employment_type,
-                "seniority_level": job.seniority_level,
-                "overall_score": ov_score,
-                "must_have_score": round(mh_score, 1),
-                "nice_to_have_score": round(nth_score, 1),
-                "recommendation": rec_tier,
-                "must_have_gaps_count": mh_gaps,
-                "total_requirements_count": len(reqs),
-                "matching_criteria_count": len(all_matched),
-                "matching_skills": matching_skills[:6],
-                "key_strengths": all_matched[:4],
-                "has_full_evaluation": False,
-                "evaluation_id": None,
-            })
+    scored_items = await asyncio.to_thread(_calculate_job_recommendations_sync)
 
     scored_items.sort(
         key=lambda x: (
@@ -1548,6 +1802,8 @@ async def recommend_jobs_for_candidate(
                 matching_criteria_count=item["matching_criteria_count"],
                 matching_skills=item["matching_skills"],
                 key_strengths=item["key_strengths"],
+                missing_requirements=item.get("missing_requirements", []),
+                justification=item.get("justification"),
                 has_full_evaluation=item["has_full_evaluation"],
                 evaluation_id=item["evaluation_id"],
             )
@@ -1727,6 +1983,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
         api_keys_configured={
             "agnes": bool(settings.agnes_api_key),
             "groq": bool(settings.groq_api_key),
+            "groq_secondary": bool(getattr(settings, "groq_secondary_api_key", None)),
             "openrouter": bool(settings.openrouter_api_key),
             "nvidia_nim": bool(settings.nvidia_nim_api_key),
             "gemini": bool(settings.gemini_api_key),
@@ -1780,6 +2037,8 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
         settings.groq_model = payload.model
         if payload.api_key:
             settings.groq_api_key = payload.api_key.strip()
+        if getattr(payload, "secondary_api_key", None):
+            settings.groq_secondary_api_key = payload.secondary_api_key.strip()
     elif prov == "openrouter":
         settings.openrouter_model = payload.model
         if payload.api_key:

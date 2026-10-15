@@ -21,20 +21,37 @@ def is_port_in_use(port: int) -> bool:
 
 
 def kill_process_on_port(port: int):
-    """Terminates any stale/zombie process holding the target port on Windows."""
+    """Terminates any stale/zombie process tree holding the target port on Windows."""
     try:
         out = subprocess.check_output(f"netstat -ano | findstr :{port}", shell=True, text=True)
         pids = set()
         for line in out.strip().splitlines():
             parts = line.split()
-            if len(parts) >= 5 and "LISTENING" in parts:
+            if len(parts) >= 5 and "LISTENING" in parts and parts[1].endswith(f":{port}"):
                 pids.add(parts[-1])
         for pid in pids:
             if pid != "0":
-                subprocess.run(f"taskkill /PID {pid} /F", shell=True, capture_output=True)
+                subprocess.run(f"taskkill /PID {pid} /T /F", shell=True, capture_output=True)
         time.sleep(1)
     except Exception:
         pass
+
+
+def kill_process_tree(proc):
+    """Safely terminates a process and all its child processes on Windows or POSIX."""
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(f"taskkill /PID {proc.pid} /T /F", shell=True, capture_output=True)
+        else:
+            proc.terminate()
+            proc.wait(timeout=3)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def main():
@@ -177,15 +194,7 @@ def main():
         print("\nTerminating background services...")
     finally:
         for p in all_procs:
-            if p:
-                try:
-                    p.terminate()
-                    p.wait(timeout=3)
-                except Exception:
-                    try:
-                        p.kill()
-                    except Exception:
-                        pass
+            kill_process_tree(p)
         print("All services terminated cleanly. Goodbye!")
 
 

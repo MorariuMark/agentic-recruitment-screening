@@ -49,7 +49,7 @@ class RequirementMatch(BaseModel):
     benefit_of_doubt: Optional[bool] = Field(default=False, description="True if requirement was given benefit of the doubt due to low confidence or ambiguous phrasing")
 
 
-from backend.schemas.token_usage import TokenUsageInfo
+from backend.schemas.token_usage import ActionAuditInfo, TokenUsageInfo
 
 
 class MatchEvaluationResult(BaseModel):
@@ -67,7 +67,9 @@ class MatchEvaluationResult(BaseModel):
     citation_verification_score: float = Field(default=1.0, ge=0.0, le=1.0, description="CVS metric (valid citations / total citations)")
     hitl_validated: bool = Field(default=False, description="Whether a recruiter has reviewed and validated this result")
     recruiter_notes: Optional[str] = Field(default=None, description="Recruiter audit comments from the HITL gate")
+    strictness: int = Field(default=50, ge=0, le=100, description="Evaluation strictness level from 0 (lenient) to 100 (ultra-strict)")
     token_usage: Optional[TokenUsageInfo] = Field(default=None, description="Token consumption and model latency telemetry")
+    audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata including model name, token usage, latency, and initial document length")
 
 
 class JobRecommendationItem(BaseModel):
@@ -89,6 +91,8 @@ class JobRecommendationItem(BaseModel):
     matching_criteria_count: int = Field(default=0, ge=0, description="Matching criteria count")
     matching_skills: List[str] = Field(default_factory=list, description="Candidate skills that match this job")
     key_strengths: List[str] = Field(default_factory=list, description="Key candidate alignments")
+    missing_requirements: List[str] = Field(default_factory=list, description="Key unmet or missing requirements")
+    justification: Optional[str] = Field(default=None, description="Grounded explanation of why the candidate fits this job")
     has_full_evaluation: bool = Field(default=False, description="True if full grounded evaluation exists in database")
     evaluation_id: Optional[UUID] = Field(default=None, description="Evaluation ID if full evaluation exists")
 

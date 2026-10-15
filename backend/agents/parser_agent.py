@@ -4,9 +4,11 @@ Parser agent for extracting structured candidate profiles from unstructured CVs
 and transforming them into anonymized representations for de-biased matching.
 """
 
+from datetime import datetime, timezone
 import io
 from pathlib import Path
 import re
+import time
 from typing import Dict, List, Optional, Tuple, Union
 import unicodedata
 
@@ -24,6 +26,7 @@ from backend.schemas.cv import (
     Publication,
     WorkExperience,
 )
+from backend.schemas.token_usage import ActionAuditInfo
 from backend.services.pii_scrubber import PIIScrubber
 
 
@@ -52,7 +55,7 @@ Guidelines:
    - Extract location (City, Country), work_model (Remote, Hybrid, On-site), and employment_type (Full-time, Part-time, Internship, Summer Practice, Freelance, Working Student).
    - If consecutive titles at the same employer show a career step/progression, set is_promotion=True on subsequent roles.
 3. Education: Extract degrees, fields of study, institutions, graduation years, GPA / grades (e.g. '3.9/4.0', '9.85/10'), honors (e.g. 'Magna Cum Laude', 'First Class Honours'), thesis titles, and exchange programs (e.g. 'Erasmus+').
-4. Skills: Aggregate all technical, methodological, and soft skills into a flat list. Do NOT extract single common English words (like 'go', 'can', 'teams') as skills unless explicitly listed in a skills section.
+4. Skills: Extract ONLY technical tools, programming languages, libraries, frameworks, methodologies, and declared competencies EXPLICITLY written by the candidate in the CV text. NEVER hallucinate, extrapolate, translate, or infer abstract skills not declared in the text (e.g. do NOT invent "Team Leadership", "Distribution", "Budget Management", or "International Driving" unless explicitly stated as a skill). In `experiences[].skills_used`, list only technologies and tools explicitly referenced in that role's text.
 5. Certifications: List any professional licenses, certificates, driving licenses, or accredited courses.
 6. Projects & Portfolio: You MUST extract all technical, academic, personal, client, or open-source projects into `projects`:
    - project_name: Title or name of the project.
@@ -63,8 +66,8 @@ Guidelines:
 7. Languages: Extract ALL spoken and written languages and their CEFR proficiencies (Native, C2, C1, B2, B1, A2, A1, Fluent, Intermediate). In multi-column Europass tables, extract every column language and its level.
 8. Publications & Patents: Extract any academic papers or preprints into publications, and any filed or granted intellectual property into patents.
 9. Logistics & Availability: Extract notice period (e.g. 'Immediate', '1 month'), earliest start date, relocation willingness, travel percentage, salary expectations, work permits/authorizations, and security clearances into logistics.
-10. Exhaustive Extraction & Custom Sections: Extract ALL information without exception. Never skip or ignore any text or section. If certain information seems out of scope, unusual, or peripheral at first glance (e.g., personal hobbies, sports, creative/artistic interests, volunteer work, student associations, hackathons, non-technical awards, community service, memberships, conferences, workshops, personal references, disclosures, administrative notes, side projects), extract them! Place distinct named extra sections into `custom_sections` (with section_title such as 'Volunteering', 'Honors & Awards', 'Interests & Hobbies', 'Memberships', 'Conferences & Workshops', 'Extracurricular Activities', etc.).
-11. Miscellaneous / Other Information: Place all other facts, unmapped details, hobbies, or unusual information that does not fit into the standard categories into `miscellaneous` (list of strings). Make sure that NO detail, note, or remark in the candidate's CV is ignored or overlooked!
+10. Custom Sections: Extract distinct named extra sections not covered by standard categories (e.g. 'Volunteering', 'Honors & Awards', 'Interests & Hobbies', 'Memberships', 'Conferences & Workshops'). NEVER dump core experience, education, or language text into custom_sections, and NEVER copy running page headers, page numbers, or footers (e.g. 'Page 1 - ...') into custom_sections.
+11. Miscellaneous / Other Information: Place only truly unmapped individual facts, hobbies, or references that do not fit into other sections into `miscellaneous` (list of strings). Do NOT duplicate information already captured in experience, education, skills, or languages.
 12. Summary: Include the professional bio, objective, or 'about me' if present.
 13. Unused Details: Identify purely personal or demographic items (date of birth, place of birth, nationality, gender, marital status) and place them into unused_details.
 14. Preserve exact wording where possible for verifiable grounding. Do not hallucinate qualifications."""
@@ -140,6 +143,10 @@ def normalize_extracted_text(text: str) -> str:
     # Unmask obfuscated anti-scraping email addresses
     text = _EMAIL_AT_DOT_REGEX.sub(r"\1@\2.\3", text)
     text = _EMAIL_PAREN_DOT_REGEX.sub(r"\1@\2.\3", text)
+
+    # Strip running page footers / headers (e.g. "Page 1 - Stefan Radu", "Page 2 of 2", "Page 1 / 3")
+    text = re.sub(r"(?im)^\s*Page\s+\d+\s*(?:[-–—/]\s*[^\n\r]+|of\s+\d+|\/\s*\d+)?\s*$", "", text)
+    text = re.sub(r"(?i)\bPage\s+\d+\s*[-–—]\s*[^\n\r]+(?=\n|$)", "", text)
 
     return text
 
@@ -318,6 +325,11 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
     # -------------------------------------------------------------------------
     # 1. AUDIT & ENRICH LANGUAGES
     # -------------------------------------------------------------------------
+    known_world_langs = {
+        "english", "german", "french", "spanish", "italian", "romanian", "hungarian",
+        "russian", "chinese", "mandarin", "japanese", "dutch", "portuguese", "polish",
+        "turkish", "czech", "swedish", "norwegian", "danish", "finnish", "arabic", "hindi", "ukrainian"
+    }
     existing_langs: Dict[str, LanguageSkill] = {
         l.language.strip().lower(): l for l in parsed_cv.languages if l.language
     }
@@ -340,11 +352,6 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
     ol_match = re.search(r"Other language\(s\):\s*\n+([^\n\r]+)", raw_text, re.IGNORECASE)
     if ol_match:
         header_line = ol_match.group(1).strip()
-        known_world_langs = {
-            "english", "german", "french", "spanish", "italian", "romanian", "hungarian",
-            "russian", "chinese", "mandarin", "japanese", "dutch", "portuguese", "polish",
-            "turkish", "czech", "swedish", "norwegian", "danish", "finnish", "arabic", "hindi", "ukrainian"
-        }
         # Split tokens on whitespace or multiple spaces
         raw_cols = [w.strip() for w in re.split(r"\s{2,}|\t+| (?=[A-Z])", header_line) if w.strip()]
         valid_cols = [c for c in raw_cols if c.lower() in known_world_langs]
@@ -382,7 +389,49 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
                     if not curr_prof or curr_prof.lower() in ("unknown", "not specified", "none"):
                         existing_langs[clean_lang.lower()].proficiency = rep_level
 
-    # c) General inline language declarations (e.g. English: C1, German (Fluent))
+    # c) Inline comma/semicolon delimited language declarations:
+    # e.g. "Languages: Romanian native, English C1 (negotiation), German B1, French A2."
+    # e.g. "Limbi vorbite: Romana matern, Engleza C1, Germana B1"
+    lang_line_match = re.search(r"(?:^|\n)\s*(?:Languages?|Limbi(?: vorbite)?|Sprachen)[:\s]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if lang_line_match:
+        lang_line_text = lang_line_match.group(1).strip()
+        tokens = [t.strip() for t in re.split(r"[,;•|]", lang_line_text) if t.strip()]
+        for tok in tokens:
+            m_tok = re.match(r"^([A-Za-z]+)(?:\s+(?:native|matern[aă]|materna))", tok, re.IGNORECASE)
+            if m_tok:
+                l_name = m_tok.group(1).capitalize()
+                if l_name.lower() in known_world_langs:
+                    if l_name.lower() not in existing_langs:
+                        new_skill = LanguageSkill(language=l_name, proficiency="Native")
+                        parsed_cv.languages.append(new_skill)
+                        existing_langs[l_name.lower()] = new_skill
+                    elif not existing_langs[l_name.lower()].proficiency:
+                        existing_langs[l_name.lower()].proficiency = "Native"
+                continue
+
+            m_tok2 = re.match(r"^([A-Za-z]+)\s+([A-Ca-c][12](?:\s*\(.*?\))?|fluent|proficient|intermediate|advanced|beginner|elementary|conversational|bilingual)", tok, re.IGNORECASE)
+            if m_tok2:
+                l_name = m_tok2.group(1).capitalize()
+                l_prof = m_tok2.group(2).strip().capitalize()
+                if l_name.lower() in known_world_langs:
+                    if l_name.lower() not in existing_langs:
+                        new_skill = LanguageSkill(language=l_name, proficiency=l_prof)
+                        parsed_cv.languages.append(new_skill)
+                        existing_langs[l_name.lower()] = new_skill
+                    elif not existing_langs[l_name.lower()].proficiency:
+                        existing_langs[l_name.lower()].proficiency = l_prof
+                continue
+
+            first_word = tok.split()[0].capitalize()
+            if first_word.lower() in known_world_langs:
+                rem = tok[len(first_word):].strip()
+                l_prof = rem.capitalize() if rem else "Proficient"
+                if first_word.lower() not in existing_langs:
+                    new_skill = LanguageSkill(language=first_word, proficiency=l_prof)
+                    parsed_cv.languages.append(new_skill)
+                    existing_langs[first_word.lower()] = new_skill
+
+    # d) General inline language declarations (e.g. English: C1, German (Fluent))
     inline_pat = re.compile(
         r"\b([A-Z][a-z]+)\s*[:\-\(]\s*(Native|Mother tongue|Fluent|Advanced|Proficient|Intermediate|Conversational|Basic|Elementary|Bilingual|A1|A2|B1|B2|C1|C2)\b",
         re.IGNORECASE,
@@ -390,11 +439,6 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
     for match in inline_pat.finditer(raw_text):
         lang_str = match.group(1).strip()
         prof_str = match.group(2).strip()
-        known_world_langs = {
-            "english", "german", "french", "spanish", "italian", "romanian", "hungarian",
-            "russian", "chinese", "mandarin", "japanese", "dutch", "portuguese", "polish",
-            "turkish", "czech", "swedish", "norwegian", "danish", "finnish", "arabic", "hindi", "ukrainian"
-        }
         if lang_str.lower() in known_world_langs:
             clean_name = lang_str.capitalize()
             if clean_name.lower() not in existing_langs:
@@ -409,19 +453,28 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
     # -------------------------------------------------------------------------
     existing_certs = {c.strip().lower() for c in parsed_cv.certifications if c}
     dl_pattern = re.compile(
-        r"(?:DRIVING LICENCE|Driving Licence|Driver'?s License|Permis de conducere)[:\s]+(?:Driving Licence:)?\s*([A-Za-z0-9,\s]+)",
+        r"(?:DRIVING LICENCE|Driving Licence|Driver'?s License|Permis(?: de conducere)?|Permis conducere)[:\s]+(?:Driving Licence:)?\s*([A-Za-z0-9,\.\s\(\)]+)",
         re.IGNORECASE,
     )
     dl_match = dl_pattern.search(raw_text)
     if dl_match:
         lic_val = dl_match.group(1).strip()
-        # Cut off any next heading or newline
         lic_val = re.split(r"\n|[A-Z]{3,}", lic_val)[0].strip()
         if lic_val:
             cert_entry = f"Driving Licence: {lic_val}"
             if cert_entry.lower() not in existing_certs and not any(lic_val.lower() in c for c in existing_certs):
                 parsed_cv.certifications.append(cert_entry)
                 existing_certs.add(cert_entry.lower())
+
+    # Disambiguate driving licence from logistics.work_authorization (e.g. 'Permis B' or 'Permis conducere')
+    if parsed_cv.logistics and parsed_cv.logistics.work_authorization:
+        wa_val = parsed_cv.logistics.work_authorization.strip()
+        if re.search(r"\b(?:permis|driving|cat\.?\s*[a-z0-9]+)\b", wa_val, re.IGNORECASE):
+            cert_entry = f"Driving Licence: {wa_val}"
+            if cert_entry.lower() not in existing_certs and not any(wa_val.lower() in c for c in existing_certs):
+                parsed_cv.certifications.append(cert_entry)
+                existing_certs.add(cert_entry.lower())
+            parsed_cv.logistics.work_authorization = None
 
     # -------------------------------------------------------------------------
     # 3. AUDIT & ENRICH CUSTOM SECTIONS (Volunteering, Awards, etc.)
@@ -460,14 +513,27 @@ def audit_and_enrich_cv(parsed_cv: ParsedCV, raw_text: str) -> ParsedCV:
                 cleaned_items = [
                     re.sub(r"^[\u2022\uf0b7\-\*\.]\s*", "", it).strip() for it in sec_lines
                 ]
-                parsed_cv.custom_sections.append(
-                    CustomSection(
-                        section_title=sec_title,
-                        items=[it for it in cleaned_items if it],
-                        is_relevant=True,
+                filtered_items = [
+                    it for it in cleaned_items
+                    if it and not re.match(r"^\s*Page\s+\d+\s*(?:[-–—/]\s*.*)?$", it, re.IGNORECASE)
+                ]
+                if filtered_items:
+                    parsed_cv.custom_sections.append(
+                        CustomSection(
+                            section_title=sec_title,
+                            items=filtered_items,
+                            is_relevant=True,
+                        )
                     )
-                )
-                existing_sec_titles.add(sec_title.lower())
+                    existing_sec_titles.add(sec_title.lower())
+
+    # Sanitize existing custom sections against page footers
+    for sec in parsed_cv.custom_sections:
+        sec.items = [
+            it for it in sec.items
+            if it and str(it).strip() and not re.match(r"^\s*Page\s+\d+\s*(?:[-–—/]\s*.*)?$", str(it).strip(), re.IGNORECASE)
+        ]
+    parsed_cv.custom_sections = [s for s in parsed_cv.custom_sections if s.items and len(s.items) > 0]
 
     # -------------------------------------------------------------------------
     # 4. AUDIT & ENRICH DEMOGRAPHICS & UNUSED DETAILS
@@ -957,7 +1023,7 @@ class ParserAgent:
 
         # For local models (Ollama on GPU/CPU), cap text at 6,500 chars to prevent high inference latency / timeouts
         is_local = getattr(settings, "llm_provider", "").lower() == "ollama"
-        max_chars = 6500 if is_local else 12000
+        max_chars = 6500 if is_local else 35000
         trimmed = cleaned[:max_chars] if len(cleaned) > max_chars else cleaned
 
         prompt = (
@@ -972,6 +1038,7 @@ class ParserAgent:
         if hasattr(self.llm_client, "set_action_context"):
             self.llm_client.set_action_context("cv_extraction")
 
+        start_time = time.perf_counter()
         try:
             parsed = self.llm_client.generate_structured(
                 prompt=prompt,
@@ -997,6 +1064,47 @@ class ParserAgent:
                 )
             else:
                 raise err
+        end_time = time.perf_counter()
+        duration_ms = round((end_time - start_time) * 1000.0, 2)
+        duration_sec = round(end_time - start_time, 3)
+
+        model_name = (
+            getattr(self.llm_client, "get_model_name", lambda: None)()
+            or getattr(self.llm_client, "model", None)
+            or getattr(settings, "llm_model", "unknown")
+        )
+        provider = getattr(settings, "llm_provider", None)
+
+        raw_usage = getattr(self.llm_client, "get_last_usage", lambda: None)()
+        if raw_usage and hasattr(raw_usage, "prompt_tokens"):
+            tokens_dict = {
+                "prompt_tokens": int(getattr(raw_usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(raw_usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(raw_usage, "total_tokens", 0) or 0),
+            }
+            if getattr(raw_usage, "model", None):
+                model_name = raw_usage.model
+            if getattr(raw_usage, "provider", None):
+                provider = raw_usage.provider
+        elif isinstance(raw_usage, dict):
+            tokens_dict = {
+                "prompt_tokens": int(raw_usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(raw_usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(raw_usage.get("total_tokens", 0) or 0),
+            }
+        else:
+            tokens_dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+        parsed.audit_metadata = ActionAuditInfo(
+            model_name=str(model_name),
+            provider=provider,
+            tokens_consumed=tokens_dict,
+            duration_ms=duration_ms,
+            duration_seconds=duration_sec,
+            initial_document_text_length=len(raw_text),
+            initial_document_word_count=len(raw_text.split()),
+            action_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
 
         parsed.raw_text = raw_text
         parsed = audit_and_enrich_cv(parsed, raw_text)
@@ -1040,6 +1148,15 @@ class ParserAgent:
                 elif source.startswith(b"PK\x03\x04"):
                     is_docx = True
 
+        from backend.services.progress_tracker import progress_tracker
+
+        progress_tracker.start_task(
+            task_key="cv_upload",
+            label=f"Extracting CV ({filename or 'Document'})",
+            phase="Step 1/4: Extracting & normalizing document text stream...",
+            total_steps=4,
+        )
+
         if is_pdf:
             raw_text = extract_text_from_pdf(source)
         elif is_docx:
@@ -1055,10 +1172,28 @@ class ParserAgent:
         else:
             raw_text = str(source)
 
+        progress_tracker.update_task(
+            task_key="cv_upload",
+            completed_steps=1,
+            phase="Step 2/4: Running AI structured profile & skill extraction...",
+        )
+
         # 2. Extract structured profile via LLM
         parsed_cv = self.parse_cv_text(raw_text)
 
+        progress_tracker.update_task(
+            task_key="cv_upload",
+            completed_steps=2,
+            phase="Step 3/4: Deterministic PII scrubbing & demographic isolation...",
+        )
+
         # 3. Anonymize PII and demographic markers
         anonymized_candidate = self.pii_scrubber.anonymize_cv(parsed_cv)
+
+        progress_tracker.update_task(
+            task_key="cv_upload",
+            completed_steps=3,
+            phase="Step 4/4: Indexing semantic chunks into ChromaDB vector store...",
+        )
 
         return parsed_cv, anonymized_candidate

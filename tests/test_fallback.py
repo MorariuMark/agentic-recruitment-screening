@@ -141,3 +141,53 @@ def test_all_candidates_fail_raises_descriptive_error(monkeypatch):
     assert "groq:model1" in err_msg
     assert "nvidia_nim:model2" in err_msg
 
+
+def test_groq_dual_key_failover(monkeypatch):
+    from unittest.mock import MagicMock
+    from backend.agents.llm_factory import GroqClient
+    from backend.config import settings
+
+    client = GroqClient(
+        api_key="gsk_primary_test_key",
+        secondary_api_key="gsk_secondary_test_key",
+        model="qwen/qwen3.8-27b",
+    )
+    assert client.secondary_client is not None
+
+    # Mock primary client to fail with 429 RateLimitError
+    primary_mock = MagicMock()
+    primary_mock.chat.completions.create.side_effect = RuntimeError("Rate limit 429: TPM exceeded")
+    client.client = primary_mock
+
+    # Mock secondary client to succeed
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(content='{"name": "Secondary Candidate", "score": 98}'))]
+    mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    secondary_mock = MagicMock()
+    secondary_mock.chat.completions.create.return_value = mock_resp
+    client.secondary_client = secondary_mock
+
+    # Test structured generation failover
+    result = client.generate_structured("Evaluate", response_model=MockResultSchema)
+    assert result.name == "Secondary Candidate"
+    assert result.score == 98
+    assert client.last_key_used == "secondary"
+    assert primary_mock.chat.completions.create.called
+    assert secondary_mock.chat.completions.create.called
+
+
+def test_fallback_chain_prioritizes_qwen38_27b():
+    from backend.config import settings
+    settings.llm_provider = "groq"
+    settings.groq_model = "qwen/qwen3.8-27b"
+
+    dyn = DynamicLLMClient()
+    chain = dyn.get_fallback_chain()
+    assert len(chain) >= 2
+
+    # Tier 1 must be qwen/qwen3.8-27b
+    prov, mod, cli = chain[0]
+    assert prov == "groq"
+    assert mod == "qwen/qwen3.8-27b"
+
+

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -40,8 +41,19 @@ def get_engine() -> AsyncEngine:
             _engine = create_async_engine(
                 db_url,
                 echo=False,
-                connect_args={"check_same_thread": False},
+                connect_args={"check_same_thread": False, "timeout": 30.0},
             )
+
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                try:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA busy_timeout=30000")
+                except Exception:
+                    pass
+                finally:
+                    cursor.close()
         else:
             # PostgreSQL (e.g. Neon, Supabase)
             _engine = create_async_engine(

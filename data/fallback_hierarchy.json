@@ -1,19 +1,19 @@
 [
   {
     "provider": "groq",
-    "model": "openai/gpt-oss-20b"
+    "model": "qwen/qwen3.8-27b"
   },
   {
-    "provider": "nvidia_nim",
-    "model": "meta/llama-3.2-11b-vision-instruct"
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b"
   },
   {
     "provider": "gemini",
     "model": "gemini-3.8-flash"
   },
   {
-    "provider": "groq",
-    "model": "qwen/qwen3.8-27b"
+    "provider": "nvidia_nim",
+    "model": "meta/llama-3.2-11b-vision-instruct"
   },
   {
     "provider": "nvidia_nim",
