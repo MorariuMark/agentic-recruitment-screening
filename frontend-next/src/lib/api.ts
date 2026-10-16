@@ -3,6 +3,8 @@
  */
 
 import {
+  WorkspaceStatistics,
+  ScreeningRun,
   BatchJobStatus,
   CandidateComparisonReport,
   CandidateDetail,
@@ -56,9 +58,9 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit & { timeoutMs?: number; preferDirectBackend?: boolean } = {}
+    options: RequestInit & { timeoutMs?: number; preferDirectBackend?: boolean; sameOrigin?: boolean } = {}
   ): Promise<T> {
-    const { timeoutMs = 60000, preferDirectBackend = false, ...fetchOptions } = options;
+    const { timeoutMs = 60000, preferDirectBackend = false, sameOrigin = false, ...fetchOptions } = options;
     const headers = new Headers(options.headers || {});
     if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -69,6 +71,12 @@ class ApiClient {
     // start directly with loopback http://127.0.0.1:8000 to avoid Next.js dev server rewrite proxy socket timeouts.
     let primaryUrl = `${this.base}${endpoint}`;
     let fallbackUrl = this.base ? endpoint : `http://127.0.0.1:8000${endpoint}`;
+    // Workspace cookies must belong to the frontend host even when the configured
+    // API URL uses 127.0.0.1 and the user opened the frontend through localhost.
+    if (sameOrigin && typeof window !== "undefined") {
+      primaryUrl = endpoint;
+      fallbackUrl = endpoint;
+    }
     if (preferDirectBackend && typeof window !== "undefined" && !this.base) {
       primaryUrl = `http://127.0.0.1:8000${endpoint}`;
       fallbackUrl = endpoint;
@@ -113,6 +121,7 @@ class ApiClient {
 
       try {
         const res = await fetch(targetUrl, {
+          credentials: "include",
           ...fetchOptions,
           signal: controller.signal,
           headers,
@@ -193,6 +202,49 @@ class ApiClient {
   }
 
   // Health
+  async login(role: "admin" | "user", password: string): Promise<{role: "admin" | "user"}> {
+    return this.request("/api/v1/auth/login", {method: "POST", body: JSON.stringify({role, password}), sameOrigin: true});
+  }
+  async parseRecruiterJob(text: string): Promise<{job_description: JobDescription}> {
+    return this.request("/api/v1/screening/jobs/parse", {method: "POST", body: JSON.stringify({text}), timeoutMs: 180000});
+  }
+  async parseRecruiterJobUrl(url: string): Promise<{job_description: JobDescription}> {
+    return this.request("/api/v1/screening/jobs/parse-url", {method: "POST", body: JSON.stringify({url}), timeoutMs: 180000});
+  }
+  async recruiterStatistics(): Promise<WorkspaceStatistics> {
+    return this.request("/api/v1/screening/statistics");
+  }
+
+  async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+    return this.request("/api/v1/screening/models");
+  }
+  async selectRecruiterModel(provider: string, model: string): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+    return this.request("/api/v1/screening/models", {method: "POST", body: JSON.stringify({provider, model})});
+  }
+  async toggleRecruiterFailover(enabled: boolean): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+    return this.request("/api/v1/screening/failover", {method: "POST", body: JSON.stringify({enabled})});
+  }
+  async session(): Promise<{role: "admin" | "user" | null}> { return this.request("/api/v1/auth/session", {sameOrigin: true}); }
+  async logout(): Promise<void> { await this.request("/api/v1/auth/logout", {method: "POST", sameOrigin: true}); }
+  async uploadCohort(files: File[]): Promise<{batch_id: string}> {
+    const body = new FormData(); files.forEach(file => body.append("files", file));
+    return this.request("/api/v1/screening/cohort/upload", {method: "POST", body, timeoutMs: 600000});
+  }
+  async fastRank(jobId: string, candidateIds: string[], topK: number, deepEvaluation: boolean): Promise<ScreeningRun> {
+    return this.request("/api/v1/screening/rank", {method: "POST", body: JSON.stringify({job_id: jobId, candidate_ids: candidateIds, top_k: topK, deep_evaluation: deepEvaluation})});
+  }
+  async screeningRun(id: string): Promise<ScreeningRun> { return this.request(`/api/v1/screening/runs/${id}`); }
+  async latestScreeningRun(jobId: string): Promise<ScreeningRun | null> { return this.request(`/api/v1/screening/jobs/${jobId}/latest`); }
+  async shortlist(id: string, count: number): Promise<ScreeningRun> {
+    return this.request(`/api/v1/screening/runs/${id}/shortlist`, {method: "POST", body: JSON.stringify({count})});
+  }
+  async reviewCandidate(id: string, candidateId: string, decision: "interview" | "hold" | "reject", notes: string): Promise<ScreeningRun> {
+    return this.request(`/api/v1/screening/runs/${id}/decisions/${candidateId}`, {method: "POST", body: JSON.stringify({decision, notes})});
+  }
+  async recruiterInterview(id: string, candidateId: string, duration: number): Promise<InterviewPlan> {
+    return this.request(`/api/v1/screening/runs/${id}/interview`, {method: "POST", body: JSON.stringify({candidate_id: candidateId, duration_minutes: duration}), timeoutMs: 600000});
+  }
+
   async getHealth(): Promise<{ status: string; active_llm_provider: string; active_model: string }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
@@ -210,8 +262,8 @@ class ApiClient {
   }
 
   // Requisitions & Jobs
-  async getJobs(): Promise<JobDescription[]> {
-    return this.request("/api/v1/jobs");
+  async getJobs(limit: number = 50): Promise<JobDescription[]> {
+    return this.request(`/api/v1/jobs?limit=${limit}`);
   }
 
   async parseJobText(text: string, signal?: AbortSignal): Promise<{ job_description: JobDescription }> {

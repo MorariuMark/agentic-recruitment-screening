@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router as api_router
+from backend.api.recruiter import router as recruiter_router
 from backend.config import settings
 
 logger = logging.getLogger("recruitment_screening")
@@ -27,6 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from backend.db.session import init_db
         await init_db()
+        from backend.api.recruiter import recover_interrupted_runs
+        await recover_interrupted_runs()
         logger.info("Relational database initialized.")
     except Exception as db_err:
         logger.error(f"Failed to initialize database: {db_err}")
@@ -131,6 +134,7 @@ app.add_middleware(
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(api_router)
+app.include_router(recruiter_router)
 
 
 # ---------------------------------------------------------------------------

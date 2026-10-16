@@ -103,6 +103,7 @@ def _seed_initial_history_if_empty() -> None:
                 jitter = (i * 37) % 250
                 ts = now - timedelta(days=days_ago, hours=(i * 2) % 24, minutes=i * 3)
                 log_entry = {
+                    "synthetic": True,
                     "id": str(uuid.uuid4()),
                     "provider": prov,
                     "model": mod,
@@ -197,6 +198,17 @@ class TokenTracker:
             latency_ms=round(float(latency_ms), 1),
             status=status,
         )
+
+    def get_processing_totals(self) -> Dict[str, Any]:
+        """Exact totals from the same live call records used by Admin analytics."""
+        with _LOCK:
+            records = [record for record in _IN_MEMORY_LOGS if not record.get("synthetic")]
+            calls = len(records)
+            duration = sum(record["latency_ms"] for record in records)
+            return {"model_calls": calls,
+                    "tokens": sum(record["total_tokens"] for record in records),
+                    "model_duration_ms": duration,
+                    "model_average_ms": duration / calls if calls else 0.0}
 
     def get_last_usage(self) -> Optional[TokenUsageInfo]:
         """Returns the token usage for the most recent LLM call on the current thread or globally."""

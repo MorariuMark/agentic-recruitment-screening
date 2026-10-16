@@ -82,6 +82,19 @@ _batch_processor = BatchProcessorService(
 # ---------------------------------------------------------------------------
 # Database Object Reconstruction Helpers
 # ---------------------------------------------------------------------------
+def _documented_years(raw: Dict[str, Any], anonymized: Dict[str, Any]) -> Optional[float]:
+    """Report documented tenure; a count of roles is not a number of years."""
+    for source in (raw, anonymized):
+        value = source.get("total_years_experience")
+        if value is not None:
+            return float(value)
+    from backend.services.pre_ranking import experience_years
+    roles = raw.get("experiences") or anonymized.get("anonymized_work_experiences") or []
+    if not any(r.get("duration_months") or (r.get("start_date") and r.get("end_date")) for r in roles):
+        return None
+    return round(experience_years(AnonymizedCandidate(anonymized_work_experiences=roles), []), 1)
+
+
 def _reconstruct_candidate_from_db(cand_model: CandidateModel) -> Tuple[ParsedCV, AnonymizedCandidate, int]:
     parsed = ParsedCV.model_validate(cand_model.raw_cv_json or {})
     anonymized = AnonymizedCandidate.model_validate(cand_model.anonymized_cv_json or {})
@@ -144,6 +157,8 @@ def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEv
 
 
 def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
+    structured_data = getattr(job_model, "structured_data", None)
+    extra = dict(structured_data.data) if structured_data else {}
     reqs = [
         JobRequirement(
             id=r.id,
@@ -155,7 +170,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
         )
         for r in (job_model.requirements or [])
     ]
-    return JobDescription(
+    extra.update(
         id=UUID(job_model.id),
         title=job_model.title,
         department=job_model.department,
@@ -168,6 +183,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
         unused_details=job_model.unused_details_json or [],
         raw_text=job_model.raw_text or "",
     )
+    return JobDescription.model_validate(extra)
 
 
 def _reconstruct_interview_plan_from_db(plan_model: InterviewPlanModel) -> InterviewPlan:
@@ -1197,9 +1213,7 @@ async def list_candidates(
             masked_name = f"Candidate-{r.id[:8].upper()}"
 
         # Total experience
-        total_yrs = raw.get("total_years_experience") or anon.get("total_years_experience")
-        if total_yrs is None and raw.get("experiences"):
-            total_yrs = float(len(raw["experiences"]))
+        total_yrs = _documented_years(raw, anon)
 
         # Latest evaluation
         latest_eval = None
@@ -1255,11 +1269,9 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
     anon = record.anonymized_cv_json or {}
     skills = raw.get("skills") or anon.get("skills") or []
     experiences = raw.get("experiences") or anon.get("experiences") or []
-    educations = raw.get("educations") or anon.get("educations") or []
+    educations = raw.get("education") or raw.get("educations") or anon.get("anonymized_education") or []
 
-    total_yrs = raw.get("total_years_experience") or anon.get("total_years_experience")
-    if total_yrs is None and experiences:
-        total_yrs = float(len(experiences))
+    total_yrs = _documented_years(raw, anon)
 
     raw_contact = raw.get("contact_info") or {}
     real_name = raw_contact.get("full_name")
@@ -1837,7 +1849,7 @@ async def list_jobs(limit: int = 50) -> List[JobDescription]:
 )
 async def create_or_update_job(job: JobDescription) -> JobDescription:
     """Persists a job requisition and its atomic criteria directly."""
-    await DatabaseRepository.save_job(job)
+    await DatabaseRepository.save_job(job, raw_text=job.raw_text)
     return job
 
 

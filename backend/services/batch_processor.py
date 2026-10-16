@@ -53,13 +53,13 @@ class BatchProcessorService:
         """
         try:
             # 1. Parse and scrub PII
-            parsed_cv, anonymized_candidate = self.parser_agent.parse_and_anonymize(
+            parsed_cv, anonymized_candidate = await asyncio.to_thread(self.parser_agent.parse_and_anonymize,
                 source=content_bytes,
                 filename=filename,
             )
 
             # 2. Asymmetric RAG indexing in vector store
-            chunks_indexed = self.vector_store.index_candidate(anonymized_candidate)
+            chunks_indexed = await asyncio.to_thread(self.vector_store.index_candidate, anonymized_candidate)
 
             # 3. Relational DB persistence
             await DatabaseRepository.save_candidate(
@@ -81,7 +81,7 @@ class BatchProcessorService:
             # 4. Optional automated matching against Job Description
             if job_description:
                 try:
-                    eval_result: MatchEvaluationResult = self.matching_agent.match_candidate(
+                    eval_result: MatchEvaluationResult = await asyncio.to_thread(self.matching_agent.match_candidate,
                         candidate=anonymized_candidate,
                         job_description=job_description,
                     )
@@ -120,6 +120,28 @@ class BatchProcessorService:
                 "status": "FAILED",
                 "error": str(e),
             }
+
+    async def execute_parse_batch(self, batch_id: UUID, file_payloads: List[Tuple[str, bytes]]) -> None:
+        """Parse up to four CVs concurrently; serialize progress writes to avoid lost updates.
+
+        Each worker owns its parser/client because usage and action context are mutable.
+        No matching agent is invoked during recruiter cohort ingestion.
+        """
+        queue = asyncio.Queue()
+        for payload in file_payloads:
+            queue.put_nowait(payload)
+        progress_lock = asyncio.Lock()
+
+        async def worker():
+            processor = BatchProcessorService(parser_agent=ParserAgent(), vector_store=self.vector_store)
+            while not queue.empty():
+                filename, content = queue.get_nowait()
+                result = await processor.process_single_candidate(content, filename)
+                async with progress_lock:
+                    await DatabaseRepository.update_batch_progress(batch_id, result, is_success=result.get("status") == "COMPLETED")
+                queue.task_done()
+
+        await asyncio.gather(*(worker() for _ in range(min(4, len(file_payloads)))))
 
     async def execute_batch(
         self,

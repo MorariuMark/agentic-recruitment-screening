@@ -27,6 +27,15 @@ class Base(DeclarativeBase):
     pass
 
 
+class ScreeningRunModel(Base):
+    """Durable recruiter funnel, including the criteria snapshot and human decisions."""
+    __tablename__ = "screening_runs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("job_requisitions.id"), index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class JobRequisitionModel(Base):
     """Stores parsed job descriptions, positions, and associated requirement specifications."""
     __tablename__ = "job_requisitions"
@@ -47,6 +56,9 @@ class JobRequisitionModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
+    structured_data: Mapped[Optional["JobDescriptionDataModel"]] = relationship(
+        "JobDescriptionDataModel", cascade="all, delete-orphan", uselist=False, lazy="selectin",
+    )
     requirements: Mapped[List["JobRequirementModel"]] = relationship(
         "JobRequirementModel",
         back_populates="job",
@@ -59,6 +71,13 @@ class JobRequisitionModel(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+
+class JobDescriptionDataModel(Base):
+    """Lossless parsed job metadata shared by Admin and recruiter workspaces."""
+    __tablename__ = "job_description_data"
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("job_requisitions.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
 class JobRequirementModel(Base):

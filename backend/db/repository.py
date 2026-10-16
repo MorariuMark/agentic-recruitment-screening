@@ -18,6 +18,7 @@ from backend.db.models import (
     InterviewPlanModel,
     JobRequirementModel,
     JobRequisitionModel,
+    JobDescriptionDataModel,
     MatchEvaluationModel,
     BatchJobModel,
 )
@@ -159,6 +160,7 @@ class DatabaseRepository:
             )
 
             custom_sec = [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in (job.custom_sections or [])]
+            original_text = raw_text if raw_text is not None else job.raw_text
 
             if existing:
                 existing.title = job.title
@@ -168,7 +170,7 @@ class DatabaseRepository:
                 existing.work_model = getattr(job, "work_model", existing.work_model)
                 existing.employment_type = getattr(job, "employment_type", existing.employment_type)
                 existing.source_url = source_url or existing.source_url
-                existing.raw_text = raw_text or existing.raw_text
+                existing.raw_text = original_text or existing.raw_text
                 existing.custom_sections_json = custom_sec
                 existing.unused_details_json = getattr(job, "unused_details", [])
                 record = existing
@@ -184,11 +186,17 @@ class DatabaseRepository:
                     work_model=getattr(job, "work_model", None),
                     employment_type=getattr(job, "employment_type", None),
                     source_url=source_url,
-                    raw_text=raw_text,
+                    raw_text=original_text,
                     custom_sections_json=custom_sec,
                     unused_details_json=getattr(job, "unused_details", []),
                 )
                 s.add(record)
+
+            complete_data = job.model_dump(mode="json")
+            if record.structured_data:
+                record.structured_data.data = complete_data
+            else:
+                record.structured_data = JobDescriptionDataModel(job_id=jid_str, data=complete_data)
 
             for req in job.requirements:
                 req_model = JobRequirementModel(

@@ -2,8 +2,43 @@
  * Core Data Contracts for Agentic Recruitment Screening Platform
  */
 
-export type RequirementCategory = "must_have" | "nice_to_have";
+export type RequirementCategory = "must_have" | "nice_to_have" | "soft_skill";
 export type Recommendation = "strong_match" | "borderline" | "reject";
+
+export interface WorkspaceStatistics {
+  candidates: number; jobs: number; screening_runs: number; evaluations: number; interview_plans: number;
+  cv_text_characters: number; batch_files: number; batch_processed: number; batch_failed: number;
+  model_calls: number; tokens: number; model_duration_ms: number; model_average_ms: number;
+}
+
+export interface PreScreenRow {
+  candidate_id: string;
+  rank: number;
+  pre_screen_score: number;
+  similarity_score: number;
+  skills_score: number | null;
+  experience_score: number | null;
+  degree_score: number | null;
+  checks: string[];
+  deep_status: "not_selected" | "pending" | "completed" | "failed";
+  deep_evaluation: MatchEvaluationResult | null;
+  error?: string | null;
+}
+export interface ScreeningRun {
+  duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation"}>;
+  started_at?: number;
+  id: string;
+  job_id: string;
+  job: JobDescription;
+  status: "ranking" | "evaluating" | "completed" | "partial" | "failed";
+  top_k: number;
+  deep_enabled: boolean;
+  rows: PreScreenRow[];
+  shortlist_ids: string[];
+  decisions: Record<string, {decision: "interview" | "hold" | "reject"; notes: string}>;
+  interviews?: Record<string, InterviewPlan>;
+  error?: string | null;
+}
 
 export interface JobRequirement {
   id: string;
@@ -22,6 +57,9 @@ export interface JobDescription {
   location?: string | null;
   work_model?: string | null;
   employment_type?: string | null;
+  languages?: string[];
+  custom_sections?: unknown[];
+  unused_details?: string[];
   requirements: JobRequirement[];
   raw_text?: string | null;
   created_at?: string | null;
