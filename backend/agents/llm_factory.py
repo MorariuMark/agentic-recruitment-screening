@@ -359,12 +359,13 @@ class OpenRouterClient(BaseLLMClient):
 
 
 class GroqClient(BaseLLMClient):
-    """Client for Groq Cloud API with ultra-fast inference and dual-key failover."""
+    """Client for Groq Cloud API with ultra-fast inference and multi-key (primary, secondary, tertiary) failover."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         secondary_api_key: Optional[str] = None,
+        tertiary_api_key: Optional[str] = None,
         model: Optional[str] = None,
         compatibility_mode: Optional[str] = None,
     ) -> None:
@@ -373,6 +374,7 @@ class GroqClient(BaseLLMClient):
         self.api_key = api_key or settings.groq_api_key
         if not self.api_key:
             raise ValueError("GROQ_API_KEY must be provided or set in environment variables.")
+
         cfg_secondary = getattr(settings, "groq_secondary_api_key", None)
         if secondary_api_key and secondary_api_key != self.api_key:
             self.secondary_api_key = secondary_api_key
@@ -381,12 +383,24 @@ class GroqClient(BaseLLMClient):
         else:
             self.secondary_api_key = None
 
+        cfg_tertiary = getattr(settings, "groq_tertiary_api_key", None)
+        valid_tertiary = tertiary_api_key or cfg_tertiary
+        if valid_tertiary and valid_tertiary not in (self.api_key, self.secondary_api_key):
+            self.tertiary_api_key = valid_tertiary
+        else:
+            self.tertiary_api_key = None
+
         self.model = model or settings.groq_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
         self.client = Groq(api_key=self.api_key, timeout=20.0, max_retries=0)
         self.secondary_client = (
             Groq(api_key=self.secondary_api_key, timeout=20.0, max_retries=0)
             if self.secondary_api_key
+            else None
+        )
+        self.tertiary_client = (
+            Groq(api_key=self.tertiary_api_key, timeout=20.0, max_retries=0)
+            if self.tertiary_api_key
             else None
         )
         self.last_key_used: str = "primary"
@@ -422,6 +436,23 @@ class GroqClient(BaseLLMClient):
                     self.last_key_used = "secondary"
                     return res
                 except Exception as secondary_err:
+                    if self.tertiary_client is not None:
+                        logger.warning(
+                            "Groq secondary key also failed for model [%s]: %s. Failing over to tertiary Groq API key...",
+                            self.model,
+                            secondary_err,
+                        )
+                        try:
+                            res = self.tertiary_client.chat.completions.create(**kwargs)
+                            self.last_key_used = "tertiary"
+                            return res
+                        except Exception as tertiary_err:
+                            logger.error(
+                                "Groq tertiary key also failed for model [%s]: %s",
+                                self.model,
+                                tertiary_err,
+                            )
+                            raise tertiary_err from secondary_err
                     logger.error(
                         "Groq secondary key also failed for model [%s]: %s",
                         self.model,
@@ -588,11 +619,12 @@ class NvidiaNimClient(BaseLLMClient):
 
 
 class GeminiClient(BaseLLMClient):
-    """Client for Google Gemini (AI Studio) via official OpenAI-compatible endpoint."""
+    """Client for Google Gemini (AI Studio) via official OpenAI-compatible endpoint with dual-key failover."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        secondary_api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         compatibility_mode: Optional[str] = None,
@@ -602,6 +634,15 @@ class GeminiClient(BaseLLMClient):
         self.api_key = api_key or settings.gemini_api_key
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY must be provided or set in environment variables.")
+
+        cfg_secondary = getattr(settings, "gemini_secondary_api_key", None)
+        if secondary_api_key and secondary_api_key != self.api_key:
+            self.secondary_api_key = secondary_api_key
+        elif cfg_secondary and cfg_secondary != self.api_key:
+            self.secondary_api_key = cfg_secondary
+        else:
+            self.secondary_api_key = None
+
         self.base_url = base_url or settings.gemini_base_url
         self.model = model or settings.gemini_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
@@ -612,6 +653,49 @@ class GeminiClient(BaseLLMClient):
             timeout=15.0,
             max_retries=0,
         )
+        self.secondary_client = (
+            OpenAI(
+                base_url=self.base_url,
+                api_key=self.secondary_api_key,
+                timeout=15.0,
+                max_retries=0,
+            )
+            if self.secondary_api_key
+            else None
+        )
+        self.last_key_used: str = "primary"
+
+    def _is_rate_limit_error(self, err: Exception) -> bool:
+        err_msg = str(err).lower()
+        return any(
+            x in err_msg
+            for x in ["429", "rate_limit", "rate limit", "ratelimit", "tpm", "rpm", "rpd", "tpd", "quota", "resource_exhausted"]
+        )
+
+    def _execute_chat_completion(self, kwargs: Dict[str, Any]) -> Any:
+        try:
+            res = self.client.chat.completions.create(**kwargs)
+            self.last_key_used = "primary"
+            return res
+        except Exception as primary_err:
+            if self.secondary_client is not None:
+                logger.warning(
+                    "Gemini primary key failed for model [%s]: %s. Failing over to secondary Gemini API key...",
+                    self.model,
+                    primary_err,
+                )
+                try:
+                    res = self.secondary_client.chat.completions.create(**kwargs)
+                    self.last_key_used = "secondary"
+                    return res
+                except Exception as secondary_err:
+                    logger.error(
+                        "Gemini secondary key also failed for model [%s]: %s",
+                        self.model,
+                        secondary_err,
+                    )
+                    raise secondary_err from primary_err
+            raise primary_err
 
     def generate_text(
         self,
@@ -624,11 +708,11 @@ class GeminiClient(BaseLLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature,
-        )
+        response = self._execute_chat_completion({
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        })
         return response.choices[0].message.content or ""
 
     def generate_structured(
@@ -660,17 +744,17 @@ class GeminiClient(BaseLLMClient):
             if use_json_object:
                 kwargs["response_format"] = {"type": "json_object"}
 
-            response = self.client.chat.completions.create(**kwargs)
+            response = self._execute_chat_completion(kwargs)
             raw_content = response.choices[0].message.content or "{}"
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
             if use_json_object and self.compatibility_mode == "auto":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                )
+                response = self._execute_chat_completion({
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                })
                 raw_content = response.choices[0].message.content or "{}"
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
@@ -1000,6 +1084,7 @@ def create_llm_client(
         return GroqClient(
             api_key=api_key,
             secondary_api_key=getattr(settings, "groq_secondary_api_key", None),
+            tertiary_api_key=getattr(settings, "groq_tertiary_api_key", None),
             model=model,
             compatibility_mode=compatibility_mode,
         )
@@ -1020,6 +1105,7 @@ def create_llm_client(
     elif selected == "gemini":
         return GeminiClient(
             api_key=api_key,
+            secondary_api_key=getattr(settings, "gemini_secondary_api_key", None),
             base_url=base_url,
             model=model,
             compatibility_mode=compatibility_mode,
@@ -1141,13 +1227,13 @@ def _is_local_port_open(host: str, port: int, timeout: float = 0.15) -> bool:
         return False
 
 
-_MODEL_COOLDOWNS: Dict[Tuple[str, str], float] = {}
+_MODEL_COOLDOWNS: Dict[Tuple[str, str, Optional[str]], float] = {}
 
 
-def record_model_failure(provider: str, model: str, error: Exception) -> None:
+def record_model_failure(provider: str, model: str, error: Exception, key: Optional[str] = None) -> None:
     """
-    Marks a provider/model target in temporary cooldown to prevent cascading repeated retries
-    across concurrent threads or batch evaluation items.
+    Marks a provider/model target (optionally key-specific) in temporary cooldown to prevent
+    cascading repeated retries across concurrent threads or batch evaluation items.
     """
     err_str = str(error).lower()
     # Permanent or long-lasting failures: 404 Not Found, 410 Gone, 402 Insufficient credits
@@ -1162,25 +1248,35 @@ def record_model_failure(provider: str, model: str, error: Exception) -> None:
     else:
         cooldown = 30.0        # 30 seconds for general errors / timeouts
 
-    _MODEL_COOLDOWNS[(provider.lower(), model)] = time.time() + cooldown
+    _MODEL_COOLDOWNS[(provider.lower(), model, key)] = time.time() + cooldown
+    if key is None:
+        _MODEL_COOLDOWNS[(provider.lower(), model, None)] = time.time() + cooldown
+
     logger.warning(
-        "Failover circuit breaker: Marked [%s / %s] in cooldown for %.1fs. Error snippet: %s",
+        "Failover circuit breaker: Marked [%s / %s%s] in cooldown for %.1fs. Error snippet: %s",
         provider,
         model,
+        f" (key ...{key[-6:]})" if key else "",
         cooldown,
         err_str[:120],
     )
 
 
-def is_model_in_cooldown(provider: str, model: str) -> bool:
-    """Returns True if the provider/model is currently under failure cooldown."""
-    expires = _MODEL_COOLDOWNS.get((provider.lower(), model), 0.0)
-    return time.time() < expires
+def is_model_in_cooldown(provider: str, model: str, key: Optional[str] = None) -> bool:
+    """Returns True if the provider/model (or key-specific target) is currently under failure cooldown."""
+    now = time.time()
+    if key is not None:
+        key_expires = _MODEL_COOLDOWNS.get((provider.lower(), model, key), 0.0)
+        if now < key_expires:
+            return True
+    general_expires = _MODEL_COOLDOWNS.get((provider.lower(), model, None), 0.0)
+    return now < general_expires
 
 
-def clear_model_cooldown(provider: str, model: str) -> None:
+def clear_model_cooldown(provider: str, model: str, key: Optional[str] = None) -> None:
     """Removes model from failure cooldown upon confirmed healthy generation."""
-    _MODEL_COOLDOWNS.pop((provider.lower(), model), None)
+    _MODEL_COOLDOWNS.pop((provider.lower(), model, key), None)
+    _MODEL_COOLDOWNS.pop((provider.lower(), model, None), None)
 
 
 def clear_all_model_cooldowns() -> None:
@@ -1233,6 +1329,19 @@ class DynamicLLMClient(BaseLLMClient):
         chain: List[Tuple[str, str, BaseLLMClient]] = []
         seen_targets = set()
 
+        def get_provider_keys(prov: str) -> List[str]:
+            keys = []
+            pk = getattr(settings, f"{prov}_api_key", None)
+            if pk:
+                keys.append(pk)
+            sk = getattr(settings, f"{prov}_secondary_api_key", None)
+            if sk and sk not in keys:
+                keys.append(sk)
+            tk = getattr(settings, f"{prov}_tertiary_api_key", None)
+            if tk and tk not in keys:
+                keys.append(tk)
+            return keys
+
         def add_candidate(
             prov: str,
             mod: Optional[str],
@@ -1256,11 +1365,26 @@ class DynamicLLMClient(BaseLLMClient):
                 seen_targets.add(target_key)
                 chain.append((prov.lower(), mod, cli))
 
+        def add_model_candidates(
+            prov: str,
+            mod: Optional[str],
+            url: Optional[str] = None,
+            mode: Optional[str] = None,
+        ):
+            if not prov or not mod:
+                return
+            keys = get_provider_keys(prov.lower())
+            if keys:
+                for k in keys:
+                    add_candidate(prov, mod, key=k, url=url, mode=mode)
+            else:
+                add_candidate(prov, mod, url=url, mode=mode)
+
         # If fallback failover is disabled, strictly resolve only the primary configured engine
         if not getattr(settings, "fallback_enabled", True):
             primary_prov = settings.llm_provider.lower()
             primary_model = _get_fallback_primary_model(primary_prov)
-            add_candidate(primary_prov, primary_model)
+            add_candidate(primary_prov, primary_model, key=getattr(settings, f"{primary_prov}_api_key", None))
             return chain
 
         # Check for user-defined custom fallback hierarchy first
@@ -1269,30 +1393,28 @@ class DynamicLLMClient(BaseLLMClient):
             primary_prov = settings.llm_provider.lower()
             primary_model = _get_fallback_primary_model(primary_prov)
 
-            # Ensure current primary model is Tier 1
-            add_candidate(primary_prov, primary_model)
+            # Ensure current primary model is Tier 1 (with secondary/tertiary key backup)
+            add_model_candidates(primary_prov, primary_model)
 
-            # Append custom sequence configured by the user
+            # Append custom sequence configured by the user (with secondary/tertiary keys for each target)
             for target in custom:
                 t_prov = (target.get("provider") or "").lower()
                 t_mod = target.get("model")
                 if not t_prov or not t_mod:
                     continue
-                t_key = getattr(settings, f"{t_prov}_api_key", None)
                 t_url = getattr(settings, f"{t_prov}_base_url", None)
-                add_candidate(t_prov, t_mod, key=t_key, url=t_url)
+                add_model_candidates(t_prov, t_mod, url=t_url)
 
             if chain:
-                healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1])]
+                healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1], getattr(item[2], "api_key", None))]
                 return healthy_chain if healthy_chain else chain
 
-        # 1. Primary configured model (Default automatic chain)
+        # 1. Primary configured model (Default automatic chain: same model with secondary/tertiary keys first)
         primary_prov = settings.llm_provider.lower()
         primary_model = _get_fallback_primary_model(primary_prov)
-        primary_key = getattr(settings, f"{primary_prov}_api_key", None)
-        add_candidate(primary_prov, primary_model, key=primary_key)
+        add_model_candidates(primary_prov, primary_model)
 
-        # 2. Intra-provider backup models for primary provider
+        # 2. Intra-provider backup models for primary provider (each with secondary/tertiary keys first)
         intra_fallbacks = {
             "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
             "groq": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
@@ -1302,13 +1424,7 @@ class DynamicLLMClient(BaseLLMClient):
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
         }
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
-            add_candidate(primary_prov, fallback_mod, key=primary_key)
-
-        # If primary provider is groq and secondary api key is available, register secondary key candidates
-        if primary_prov == "groq" and getattr(settings, "groq_secondary_api_key", None):
-            add_candidate("groq", primary_model, key=settings.groq_secondary_api_key)
-            for fallback_mod in intra_fallbacks.get("groq", []):
-                add_candidate("groq", fallback_mod, key=settings.groq_secondary_api_key)
+            add_model_candidates(primary_prov, fallback_mod)
 
         # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> NVIDIA NIM -> OpenRouter -> Ollama)
         provider_priority = ["groq", "gemini", "agnes", "nvidia_nim", "openrouter", "ollama"]
@@ -1317,36 +1433,33 @@ class DynamicLLMClient(BaseLLMClient):
                 continue
 
             if p == "groq":
-                if settings.groq_api_key:
-                    add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_api_key)
-                    add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_api_key)
-                    add_candidate("groq", "openai/gpt-oss-120b", key=settings.groq_api_key)
-                if getattr(settings, "groq_secondary_api_key", None):
-                    add_candidate("groq", "qwen/qwen3.8-27b", key=settings.groq_secondary_api_key)
-                    add_candidate("groq", "openai/gpt-oss-20b", key=settings.groq_secondary_api_key)
-                    add_candidate("groq", "openai/gpt-oss-120b", key=settings.groq_secondary_api_key)
-            elif p == "gemini" and settings.gemini_api_key:
-                add_candidate("gemini", settings.gemini_model or "gemini-flash-latest", key=settings.gemini_api_key)
-                add_candidate("gemini", "gemini-3.8-flash", key=settings.gemini_api_key)
-            elif p == "agnes" and settings.agnes_api_key:
-                add_candidate("agnes", settings.agnes_model or "agnes-2.5-flash", key=settings.agnes_api_key)
-                add_candidate("agnes", "agnes-2.5-flash", key=settings.agnes_api_key)
-                add_candidate("agnes", "agnes-3.0-flash", key=settings.agnes_api_key)
-            elif p == "openrouter" and settings.openrouter_api_key:
-                add_candidate("openrouter", settings.openrouter_model or "openrouter/free", key=settings.openrouter_api_key)
-            elif p == "nvidia_nim" and settings.nvidia_nim_api_key:
-                add_candidate("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct", key=settings.nvidia_nim_api_key)
-                add_candidate("nvidia_nim", "nvidia/llama-3.1-nemotron-70b-instruct", key=settings.nvidia_nim_api_key)
+                for m in ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]:
+                    add_model_candidates("groq", m)
+            elif p == "gemini":
+                if settings.gemini_api_key or getattr(settings, "gemini_secondary_api_key", None):
+                    add_model_candidates("gemini", settings.gemini_model or "gemini-flash-latest")
+                    add_model_candidates("gemini", "gemini-3.8-flash")
+            elif p == "agnes":
+                if settings.agnes_api_key:
+                    add_model_candidates("agnes", settings.agnes_model or "agnes-2.5-flash")
+                    add_model_candidates("agnes", "agnes-3.0-flash")
+            elif p == "openrouter":
+                if settings.openrouter_api_key:
+                    add_model_candidates("openrouter", settings.openrouter_model or "openrouter/free")
+            elif p == "nvidia_nim":
+                if settings.nvidia_nim_api_key:
+                    add_model_candidates("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct")
+                    add_model_candidates("nvidia_nim", "nvidia/llama-3.1-nemotron-70b-instruct")
             elif p == "ollama":
                 # Quick probe to see if local Ollama is responding
                 if _is_local_port_open("127.0.0.1", 11434):
-                    add_candidate("ollama", settings.ollama_model or "qwen3.5:2b-q4_K_M")
+                    add_model_candidates("ollama", settings.ollama_model or "qwen3.5:2b-q4_K_M")
 
         if not getattr(settings, "fallback_enabled", True):
             return chain[:1]
 
         # Circuit breaker: prioritize healthy candidates not currently under failure cooldown
-        healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1])]
+        healthy_chain = [item for item in chain if not is_model_in_cooldown(item[0], item[1], getattr(item[2], "api_key", None))]
         if healthy_chain:
             return healthy_chain
 
@@ -1386,7 +1499,7 @@ class DynamicLLMClient(BaseLLMClient):
                 t_tok = usage.get("total_tokens") or (p_tok + c_tok)
 
                 from backend.services.token_tracker import token_tracker
-                is_key_failover = getattr(client, "last_key_used", None) == "secondary"
+                is_key_failover = getattr(client, "last_key_used", None) in ("secondary", "tertiary")
                 self._last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
@@ -1418,11 +1531,11 @@ class DynamicLLMClient(BaseLLMClient):
                         primary_prov,
                         primary_mod,
                     )
-                clear_model_cooldown(prov, mod)
+                clear_model_cooldown(prov, mod, getattr(client, "api_key", None))
                 return result
             except Exception as err:
                 last_error = err
-                record_model_failure(prov, mod, err)
+                record_model_failure(prov, mod, err, getattr(client, "api_key", None))
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
                     logger.warning(
@@ -1482,7 +1595,7 @@ class DynamicLLMClient(BaseLLMClient):
                 t_tok = usage.get("total_tokens") or (p_tok + c_tok)
 
                 from backend.services.token_tracker import token_tracker
-                is_key_failover = getattr(client, "last_key_used", None) == "secondary"
+                is_key_failover = getattr(client, "last_key_used", None) in ("secondary", "tertiary")
                 self._last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
@@ -1514,11 +1627,11 @@ class DynamicLLMClient(BaseLLMClient):
                         primary_prov,
                         primary_mod,
                     )
-                clear_model_cooldown(prov, mod)
+                clear_model_cooldown(prov, mod, getattr(client, "api_key", None))
                 return result
             except Exception as err:
                 last_error = err
-                record_model_failure(prov, mod, err)
+                record_model_failure(prov, mod, err, getattr(client, "api_key", None))
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
                     logger.warning(

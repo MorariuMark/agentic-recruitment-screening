@@ -355,6 +355,7 @@ class LLMUpdateRequest(BaseModel):
     compatibility_mode: str = Field(default="auto", description="Structured output compatibility mode")
     api_key: Optional[str] = Field(default=None, description="Optional new API key for the target provider")
     secondary_api_key: Optional[str] = Field(default=None, description="Optional secondary fallback API key")
+    tertiary_api_key: Optional[str] = Field(default=None, description="Optional tertiary fallback API key")
     base_url: Optional[str] = Field(default=None, description="Optional custom base URL")
     local_context_window: Optional[int] = Field(default=None, description="Local context window in tokens")
     local_rolling_context: Optional[bool] = Field(default=None, description="Enable rolling context window")
@@ -1984,9 +1985,11 @@ async def get_llm_settings() -> LLMSettingsResponse:
             "agnes": bool(settings.agnes_api_key),
             "groq": bool(settings.groq_api_key),
             "groq_secondary": bool(getattr(settings, "groq_secondary_api_key", None)),
+            "groq_tertiary": bool(getattr(settings, "groq_tertiary_api_key", None)),
             "openrouter": bool(settings.openrouter_api_key),
             "nvidia_nim": bool(settings.nvidia_nim_api_key),
             "gemini": bool(settings.gemini_api_key),
+            "gemini_secondary": bool(getattr(settings, "gemini_secondary_api_key", None)),
             "ollama": True,
             "lmstudio": True,
         },
@@ -2039,6 +2042,8 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
             settings.groq_api_key = payload.api_key.strip()
         if getattr(payload, "secondary_api_key", None):
             settings.groq_secondary_api_key = payload.secondary_api_key.strip()
+        if getattr(payload, "tertiary_api_key", None):
+            settings.groq_tertiary_api_key = payload.tertiary_api_key.strip()
     elif prov == "openrouter":
         settings.openrouter_model = payload.model
         if payload.api_key:
@@ -2055,6 +2060,8 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
         settings.gemini_model = payload.model
         if payload.api_key:
             settings.gemini_api_key = payload.api_key.strip()
+        if getattr(payload, "secondary_api_key", None):
+            settings.gemini_secondary_api_key = payload.secondary_api_key.strip()
         if payload.base_url:
             settings.gemini_base_url = payload.base_url.strip()
     elif prov == "ollama":

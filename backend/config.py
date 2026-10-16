@@ -65,6 +65,10 @@ class Settings(BaseSettings):
         default=None,
         description="Secondary fallback API key for Groq Cloud API when primary hits rate limits",
     )
+    groq_tertiary_api_key: Optional[str] = Field(
+        default=None,
+        description="Tertiary fallback API key for Groq Cloud API when secondary hits rate limits",
+    )
     groq_model: str = Field(
         default="qwen/qwen3.8-27b",
         description="Groq model identifier",
@@ -88,6 +92,10 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(
         default=None,
         description="API key for Google Gemini (aistudio.google.com)",
+    )
+    gemini_secondary_api_key: Optional[str] = Field(
+        default=None,
+        description="Secondary fallback API key for Google Gemini when primary hits rate limits",
     )
     gemini_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",

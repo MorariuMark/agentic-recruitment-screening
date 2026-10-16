@@ -191,3 +191,96 @@ def test_fallback_chain_prioritizes_qwen38_27b():
     assert mod == "qwen/qwen3.8-27b"
 
 
+def test_groq_triple_key_failover(monkeypatch):
+    from unittest.mock import MagicMock
+    from backend.agents.llm_factory import GroqClient
+
+    client = GroqClient(
+        api_key="gsk_primary_test_key",
+        secondary_api_key="gsk_secondary_test_key",
+        tertiary_api_key="gsk_tertiary_test_key",
+        model="qwen/qwen3.8-27b",
+    )
+    assert client.secondary_client is not None
+    assert client.tertiary_client is not None
+
+    # Mock primary and secondary to fail
+    primary_mock = MagicMock()
+    primary_mock.chat.completions.create.side_effect = RuntimeError("Rate limit 429: primary key exhausted")
+    client.client = primary_mock
+
+    secondary_mock = MagicMock()
+    secondary_mock.chat.completions.create.side_effect = RuntimeError("Rate limit 429: secondary key exhausted")
+    client.secondary_client = secondary_mock
+
+    # Mock tertiary to succeed
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(content='{"name": "Tertiary Candidate", "score": 99}'))]
+    mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    tertiary_mock = MagicMock()
+    tertiary_mock.chat.completions.create.return_value = mock_resp
+    client.tertiary_client = tertiary_mock
+
+    result = client.generate_structured("Evaluate", response_model=MockResultSchema)
+    assert result.name == "Tertiary Candidate"
+    assert result.score == 99
+    assert client.last_key_used == "tertiary"
+    assert primary_mock.chat.completions.create.called
+    assert secondary_mock.chat.completions.create.called
+    assert tertiary_mock.chat.completions.create.called
+
+
+def test_gemini_dual_key_failover(monkeypatch):
+    from unittest.mock import MagicMock
+    from backend.agents.llm_factory import GeminiClient
+
+    client = GeminiClient(
+        api_key="AQ.primary_test_key",
+        secondary_api_key="AQ.secondary_test_key",
+        model="gemini-flash-latest",
+    )
+    assert client.secondary_client is not None
+
+    # Mock primary client to fail with 429 RateLimitError
+    primary_mock = MagicMock()
+    primary_mock.chat.completions.create.side_effect = RuntimeError("Rate limit 429: RESOURCE_EXHAUSTED")
+    client.client = primary_mock
+
+    # Mock secondary client to succeed
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(content='{"name": "Gemini Backup Candidate", "score": 94}'))]
+    mock_resp.usage = MagicMock(prompt_tokens=80, completion_tokens=40, total_tokens=120)
+    secondary_mock = MagicMock()
+    secondary_mock.chat.completions.create.return_value = mock_resp
+    client.secondary_client = secondary_mock
+
+    result = client.generate_structured("Evaluate candidate", response_model=MockResultSchema)
+    assert result.name == "Gemini Backup Candidate"
+    assert result.score == 94
+    assert client.last_key_used == "secondary"
+    assert primary_mock.chat.completions.create.called
+    assert secondary_mock.chat.completions.create.called
+
+
+def test_fallback_chain_switches_to_same_model_on_secondary_key(monkeypatch):
+    from backend.config import settings
+    settings.llm_provider = "gemini"
+    settings.gemini_model = "gemini-flash-latest"
+    settings.gemini_api_key = "AQ.key1"
+    settings.gemini_secondary_api_key = "AQ.key2"
+
+    dyn = DynamicLLMClient()
+    chain = dyn.get_fallback_chain()
+
+    # The first candidate should be gemini:gemini-flash-latest on key1
+    assert chain[0][0] == "gemini"
+    assert chain[0][1] == "gemini-flash-latest"
+    assert getattr(chain[0][2], "api_key", None) == "AQ.key1"
+
+    # The second candidate must be the SAME MODEL (gemini-flash-latest) on key2!
+    assert chain[1][0] == "gemini"
+    assert chain[1][1] == "gemini-flash-latest"
+    assert getattr(chain[1][2], "api_key", None) == "AQ.key2"
+
+
+
