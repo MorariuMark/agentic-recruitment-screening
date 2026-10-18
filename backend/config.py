@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     app_name: str = "Agentic Recruitment Screening"
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = True
+    screening_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    screening_reranker_batch_size: int = Field(default=16, ge=1, le=64)
+    screening_reranker_local_only: bool = True
+    screening_reranker_timeout_seconds: float = Field(default=30, ge=1, le=120)
+    screening_embedding_cache_version: str = "1"
 
     # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', or 'lmstudio'
     llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama", "lmstudio"] = Field(

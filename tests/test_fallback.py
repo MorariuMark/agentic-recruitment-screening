@@ -20,6 +20,21 @@ class MockResultSchema(BaseModel):
     summary: Optional[str] = None
 
 
+def test_frozen_run_keeps_factory_targets_and_failover_when_shared_settings_change(monkeypatch):
+    from backend.config import settings
+    original = DynamicLLMClient.get_fallback_chain
+    first = DummyClient(should_fail=True)
+    second = DummyClient(text_response="Frozen fallback")
+    monkeypatch.setattr(settings, "fallback_enabled", True)
+    monkeypatch.setattr(DynamicLLMClient, "get_fallback_chain", lambda self: [("groq", "first", first), ("agnes", "second", second)])
+    client = DynamicLLMClient()
+    client.freeze_configuration()
+    monkeypatch.setattr(DynamicLLMClient, "get_fallback_chain", original)
+    monkeypatch.setattr(settings, "fallback_enabled", False)
+    assert client.generate_text("Synthetic check") == "Frozen fallback"
+    assert settings.fallback_enabled is False
+
+
 class DummyClient(BaseLLMClient):
     def __init__(self, should_fail: bool = False, fail_message: str = "Rate limit 429", text_response: str = "OK"):
         self.should_fail = should_fail

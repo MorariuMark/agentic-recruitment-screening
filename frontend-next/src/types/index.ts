@@ -9,9 +9,19 @@ export interface WorkspaceStatistics {
   candidates: number; jobs: number; screening_runs: number; evaluations: number; interview_plans: number;
   cv_text_characters: number; batch_files: number; batch_processed: number; batch_failed: number;
   model_calls: number; tokens: number; model_duration_ms: number; model_average_ms: number;
+  recent_screening?: Array<{run_id: string; pipeline_version: string; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranked_candidates?: number; reranker_fallback?: boolean}>;
 }
 
 export interface PreScreenRow {
+  pipeline_version?: "v1" | "v2";
+  requirement_assessments?: RequirementAssessment[];
+  essential_supported?: number;
+  essential_total?: number;
+  essential_unknown?: number;
+  essential_contradicted?: number;
+  rerank_score?: number | null;
+  reranked?: boolean;
+  initial_rank?: number | null;
   candidate_id: string;
   rank: number;
   pre_screen_score: number;
@@ -24,7 +34,19 @@ export interface PreScreenRow {
   deep_evaluation: MatchEvaluationResult | null;
   error?: string | null;
 }
+export interface RequirementAssessment {
+  requirement_id: string; title: string; category: string; weight: number;
+  status: "supported" | "partial" | "contradicted" | "unknown"; score: number; reasoning: string;
+  evidence: Array<{id: string; section: string; text: string; strength: "demonstrated" | "listed"}>;
+  documented_years?: number | null; rerank_score?: number | null;
+}
 export interface ScreeningRun {
+  pipeline_version?: "v1" | "v2";
+  phase?: string;
+  ended_at?: number;
+  attempt?: number;
+  profile_hashes?: Record<string,string>;
+  diagnostics?: {warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
   duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation"}>;
   started_at?: number;
   id: string;

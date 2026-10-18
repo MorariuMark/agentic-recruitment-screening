@@ -12,11 +12,35 @@ class FastRankRequest(BaseModel):
     candidate_ids: list[UUID] = Field(min_length=1, max_length=1000)
     top_k: int = Field(default=10, ge=1, le=100)
     deep_evaluation: bool = True
+    pipeline_version: Literal["v1", "v2"] = "v1"
+    rerank_enabled: bool = True
+    rerank_pool_size: int = Field(default=100, ge=1, le=200)
+    evidence_per_requirement: int = Field(default=3, ge=1, le=3)
 
     @field_validator("candidate_ids")
     @classmethod
     def unique_candidates(cls, value):
         return list(dict.fromkeys(value))
+
+
+class EvidencePassage(BaseModel):
+    id: str
+    section: str
+    text: str
+    strength: Literal["demonstrated", "listed"]
+
+
+class RequirementAssessment(BaseModel):
+    requirement_id: str
+    title: str
+    category: str
+    weight: float
+    status: Literal["supported", "partial", "contradicted", "unknown"]
+    score: float
+    reasoning: str
+    evidence: list[EvidencePassage] = Field(default_factory=list)
+    documented_years: float | None = None
+    rerank_score: float | None = None
 
 
 class PreScreenRow(BaseModel):
@@ -31,6 +55,15 @@ class PreScreenRow(BaseModel):
     deep_status: Literal["not_selected", "pending", "completed", "failed"] = "not_selected"
     deep_evaluation: MatchEvaluationResult | None = None
     error: str | None = None
+    pipeline_version: Literal["v1", "v2"] = "v1"
+    requirement_assessments: list[RequirementAssessment] = Field(default_factory=list)
+    essential_supported: int = 0
+    essential_total: int = 0
+    essential_unknown: int = 0
+    essential_contradicted: int = 0
+    rerank_score: float | None = None
+    reranked: bool = False
+    initial_rank: int | None = None
 
 
 class ReviewDecision(BaseModel):

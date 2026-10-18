@@ -1295,6 +1295,11 @@ class DynamicLLMClient(BaseLLMClient):
     def __init__(self) -> None:
         self._client_cache: Dict[Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]], BaseLLMClient] = {}
 
+    def freeze_configuration(self) -> None:
+        """Retain this run's factory targets without changing shared Admin settings."""
+        self._snapshot_fallback_enabled = settings.fallback_enabled
+        self._snapshot_chain = self.get_fallback_chain()
+
     def _get_or_create_client(
         self,
         provider: str,
@@ -1326,6 +1331,8 @@ class DynamicLLMClient(BaseLLMClient):
         starting with the primary user configuration, followed by user-defined custom hierarchy
         or automatic multi-tier alternatives.
         """
+        if hasattr(self, "_snapshot_chain"):
+            return list(self._snapshot_chain)
         chain: List[Tuple[str, str, BaseLLMClient]] = []
         seen_targets = set()
 
@@ -1472,7 +1479,7 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.1,
     ) -> str:
         global _LAST_FALLBACK_EVENT
-        fallback_enabled = getattr(settings, "fallback_enabled", True)
+        fallback_enabled = getattr(self, "_snapshot_fallback_enabled", getattr(settings, "fallback_enabled", True))
         chain = self.get_fallback_chain()
         if not chain:
             raise RuntimeError("No configured or reachable LLM providers available in fallback chain.")
@@ -1567,7 +1574,7 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.0,
     ) -> T:
         global _LAST_FALLBACK_EVENT
-        fallback_enabled = getattr(settings, "fallback_enabled", True)
+        fallback_enabled = getattr(self, "_snapshot_fallback_enabled", getattr(settings, "fallback_enabled", True))
         chain = self.get_fallback_chain()
         if not chain:
             raise RuntimeError("No configured or reachable LLM providers available in fallback chain.")

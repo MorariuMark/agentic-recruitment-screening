@@ -471,3 +471,9 @@
 }
 
 .r-statistics-model-heading {margin: 24px 0 14px !important;}
+
+.r-screening-advanced > label {display: flex; gap: 8px; margin-top: 12px; align-items: center; font-size: 12px;}
+.r-screening-advanced .r-field {width: 180px; align-items: stretch;}
+.r-run-diagnostics {margin: 0 0 18px; padding: 14px; border: 1px solid var(--r-line); border-radius: 7px;}
+.r-run-diagnostics .r-pill {margin: 8px 8px 0 0;}
+.r-requirement-evidence {min-width: 0; overflow-wrap: anywhere;}

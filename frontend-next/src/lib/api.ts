@@ -230,9 +230,10 @@ class ApiClient {
     const body = new FormData(); files.forEach(file => body.append("files", file));
     return this.request("/api/v1/screening/cohort/upload", {method: "POST", body, timeoutMs: 600000});
   }
-  async fastRank(jobId: string, candidateIds: string[], topK: number, deepEvaluation: boolean): Promise<ScreeningRun> {
-    return this.request("/api/v1/screening/rank", {method: "POST", body: JSON.stringify({job_id: jobId, candidate_ids: candidateIds, top_k: topK, deep_evaluation: deepEvaluation})});
+  async fastRank(jobId: string, candidateIds: string[], topK: number, deepEvaluation: boolean, options: {pipeline_version?: "v1" | "v2"; rerank_enabled?: boolean; rerank_pool_size?: number} = {}): Promise<ScreeningRun> {
+    return this.request("/api/v1/screening/rank", {method: "POST", body: JSON.stringify({job_id: jobId, candidate_ids: candidateIds, top_k: topK, deep_evaluation: deepEvaluation, ...options})});
   }
+  async retryScreeningRun(id: string): Promise<ScreeningRun> {return this.request(`/api/v1/screening/runs/${id}/retry`, {method: "POST"});}
   async screeningRun(id: string): Promise<ScreeningRun> { return this.request(`/api/v1/screening/runs/${id}`); }
   async latestScreeningRun(jobId: string): Promise<ScreeningRun | null> { return this.request(`/api/v1/screening/jobs/${jobId}/latest`); }
   async shortlist(id: string, count: number): Promise<ScreeningRun> {

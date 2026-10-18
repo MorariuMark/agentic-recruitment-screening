@@ -31,7 +31,7 @@ def test_statistics_aggregate_stored_data_and_recorded_usage(funnel, monkeypatch
     before = response.json()
     assert before["candidates"] >= 4 and before["jobs"] >= 1
     assert before["model_calls"] == 0 and before["tokens"] == 0
-    assert all(value >= 0 for value in before.values())
+    assert all(value >= 0 for value in before.values() if isinstance(value, (int, float)))
     async def seed_usage():
         async with async_session_scope() as db:
             db.add(BatchJobModel(total_files=5, processed_files=3, failed_files=1))
@@ -164,6 +164,64 @@ def test_pre_screen_only_never_calls_llm(funnel):
     run = start(deep_evaluation=False)
     assert len(run["rows"]) == 4 and not calls and len(embeddings) == 1
     assert all(r["deep_status"] == "not_selected" for r in run["rows"])
+
+
+def test_improved_pipeline_cache_and_legacy_api_compatibility(funnel):
+    client, _, _, calls, _, start = funnel
+    first = start(pipeline_version="v2", deep_evaluation=False, rerank_enabled=False)
+    assert first["status"] == "completed" and first["pipeline_version"] == "v2" and not calls
+    assert len(first["rows"]) == 4 and first["job_hash"] and first["profile_hashes"]
+    assert first["rows"][0]["requirement_assessments"]
+    again = start(pipeline_version="v2", deep_evaluation=False, rerank_enabled=False)
+    assert again["diagnostics"]["cache_hits"] == 4
+    assert start(deep_evaluation=False)["pipeline_version"] == "v1"
+
+
+def test_improved_reranker_failure_retains_hybrid_order_and_top_k(funnel, monkeypatch):
+    def unavailable():
+        raise OSError("No local model")
+    monkeypatch.setattr(recruiter, "get_reranker", unavailable)
+    client, _, _, calls, _, start = funnel
+    result = start(pipeline_version="v2", top_k=2)
+    assert result["status"] == "completed" and len(calls) == 2
+    assert result["diagnostics"]["reranker_fallback"] is True
+    assert result["diagnostics"]["warnings"]
+    assert client.post(f"/api/v1/screening/runs/{result['id']}/shortlist", json={"count": 2}).status_code == 200
+
+
+def test_retry_reuses_completed_evaluations_and_detects_changed_profiles(funnel, monkeypatch):
+    client, job, candidates, calls, _, start = funnel
+    original = MatchingAgent.match_candidate
+    def one_failure(self, candidate, job_description):
+        if calls:
+            raise RuntimeError("Temporary failure")
+        return original(self, candidate, job_description)
+    monkeypatch.setattr(MatchingAgent, "match_candidate", one_failure)
+    run = start()
+    assert run["status"] == "partial" and len(calls) == 1
+    completed_id = run["rows"][0]["deep_evaluation"]["id"]
+    monkeypatch.setattr(MatchingAgent, "match_candidate", original)
+    response = client.post(f"/api/v1/screening/runs/{run['id']}/retry")
+    assert response.status_code == 202
+    final = client.get(f"/api/v1/screening/runs/{run['id']}").json()
+    assert final["status"] == "completed" and len(calls) == 2
+    assert final["rows"][0]["deep_evaluation"]["id"] == completed_id
+    assert client.post(f"/api/v1/screening/runs/{run['id']}/retry").status_code == 409
+
+
+def test_retry_does_not_use_modified_candidate_data(funnel, monkeypatch):
+    client, _, candidates, _, _, start = funnel
+    monkeypatch.setattr(MatchingAgent, "match_candidate", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("Retry later")))
+    run = start()
+    candidates[0].anonymized_skills.append("Changed content")
+    asyncio.run(DatabaseRepository.save_candidate(ParsedCV(contact_info=ContactInfo(full_name="Test Candidate 0")), candidates[0]))
+    assert client.post(f"/api/v1/screening/runs/{run['id']}/retry").status_code == 409
+
+
+@pytest.mark.parametrize("options", [{"pipeline_version": "v3"}, {"rerank_pool_size": 0}, {"rerank_pool_size": 201}, {"evidence_per_requirement": 4}])
+def test_improved_options_are_validated(funnel, options):
+    client, job, candidates, *_ = funnel
+    assert client.post("/api/v1/screening/rank", json={"job_id": str(job.id), "candidate_ids": [str(candidates[0].candidate_id)], **options}).status_code == 422
 
 
 def test_same_name_excluded_before_embedding_and_first_selected_copy_kept(funnel):

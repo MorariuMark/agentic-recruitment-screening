@@ -27,6 +27,14 @@ class Base(DeclarativeBase):
     pass
 
 
+class ScreeningFeatureCacheModel(Base):
+    """Versioned, job-independent evidence embeddings; contains anonymized text only."""
+    __tablename__ = "screening_feature_cache"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ScreeningRunModel(Base):
     """Durable recruiter funnel, including the criteria snapshot and human decisions."""
     __tablename__ = "screening_runs"
