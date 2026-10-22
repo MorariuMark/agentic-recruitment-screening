@@ -1,0 +1,65 @@
+........................................................................ [ 20%]
+........................................................................ [ 40%]
+........................................................................ [ 60%]
+........................................................................ [ 81%]
+..........................................................F........      [100%]
+================================== FAILURES ===================================
+_____________ test_location_not_confused_with_language_hierarchy ______________
+
+    def test_location_not_confused_with_language_hierarchy():
+        """Verify that a location requirement mentioning Germany is not treated as a German language requirement."""
+        langs = [LanguageSkill(language="German", proficiency="C1 (Listening, Reading, Writing)")]
+    
+        # 1. Direct service check: must return None
+        res = SkillEquivalenceService.evaluate_language_hierarchy(
+            languages=langs,
+            requirement_title="Location & On-Site Presence (Regensburg, Germany)",
+            requirement_description="Ability and authorization to work on-site at the Regensburg location in Germany.",
+        )
+        assert res is None
+    
+        # 2. MatchingAgent workflow check: LLM rejection on location must NOT be overridden to MET
+        from backend.agents.matching_agent import MatchingAgent
+        from tests.test_agents import MockTestLLM
+        from types import SimpleNamespace
+    
+        class MockLocationLLM(MockTestLLM):
+            def generate_structured(self, prompt, response_model, system_prompt="", temperature=0.0):
+                if response_model == RequirementMatch:
+                    return RequirementMatch(
+                        requirement_id="req_loc",
+                        status=MatchStatus.NOT_MET,
+                        score=0.0,
+                        reasoning="Candidate does not have a valid work authorization for Germany, and there is no indication of their ability to work on-site at Regensburg, Germany.",
+                        citations=[],
+                    )
+                return super().generate_structured(prompt, response_model, system_prompt, temperature)
+    
+        agent = MatchingAgent(llm_client=MockLocationLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
+        candidate = AnonymizedCandidate(
+            candidate_id=uuid4(),
+            anonymized_languages=langs,
+            sanitized_text="Speaks German at C1 level.",
+            demographic_data={},
+        )
+        req = JobRequirement(
+            id="req_loc",
+            title="Location & On-Site Presence (Regensburg, Germany)",
+            category=RequirementCategory.MUST_HAVE,
+            description="Ability and authorization to work on-site at the Regensburg location in Germany.",
+        )
+        match = agent.evaluate_requirement(
+            candidate_id=candidate.candidate_id,
+            requirement=req,
+            candidate=candidate,
+        )
+>       assert match.status == MatchStatus.NOT_MET
+E       AssertionError: assert <MatchStatus....ation_needed'> == <MatchStatus....ET: 'not_met'>
+E         
+E         - not_met
+E         + clarification_needed
+
+..\..\tests\test_skill_equivalence.py:468: AssertionError
+=========================== short test summary info ===========================
+FAILED ..\..\tests\test_skill_equivalence.py::test_location_not_confused_with_language_hierarchy
+1 failed, 354 passed in 98.41s (0:01:38)

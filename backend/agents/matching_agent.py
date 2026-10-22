@@ -1,3 +1,4 @@
+import contextvars
 """
 backend/agents/matching_agent.py
 Semantic matching agent for evaluating candidate-JD alignment and gap proposals.
@@ -26,6 +27,16 @@ from backend.schemas.token_usage import ActionAuditInfo
 from backend.services.scoring_engine import ScoringEngine
 from backend.services.skill_equivalence import SkillEquivalenceService
 from backend.services.vector_store import VectorStoreService
+from backend.services.evidence import assess_language, documented_language_quote, relevant_source_passages, clean_model_text, source_quote, source_passages
+
+
+class EvaluationProviderError(RuntimeError):
+    """Raised when an automated requirement evaluation fails due to an LLM provider error or timeout."""
+    pass
+
+
+class EvaluationSourceError(ValueError):
+    """Original source is unavailable; missing source is not a negative finding."""
 
 
 HEDGE_PHRASES = [
@@ -75,6 +86,11 @@ def is_interpretive_requirement(requirement: JobRequirement) -> bool:
     cat_str = str(getattr(requirement, "category", "")).lower()
     if "soft" in cat_str:
         return True
+    title = requirement.title.lower()
+    if re.search(r"\b(?:location|residency|residence|commuting)\b", title):
+        return True
+    if re.search(r"\bon[- ]?site\b", title) and re.search(r"\b(?:presence|availability|attendance|work|working)\b", title):
+        return True
     text = f"{requirement.title} {requirement.description}".lower()
     return any(kw in text for kw in INTERPRETIVE_KEYWORDS)
 
@@ -84,6 +100,8 @@ def generate_clarification_question(requirement: JobRequirement) -> str:
     Synthesizes a concrete Yes/No screening question for application forms or recruiter calls.
     """
     text = f"{requirement.title} {requirement.description}".lower()
+    if re.search(r"\b(?:location|on[- ]?site|residency|residence|commuting)\b", requirement.title, re.I):
+        return f"Are you willing and able to meet the role's location and on-site attendance requirement: {requirement.description}? [Yes / No]"
     if any(k in text for k in ["night shift", "night shifts", "shift", "shifts"]):
         return "Are you available and willing to work rotating or night shifts as required by this position? [Yes / No]"
     if any(k in text for k in ["relocat", "relocation"]):
@@ -170,6 +188,20 @@ class MatchingAgent:
         """
         strictness_clamped = max(0, min(100, int(strictness if strictness is not None else 50)))
 
+        language = assess_language(candidate, requirement) if candidate else None
+        if language:
+            quote = documented_language_quote(candidate, requirement)
+            status, _, reasoning = language
+            return RequirementMatch(
+                requirement_id=requirement.id, title=requirement.title,
+                jd_summary=requirement.title, jd_citation=requirement.description,
+                status=MatchStatus.MET if status == "supported" and quote else MatchStatus.NOT_MET if status == "contradicted" and quote else MatchStatus.CLARIFICATION_NEEDED,
+                score=1.0 if status == "supported" and quote else 0.0 if status == "contradicted" and quote else 0.5,
+                reasoning=reasoning if quote else f"{reasoning} Source-backed proficiency needs clarification.",
+                citations=[VerbatimCitation(quote=quote, source_section="Original language evidence")] if quote else [],
+                clarification_question=None if quote else f"Please confirm your documented {requirement.title} proficiency.",
+            )
+
         # 1. Retrieve the most relevant candidate chunks from ChromaDB for this requirement
         query_text = f"{requirement.title}: {requirement.description}".strip()
         retrieved_chunks = self.vector_store.query_candidate_chunks(
@@ -231,10 +263,35 @@ class MatchingAgent:
                 source = meta.get("type", "Candidate Profile")
             evidence_lines.append(f"[Evidence {idx}] (Source: {source})\n\"{chunk.get('text', '')}\"")
 
-        evidence_text = "\n\n".join(evidence_lines) if evidence_lines else "No directly matching evidence found in profile."
+        if candidate:
+            # Quotes are selected from the original CV, not generated indexing labels.
+            original = relevant_source_passages(clean_model_text(candidate.sanitized_text),
+                                                f"{requirement.title} {requirement.description}", n_chunks)
+            # Semantic retrieval contributes only chunks that map back to the source.
+            recovered = []
+            source_segments = source_passages(clean_model_text(candidate.sanitized_text))
+            for chunk in retrieved_chunks:
+                chunk_text = clean_model_text(chunk.get("text", ""))
+                direct = source_quote(candidate.sanitized_text, chunk_text)
+                if direct:
+                    recovered.append(direct)
+                else:
+                    recovered.extend(p for p in source_segments if len(p.strip()) > 15 and source_quote(chunk_text, p))
+            if re.search(r"\btickets?\b|\bticketing\b", f"{requirement.title} {requirement.description}", re.I):
+                recovered = [quote for quote in recovered if relevant_source_passages(
+                    quote, f"{requirement.title} {requirement.description}", 1)]
+            evidence_text = "\n\n".join(list(dict.fromkeys([*recovered, *original]))[:n_chunks])
+        else:
+            evidence_text = "\n\n".join(evidence_lines)
+        is_interpretive = is_interpretive_requirement(requirement)
+        if not evidence_text:
+            return RequirementMatch(requirement_id=requirement.id, title=requirement.title,
+                jd_citation=requirement.description, status=MatchStatus.CLARIFICATION_NEEDED,
+                score=0.5, reasoning="No sufficient relevant source evidence was retrieved; this is unknown, not a negative finding.",
+                is_objective=not is_interpretive, citations=[],
+                clarification_question=generate_clarification_question(requirement) if is_interpretive else f"Can you provide evidence for {requirement.title}?")
 
         # 3. Formulate the evaluation prompt
-        is_interpretive = is_interpretive_requirement(requirement)
         type_hint = "INTERPRETIVE / LOGISTICAL / SOFT-SKILL" if is_interpretive else "OBJECTIVE QUALIFICATION"
         strictness_guidance = _build_strictness_instruction(strictness_clamped)
 
@@ -251,11 +308,25 @@ class MatchingAgent:
             f"Candidate Profile Evidence Chunks:\n{evidence_text}\n\n"
             f"Evaluate whether the candidate meets this requirement. Respond ONLY with valid JSON conforming to the RequirementMatch schema.\n"
             f"Set requirement_id to '{requirement.id}'.\n"
+            f"Keep reasoning concise (at most three sentences) and cite at most two relevant source passages. Omit optional fields that do not apply.\n"
             f"IMPORTANT: If the requirement is clearly satisfied, set status to 'met' and score to 1.0 (100%).\n"
             f"If Type is INTERPRETIVE / LOGISTICAL / SOFT-SKILL and the candidate CV is silent on it, set status to 'clarification_needed', is_objective to false, score to 0.5, and provide an actionable Yes/No question in clarification_question."
         )
 
         # 4. Invoke LLM structured generation
+        if hasattr(self.llm_client, "set_action_context"):
+            self.llm_client.set_action_context(
+                "candidate_evaluation",
+                metadata={
+                    **getattr(self, "execution_context", {}),
+                    "job_id": str(getattr(self, "job_id", "")),
+                    "candidate_id": str(candidate.candidate_id) if candidate else None,
+                    "requirement_id": str(requirement.id),
+                    "requirement_title": requirement.title,
+                    "category": cat_val,
+                },
+            )
+
         match_result = self.llm_client.generate_structured(
             prompt=prompt,
             response_model=RequirementMatch,
@@ -468,9 +539,21 @@ class MatchingAgent:
         """
         from backend.services.progress_tracker import progress_tracker
         from backend.services.token_tracker import token_tracker
+        evaluation_started = time.perf_counter()
+
+        if not job_description.requirements:
+            raise ValueError("Job description contains no requirements to evaluate.")
 
         strictness_clamped = max(0, min(100, int(strictness if strictness is not None else 50)))
         req_count = len(job_description.requirements or [])
+        if not any(req.weight > 0 for req in job_description.requirements):
+            raise ValueError("Screening requires at least one active requirement.")
+        if not candidate.sanitized_text.strip():
+            raise EvaluationSourceError(
+                "Original CV source text is unavailable. Reparse the original CV before deep evaluation; "
+                "this is an unavailable assessment, not a candidate rejection."
+            )
+        self.job_id = job_description.id
         total_steps = max(2, req_count + 2)
 
         progress_tracker.start_task(
@@ -488,95 +571,80 @@ class MatchingAgent:
         )
 
         token_tracker.start_action_session("candidate_evaluation")
+        try:
+            # 2. Evaluate all requirements in the JD concurrently
+            matches: List[RequirementMatch] = []
+            active_requirements = [req for req in job_description.requirements if req.weight > 0]
+            if active_requirements:
+                completed_counter = [0]
 
-        # 2. Evaluate all requirements in the JD concurrently
-        matches: List[RequirementMatch] = []
-        if job_description.requirements:
-            completed_counter = [0]
+                def _evaluate_single(req: JobRequirement) -> RequirementMatch:
+                    try:
+                        if hasattr(self.llm_client, "set_action_context"):
+                            self.llm_client.set_action_context("candidate_evaluation")
+                        res = self.evaluate_requirement(
+                            candidate_id=candidate.candidate_id,
+                            requirement=req,
+                            n_chunks=n_chunks_per_req,
+                            candidate=candidate,
+                            strictness=strictness_clamped,
+                        )
+                        completed_counter[0] += 1
+                        progress_tracker.increment_step(
+                            task_key="candidate_evaluation",
+                            phase=f"Evaluated criterion {completed_counter[0]}/{req_count}: {req.title}",
+                            item_completed=req.title,
+                        )
+                        return res
+                    except Exception as e:
+                        logging.error(f"Error evaluating requirement {req.id} ({req.title}): {e}")
+                        raise EvaluationProviderError(
+                            f"Evaluation provider error on requirement '{req.title}' ({req.id}): {e}"
+                        ) from e
 
-            def _evaluate_single(req: JobRequirement) -> RequirementMatch:
-                try:
-                    if hasattr(self.llm_client, "set_action_context"):
-                        self.llm_client.set_action_context("candidate_evaluation")
-                    res = self.evaluate_requirement(
-                        candidate_id=candidate.candidate_id,
-                        requirement=req,
-                        n_chunks=n_chunks_per_req,
-                        candidate=candidate,
-                        strictness=strictness_clamped,
-                    )
-                    completed_counter[0] += 1
-                    progress_tracker.increment_step(
-                        task_key="candidate_evaluation",
-                        phase=f"Evaluated criterion {completed_counter[0]}/{req_count}: {req.title}",
-                        item_completed=req.title,
-                    )
-                    return res
-                except Exception as e:
-                    logging.warning(f"Error evaluating requirement {req.id}: {e}")
-                    completed_counter[0] += 1
-                    progress_tracker.increment_step(
-                        task_key="candidate_evaluation",
-                        phase=f"Completed criterion {completed_counter[0]}/{req_count}: {req.title}",
-                    )
-                    return RequirementMatch(
-                        requirement_id=req.id,
-                        title=req.title,
-                        jd_summary=req.title,
-                        jd_citation=req.description,
-                        status=MatchStatus.NOT_MET,
-                        score=0.0,
-                        reasoning=f"Automated evaluation encountered a provider timeout or error: {str(e)}",
-                        citations=[],
-                    )
+                max_workers = min(len(active_requirements), 4)
+                provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
+                is_rate_sensitive = "groq" in provider_type
 
-            max_workers = min(len(job_description.requirements), 4)
-            provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
-            is_rate_sensitive = "groq" in provider_type
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    if is_rate_sensitive:
+                        futures = []
+                        for idx, req in enumerate(active_requirements):
+                            if 0 < idx < max_workers:
+                                time.sleep(0.15)  # 150ms gentle stagger to prevent instantaneous TPM rate-limit burst
+                            futures.append(executor.submit(contextvars.copy_context().run, _evaluate_single, req))
+                        matches = [f.result() for f in futures]
+                    else:
+                        futures = [executor.submit(contextvars.copy_context().run, _evaluate_single, req)
+                                   for req in active_requirements]
+                        matches = [future.result() for future in futures]
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                if is_rate_sensitive:
-                    futures = []
-                    for idx, req in enumerate(job_description.requirements):
-                        if 0 < idx < max_workers:
-                            time.sleep(0.15)  # 150ms gentle stagger to prevent instantaneous TPM rate-limit burst
-                        futures.append(executor.submit(_evaluate_single, req))
-                    matches = [f.result() for f in futures]
-                else:
-                    matches = list(executor.map(_evaluate_single, job_description.requirements))
+            progress_tracker.update_task(
+                task_key="candidate_evaluation",
+                phase="Verifying verbatim CV citations & computing weighted scores...",
+            )
 
-        progress_tracker.update_task(
-            task_key="candidate_evaluation",
-            phase="Verifying verbatim CV citations & computing weighted scores...",
-        )
-
-        # 3. Compute deterministic score, citation verification, and recommendation
-        evaluation_result = self.scoring_engine.compute_evaluation(
-            candidate=candidate,
-            job=job_description,
-            matches=matches,
-            strictness=strictness_clamped,
-        )
+            # 3. Compute deterministic score, citation verification, and recommendation
+            evaluation_result = self.scoring_engine.compute_evaluation(
+                candidate=candidate,
+                job=job_description,
+                matches=matches,
+                strictness=strictness_clamped,
+            )
+        finally:
+            action_usage = token_tracker.end_action_session("candidate_evaluation")
 
         # 4. Attach aggregated token usage & latency metrics
-        action_usage = token_tracker.end_action_session("candidate_evaluation")
-        if action_usage and action_usage.total_tokens > 0:
-            evaluation_result.token_usage = action_usage
-        else:
-            evaluation_result.token_usage = token_tracker.get_last_usage()
+        evaluation_result.token_usage = action_usage
 
-        model_name = (
-            getattr(self.llm_client, "get_model_name", lambda: None)()
-            or getattr(self.llm_client, "model", None)
-            or getattr(settings, "llm_model", "unknown")
-        )
-        provider = getattr(settings, "llm_provider", None)
+        model_name = ", ".join(action_usage.models_used) or "deterministic"
+        provider = action_usage.provider
         tokens_dict = {
             "prompt_tokens": getattr(evaluation_result.token_usage, "prompt_tokens", 0) if evaluation_result.token_usage else 0,
             "completion_tokens": getattr(evaluation_result.token_usage, "completion_tokens", 0) if evaluation_result.token_usage else 0,
             "total_tokens": getattr(evaluation_result.token_usage, "total_tokens", 0) if evaluation_result.token_usage else 0,
         }
-        latency_ms = getattr(evaluation_result.token_usage, "latency_ms", 0.0) if evaluation_result.token_usage else 0.0
+        latency_ms = (time.perf_counter() - evaluation_started) * 1000
         doc_len = len(job_description.raw_text or "")
         evaluation_result.audit_metadata = ActionAuditInfo(
             model_name=str(model_name),

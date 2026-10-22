@@ -8,7 +8,7 @@ import pytest
 
 from backend.agents.interview_agent import InterviewAgent
 from backend.agents.llm_factory import BaseLLMClient
-from backend.agents.matching_agent import MatchingAgent
+from backend.agents.matching_agent import EvaluationProviderError, MatchingAgent
 from backend.agents.parser_agent import ParserAgent
 from backend.schemas.cv import AnonymizedCandidate, ContactInfo, ParsedCV, WorkExperience
 from backend.schemas.interview import InterviewPlan, InterviewQuestion, QuestionArchetype
@@ -215,3 +215,41 @@ Link: https://amicus.ro/timisoara
     assert anonymized.demographic_data.get("date_of_birth") == "22/09/2002"
     assert anonymized.demographic_data.get("gender") == "Male"
     assert any("Nationality: Romanian, Hungarian" in u for u in parsed.unused_details)
+
+def test_matching_agent_raises_on_provider_failure(tmp_path):
+    """Verify provider timeouts/errors raise EvaluationProviderError instead of yielding a false reject."""
+    class FailingLLM(BaseLLMClient):
+        def generate_text(self, prompt: str, system_prompt=None, temperature=0.1) -> str:
+            raise RuntimeError("Provider connection timeout")
+
+        def generate_structured(self, prompt: str, response_model, system_prompt=None, temperature=0.0):
+            raise RuntimeError("Provider connection timeout")
+
+    mock_llm = FailingLLM()
+    scoring = ScoringEngine()
+    store = VectorStoreService(persist_directory=str(tmp_path / "chroma"))
+    agent = MatchingAgent(llm_client=mock_llm, vector_store=store, scoring_engine=scoring)
+
+    candidate = AnonymizedCandidate(
+        candidate_id=uuid4(),
+        sanitized_text="Experienced Python developer with REST API expertise.",
+        demographic_data={},
+    )
+    jd = JobDescription(
+        title="Python Engineer",
+        requirements=[
+            JobRequirement(
+                id="req_py",
+                title="Python Experience",
+                category=RequirementCategory.MUST_HAVE,
+                description="REST API development in Python",
+            )
+        ],
+    )
+
+    with pytest.raises(EvaluationProviderError) as exc_info:
+        agent.match_candidate(candidate, jd)
+
+    assert "Provider connection timeout" in str(exc_info.value)
+    assert "req_py" in str(exc_info.value)
+

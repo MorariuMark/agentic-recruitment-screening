@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   CandidateDetail,
   CandidateSummary,
@@ -231,6 +231,12 @@ export function EvaluationView({
   const [decision, setDecision] = useState<"strong_match" | "borderline" | "reject">("strong_match");
   const [notes, setNotes] = useState("");
   const [submittingHitl, setSubmittingHitl] = useState(false);
+  const [previewingCorrections, setPreviewingCorrections] = useState(false);
+  const [correctionError, setCorrectionError] = useState("");
+  const correctionPending = useRef(false);
+  const reviewScope = `${evaluation?.id}|${activeCandidateId}|${activeJobId}`;
+  const currentReviewScope = useRef(reviewScope);
+  useEffect(() => {currentReviewScope.current = reviewScope;}, [reviewScope]);
   const [hitlSuccess, setHitlSuccess] = useState(false);
 
   // UI Interactive States
@@ -280,7 +286,7 @@ export function EvaluationView({
   // Fetch available candidates cohort on mount or when requested
   const fetchCandidateCohort = async (targetCandId?: string | null) => {
     try {
-      const data = await api.getCandidates(1000);
+      const data = await api.getCandidates(100);
       let list = Array.isArray(data) ? [...data] : [];
 
       const cidToFind = targetCandId || activeCandidateId || candidateId;
@@ -467,8 +473,8 @@ export function EvaluationView({
   }, [activeCandidateId, activeJob?.id]);
 
   // Resolve an interpretive requirement clarification (Yes / No toggle by Recruiter)
-  const handleResolveClarification = (requirementId: string, answer: "yes" | "no") => {
-    if (!evaluation) return;
+  const handleResolveClarification = async (requirementId: string, answer: "yes" | "no") => {
+    if (!evaluation || correctionPending.current || submittingHitl) return;
 
     const newMatches = evaluation.requirement_matches.map((rm) => {
       if (rm.requirement_id === requirementId) {
@@ -496,67 +502,28 @@ export function EvaluationView({
       return rm;
     });
 
-    // Recompute score and recommendation dynamically
-    const reqLookup = new Map((activeJob?.requirements || []).map((r) => [r.id, r]));
-    let mustHaveWeighted = 0;
-    let mustHaveWeight = 0;
-    let niceWeighted = 0;
-    let niceWeight = 0;
-    let mustHaveGaps = 0;
-    let pendingClarifications = 0;
-
-    for (const m of newMatches) {
-      const req = reqLookup.get(m.requirement_id);
-      const weight = req?.weight ?? 1.0;
-      const isMustHave = req?.category === "must_have";
-
-      if (m.status === "clarification_needed") {
-        pendingClarifications += 1;
+    // Preview and sign-off share the server's weighting, gap and strictness rules.
+    correctionPending.current = true;
+    setPreviewingCorrections(true);
+    setCorrectionError("");
+    try {
+      const updated = await api.previewHITLCorrections(evaluation.id, newMatches);
+      if (currentReviewScope.current !== reviewScope) return;
+      setEvaluation(updated);
+      setDecision(updated.recommendation);
+    } catch (error) {
+      if (currentReviewScope.current === reviewScope) {
+        setCorrectionError(error instanceof Error ? error.message : "Could not recalculate scores. Try again.");
       }
-
-      if (isMustHave) {
-        mustHaveWeight += weight;
-        mustHaveWeighted += m.score * weight;
-        if (m.status === "not_met") {
-          mustHaveGaps += 1;
-        }
-      } else {
-        niceWeight += weight;
-        niceWeighted += m.score * weight;
-      }
+    } finally {
+      correctionPending.current = false;
+      setPreviewingCorrections(false);
     }
-
-    const mustScore = mustHaveWeight > 0 ? (mustHaveWeighted / mustHaveWeight) * 100 : 100;
-    const niceScore = niceWeight > 0 ? (niceWeighted / niceWeight) * 100 : 100;
-    const overall = Math.round((0.75 * mustScore + 0.25 * niceScore) * 100) / 100;
-
-    let newRec: "strong_match" | "borderline" | "reject" = "strong_match";
-    if (mustHaveGaps >= 2 || (mustHaveGaps >= 1 && overall < 50)) {
-      newRec = "reject";
-    } else if (mustHaveGaps === 1 || pendingClarifications > 0 || (overall >= 50 && overall < 70)) {
-      newRec = "borderline";
-    } else {
-      newRec = "strong_match";
-    }
-
-    const updatedEval: MatchEvaluationResult = {
-      ...evaluation,
-      overall_score: overall,
-      must_have_score: Math.round(mustScore * 100) / 100,
-      nice_to_have_score: Math.round(niceScore * 100) / 100,
-      must_have_gaps_count: mustHaveGaps,
-      clarification_count: pendingClarifications,
-      recommendation: newRec,
-      requirement_matches: newMatches,
-    };
-
-    setEvaluation(updatedEval);
-    setDecision(newRec);
   };
 
   // Submit Recruiter Sign-Off (Article 14 Human Gate)
   const handleSubmitHITL = async () => {
-    if (!evaluation) return;
+    if (!evaluation || correctionPending.current || submittingHitl) return;
     if (!notes.trim()) {
       alert("Please provide recruiter justification notes for the audit trail.");
       return;
@@ -1806,6 +1773,7 @@ export function EvaluationView({
                               </span>
                               <div className="flex items-center gap-2">
                                 <button
+                                  disabled={previewingCorrections || submittingHitl}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleResolveClarification(rm.requirement_id, "yes");
@@ -1817,6 +1785,7 @@ export function EvaluationView({
                                   <span>Yes (Confirmed)</span>
                                 </button>
                                 <button
+                                  disabled={previewingCorrections || submittingHitl}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleResolveClarification(rm.requirement_id, "no");
@@ -2080,9 +2049,11 @@ export function EvaluationView({
                     />
                   </div>
 
+                  {previewingCorrections && <p role="status" className="text-sm text-slate-300">Recalculating corrected scores…</p>}
+                  {correctionError && <p role="alert" className="text-sm text-rose-300">{correctionError}</p>}
                   <button
                     onClick={handleSubmitHITL}
-                    disabled={submittingHitl || !notes.trim()}
+                    disabled={submittingHitl || previewingCorrections || !notes.trim()}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white text-xs font-bold shadow-lg shadow-blue-600/30 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {submittingHitl ? (

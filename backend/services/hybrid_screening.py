@@ -13,8 +13,9 @@ from backend.schemas.job import JobDescription
 from backend.schemas.screening import EvidencePassage, PreScreenRow, RequirementAssessment
 from backend.services.pre_ranking import contains, month_index, requirement_terms, STOP_WORDS
 from backend.services.skill_equivalence import CEFR_LEVELS, SkillEquivalenceService
+from backend.services.evidence import assess_language, clean_model_text, language_priority
 
-VERSION = "evidence-v2.2"
+VERSION = "evidence-v2.3"
 ALIASES = {"postgres": "postgresql", "js": "javascript", "ts": "typescript", "k8s": "kubernetes", "node.js": "nodejs", "csharp": "c#"}
 
 
@@ -27,37 +28,14 @@ def term_matches(text, term):
 
 
 def language_assessment(candidate, requirement):
-    text = f"{requirement.title} {requirement.description}".casefold()
-    if any(word in requirement.title.casefold() for word in ["location", "relocat", "presence", "visa", "on-site"]):
-        return None
-    aliases = {"german": ["german", "deutsch"], "french": ["french", "français", "francais"],
-        "english": ["english", "englisch"], "romanian": ["romanian", "română"],
-        "spanish": ["spanish", "español"], "italian": ["italian", "italiano"], "dutch": ["dutch", "nederlands"]}
-    target = next((name for name, names in aliases.items() if any(contains(text, alias) for alias in names)), None)
-    if not target or not (re.search(r"\b[a-c][12]\b", text) or any(word in text for word in ["language", "fluen", "proficien", "sprach", "communication"])):
-        return None
-    def level(value):
-        explicit = re.findall(r"\b([a-c][12])\b", value.casefold())
-        if explicit:
-            return max(CEFR_LEVELS[term] for term in explicit)
-        # Long descriptors win over nested ones (pre-intermediate != intermediate).
-        descriptors = sorted(CEFR_LEVELS, key=len, reverse=True)
-        return next((CEFR_LEVELS[term] for term in descriptors if contains(value.casefold(), term)), None)
-    required_level = level(text)
-    matching = [item for item in candidate.anonymized_languages if any(contains(item.language.casefold(), alias) for alias in aliases[target])]
-    documented = [level(f"{item.language} {item.proficiency or ''}") for item in matching]
-    known = [value for value in documented if value is not None]
-    if not known or required_level is None:
-        return "unknown", 0, "Language or requested proficiency level is not explicitly verified; clarification needed."
-    actual = max(known)
-    return ("supported", 100, f"Documented {target} level satisfies the stated requirement.") if actual >= required_level else ("contradicted", 0, f"Documented {target} proficiency is below the stated level; review with the candidate.")
+    return assess_language(candidate, requirement)
 
 
 def evidence_units(candidate: AnonymizedCandidate) -> list[EvidencePassage]:
     """Bound inference input while retaining the full source in the candidate record."""
     units = []
     def add(section, text, strength="demonstrated"):
-        text = " ".join(text.split())
+        text = clean_model_text(" ".join(text.split()))
         # Reserve space for qualifications/languages even when one role is very long.
         for offset in list(range(0, len(text), 900))[:4]:
             excerpt = text[offset:offset + 1000]
@@ -96,23 +74,9 @@ def snapshot_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def relevant_years(candidate, terms):
-    months = set()
-    stated = []
-    undated = False
-    for role in candidate.anonymized_work_experiences:
-        text = " ".join([role.job_title, *role.work_description, *role.skills_used])
-        if terms and not any(term_matches(text, term) for term in terms):
-            continue
-        start, end = month_index(role.start_date), month_index(role.end_date, True)
-        if start is not None and end is not None and end >= start:
-            months.update(range(start, end + 1))
-        else:
-            undated = True
-            if role.duration_months and role.duration_months > 0:
-                stated.append(role.duration_months)
-    # Undated jobs may overlap: never sum them on top of dated periods.
-    return max(len(months), max(stated, default=0)) / 12, not undated
+def relevant_years(candidate, terms, req_text=""):
+    from backend.services.tenure_calculator import TenureCalculator
+    return TenureCalculator.calculate_requirement_tenure(candidate, terms, req_text)
 
 
 class HybridRankingEngine:
@@ -216,7 +180,10 @@ class HybridRankingEngine:
                 essential_unknown=sum(a.status == "unknown" for a in required),
                 essential_contradicted=sum(a.status == "contradicted" for a in required),
                 checks=[f"{a.title}: {a.status}. {a.reasoning}" for a in assessments]))
-        rows.sort(key=lambda row: (-row.pre_screen_score, str(row.candidate_id)))
+        priorities = {str(c.candidate_id): language_priority(c, job) for c in candidates}
+        for row in rows:
+            row.language_priority = priorities[str(row.candidate_id)]
+        rows.sort(key=lambda row: (row.language_priority, -row.pre_screen_score, str(row.candidate_id)))
         for rank, row in enumerate(rows, 1):
             row.rank = row.initial_rank = rank
         self.diagnostics["timings_ms"]["hybrid_total"] = round((time.perf_counter() - started) * 1000, 2)
@@ -255,7 +222,7 @@ class HybridRankingEngine:
             match = re.search(r"(\d+)\s*\+?\s*years?", req_text, re.I)
             minimum = int(match.group(1)) if match else None
         if minimum and minimum > 0:
-            years, dated = relevant_years(candidate, terms)
+            years, dated = relevant_years(candidate, terms, req_text)
             duration_score = 100 * min(years / minimum, 1)
             score = min(score, duration_score) if terms else duration_score
             if not terms:
@@ -306,7 +273,7 @@ class HybridRankingEngine:
                 row.reranked = True
         # Joint relevance refines evidence ranking, but cannot erase explicit contradictions
         # or substitute a relevance logit for the separate 0-100 pre-screen score.
-        pool.sort(key=lambda row: (row.essential_contradicted, -(row.pre_screen_score // 10),
+        pool.sort(key=lambda row: (row.language_priority, row.essential_contradicted, -(row.pre_screen_score // 10),
             -(row.rerank_score if row.rerank_score is not None else -math.inf), row.initial_rank))
         result = [*pool, *rows[pool_size:]]
         for rank, row in enumerate(result, 1):

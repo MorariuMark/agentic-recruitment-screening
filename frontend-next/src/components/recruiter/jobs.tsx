@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, BriefcaseBusiness, MapPin, Plus, Search, Trash2, X, WandSparkles } from "lucide-react";
 import { JobDescription, JobRequirement } from "@/types";
 import { api } from "@/lib/api";
+import { validateJobDraft, JobDraftIssue } from "@/lib/job-draft";
 import { downloadJson, Empty, message } from "./common";
 import { ExtractedData } from "./parsed-profile";
 import { ProcessIndicator, useTimedActivity } from "./process-indicator";
@@ -68,7 +69,7 @@ export function Jobs({jobs, selectedId, editorIds, onSelect, onSaved, onContinue
       <div>
         {draftKey && <div hidden={!creating}><JobEditor key={draftKey} onCancel={() => {setCreating(false); setDraftKey(null);}} onSave={async id => {await onSaved(id); setCreating(false); setDraftKey(null);}} onContinue={onContinue}/></div>}
         {editorIds.map(id => {const editorJob = jobs.find(item => item.id === id); return editorJob ? <div key={id} hidden={creating || id !== selectedId}><JobEditor job={editorJob} onSave={onSaved} onContinue={onContinue}/></div> : null;})}
-        {!creating && !job && <div className="r-panel"><Empty title="A clear role is a better starting point">Add your first job description to begin screening.</Empty></div>}
+        {!creating && !job && <div className="r-panel"><Empty title={jobs.length ? "Choose a role to begin" : "A clear role is a better starting point"}>{jobs.length ? "Select a saved role or add a new job description to begin screening." : "Add your first job description to begin screening."}</Empty></div>}
       </div>
     </div>
   </>;
@@ -81,7 +82,10 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(!job);
-  function update(value: Partial<JobDescription>) {setDraft(current => ({...current, ...value})); setSaved(false); setDirty(true);}
+  const [issues, setIssues] = useState<JobDraftIssue[]>([]);
+  const errorSummary = useRef<HTMLDivElement>(null);
+  useEffect(() => {if (error || issues.length) errorSummary.current?.focus();}, [error, issues]);
+  function update(value: Partial<JobDescription>) {setDraft(current => ({...current, ...value})); setSaved(false); setDirty(true); setIssues([]); setError("");}
   async function extract(fromUrl: boolean) {
     setBusy(fromUrl ? "url" : "parse"); setError("");
     try {
@@ -90,15 +94,34 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
       update({...result.job_description, id: draft.id});
     } catch (e) {setError(message(e));} finally {setBusy("");}
   }
-  return <form className="r-panel r-job-editor" onSubmit={async e => {
-    e.preventDefault(); setBusy("save"); setError("");
-    try {await api.createJob({...draft, title: draft.title.trim()}); await onSave(draft.id); setSaved(true); setDirty(false);}
+  return <form className="r-panel r-job-editor" noValidate onSubmit={async e => {
+    e.preventDefault();
+    if (busy) return;
+    const continueToCvs = (e.nativeEvent as SubmitEvent).submitter?.getAttribute("data-intent") === "continue";
+    const problems = validateJobDraft(draft, continueToCvs);
+    setIssues(problems); setError("");
+    if (problems.length) return;
+    if (continueToCvs && job && !dirty) {onContinue(); return;}
+    setBusy("save");
+    try {
+      const persisted = await api.createJob({...draft, title: draft.title.trim()});
+      await onSave(persisted.id); setSaved(true); setDirty(false);
+      if (continueToCvs) onContinue();
+    }
     catch(e) {setError(message(e));} finally {setBusy("");}
   }}>
     <div className="r-panel-heading"><div><span className="r-muted">{job ? "Role details" : "New role"}</span><h2>{job?.title || "Define your next hire"}</h2></div><ProcessIndicator active={!!busy} timer={false} label="Updating job description"/>{onCancel && <button type="button" className="r-icon-button" aria-label="Cancel new job" disabled={!!busy} onClick={onCancel}><X size={18}/></button>}</div>
+    {(error || issues.length > 0) && <div ref={errorSummary} className="r-alert" role="alert" tabIndex={-1}>
+      <strong>{error || "Review the job description before saving:"}</strong>
+      {issues.length > 0 && <ul>{issues.map((issue, index) => <li key={index}><a href={`#${draft.id}-${issue.field}`} onClick={event => {
+        event.preventDefault(); const field = document.getElementById(`${draft.id}-${issue.field}`);
+        const details = field?.closest("details"); if (details) details.open = true;
+        requestAnimationFrame(() => {field?.focus(); field?.scrollIntoView({block: "center"});});
+      }}>{issue.message}</a></li>)}</ul>}
+    </div>}
     <div className="r-editor-body">
       <div className="r-form-grid">
-        <label className="r-field r-span-2">Job title<input required value={draft.title} onChange={e => update({title: e.target.value})} placeholder="e.g. Senior Backend Engineer"/></label>
+        <label className="r-field r-span-2">Job title<input id={`${draft.id}-title`} required value={draft.title} onChange={e => update({title: e.target.value})} placeholder="e.g. Senior Backend Engineer"/></label>
         <label className="r-field">Department<input value={draft.department || ""} onChange={e => update({department: e.target.value})} placeholder="e.g. Engineering"/></label>
         <label className="r-field">Location<input value={draft.location || ""} onChange={e => update({location: e.target.value})} placeholder="e.g. Bucharest / Remote"/></label>
       </div>
@@ -119,25 +142,26 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
         {!!draft.unused_details?.length && <><h3>Other source content</h3><ExtractedData value={draft.unused_details}/></>}
         <button type="button" className="r-button subtle" onClick={() => downloadJson(draft, "job-description.json")}>Download structured job description</button>
       </details>
-      <div className="r-criteria-heading"><div><h3>Screening criteria</h3><p>Open a criterion to adjust its evidence, importance and experience.</p></div><button type="button" className="r-button subtle" onClick={() => update({requirements: [...draft.requirements, {id: crypto.randomUUID(), title: "", description: "", category: "must_have", weight: 1}]})}><Plus size={16}/> Add criterion</button></div>
+      <div id={`${draft.id}-criteria`} tabIndex={-1} className="r-criteria-heading"><div><h3>Screening criteria</h3><p>Open a criterion to adjust its evidence, importance and experience.</p></div><button type="button" className="r-button subtle" onClick={() => update({requirements: [...draft.requirements, {id: crypto.randomUUID(), title: "", description: "", category: "must_have", weight: 1}]})}><Plus size={16}/> Add criterion</button></div>
       {draft.requirements.length === 0 && <p className="r-inline-empty">No criteria yet. Add a requirement or extract them from the description.</p>}
-      <div className="r-criteria-list">{draft.requirements.map((r, index) => <Criterion key={r.id} requirement={r} index={index} onChange={value => update({requirements: draft.requirements.map((item, i) => i === index ? {...item, ...value} : item)})} onRemove={() => update({requirements: draft.requirements.filter((_, i) => i !== index)})}/>)}</div>
-      {error && <div className="r-alert" role="alert">{error}</div>}{saved && <p className="r-success" role="status">Job description saved.</p>}
+      <div className="r-criteria-list">{draft.requirements.map((r, index) => <Criterion key={r.id} idPrefix={draft.id} requirement={r} index={index} onChange={value => update({requirements: draft.requirements.map((item, i) => i === index ? {...item, ...value} : item)})} onRemove={() => update({requirements: draft.requirements.filter((_, i) => i !== index)})}/>)}</div>
+      {saved && <p className="r-success" role="status">Job description saved.</p>}
     </div>
-    <div className="r-editor-footer"><button className="r-button" type="submit" disabled={!!busy || !draft.title.trim()}><ProcessIndicator active={busy === "save"} startedAt={lastActivity === "save" ? startedAt : null} label="Saving job description"/>{busy === "save" ? "Saving…" : "Save job description"}</button><button className="r-button primary" type="button" disabled={!job || dirty || !!busy} onClick={onContinue}>Continue to CVs<ArrowRight size={16}/></button></div>
+    <div className="r-editor-footer"><button className="r-button" type="submit" disabled={!!busy}><ProcessIndicator active={busy === "save"} startedAt={lastActivity === "save" ? startedAt : null} label="Saving job description"/>{busy === "save" ? "Saving…" : "Save job description"}</button><button className="r-button primary" type="submit" data-intent="continue" disabled={!!busy}>{!job || dirty ? "Save and continue to CVs" : "Continue to CVs"}<ArrowRight size={16}/></button></div>
   </form>;
 }
 
-function Criterion({requirement: r, index, onChange, onRemove}: {requirement: JobRequirement; index: number; onChange: (value: Partial<JobRequirement>) => void; onRemove: () => void}) {
+function Criterion({requirement: r, index, idPrefix, onChange, onRemove}: {idPrefix: string; requirement: JobRequirement; index: number; onChange: (value: Partial<JobRequirement>) => void; onRemove: () => void}) {
   const [open, setOpen] = useState(!r.title);
   return <details className="r-criterion" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="r-criterion-summary"><span>{r.title || "New criterion"}</span><small>{r.category === "must_have" ? "Required" : r.category === "nice_to_have" ? "Preferred" : "Soft skill"}</small></summary>
-    <div className="r-criterion-title"><label className="r-field">Criterion {index + 1}<input required value={r.title} placeholder="e.g. Python development" onChange={e => onChange({title: e.target.value})}/></label><button type="button" aria-label={`Remove criterion ${index + 1}`} className="r-icon-button" onClick={onRemove}><Trash2 size={16}/></button></div>
+    <div className="r-criterion-title"><label className="r-field">Criterion {index + 1}<input id={`${idPrefix}-criterion-${index}-title`} required value={r.title} placeholder="e.g. Python development" onChange={e => onChange({title: e.target.value})}/></label><button type="button" aria-label={`Remove criterion ${index + 1}`} className="r-icon-button" onClick={onRemove}><Trash2 size={16}/></button></div>
     <label className="r-field">Evidence to look for<textarea rows={2} value={r.description} onChange={e => onChange({description: e.target.value})} placeholder="Describe what the candidate needs to demonstrate"/></label>
+      {r.category === "must_have" && <label className="r-field">Evidence required before automatic deep evaluation<input value={r.eligibility_evidence || ""} placeholder="e.g. Based in Bucharest" onChange={e => onChange({eligibility_evidence: e.target.value || null})}/><small>Optional exact source phrase. Use an explicit availability statement for local presence. Missing evidence goes to clarification; it does not reject the candidate.</small></label>}
     <div className="r-criterion-controls">
       <label className="r-field">Priority<select value={r.category} onChange={e => onChange({category: e.target.value as JobRequirement["category"]})}><option value="must_have">Required</option><option value="nice_to_have">Nice to have</option><option value="soft_skill">Soft skill</option></select></label>
-      <label className="r-field">Weight<input type="number" min={0} max={10} step={0.5} required value={r.weight} onChange={e => onChange({weight: Number(e.target.value)})}/></label>
-      <label className="r-field">Minimum years<input type="number" min={0} max={60} placeholder="Any" value={r.minimum_years_experience ?? ""} onChange={e => onChange({minimum_years_experience: e.target.value ? Number(e.target.value) : null})}/></label>
+      <label className="r-field">Weight<input id={`${idPrefix}-criterion-${index}-weight`} type="number" min={0} max={10} step="any" required value={r.weight} onChange={e => onChange({weight: Number(e.target.value)})}/></label>
+      <label className="r-field">Minimum years<input id={`${idPrefix}-criterion-${index}-years`} type="number" min={0} max={60} placeholder="Any" value={r.minimum_years_experience ?? ""} onChange={e => onChange({minimum_years_experience: e.target.value ? Number(e.target.value) : null})}/></label>
     </div>
   </details>;
 }

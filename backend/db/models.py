@@ -10,6 +10,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    LargeBinary,
     DateTime,
     Float,
     ForeignKey,
@@ -25,6 +26,27 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy declarative models."""
     pass
+
+
+class OperationTimingModel(Base):
+    """Durable workflow measurements, independent of browser/session lifetimes."""
+    __tablename__ = "operation_timings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(60), index=True)
+    label: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    parent_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=1)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    cached: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ScreeningFeatureCacheModel(Base):
@@ -160,11 +182,16 @@ class MatchEvaluationModel(Base):
     nice_to_have_score: Mapped[float] = mapped_column(Float, nullable=False)
     must_have_gaps_count: Mapped[int] = mapped_column(Integer, default=0)
     recommendation: Mapped[str] = mapped_column(String(50), nullable=False)
+    llm_recommendation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    recruiter_decision: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    evaluated_with_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    evaluated_with_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     hitl_validated: Mapped[bool] = mapped_column(Boolean, default=False)
     recruiter_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     citation_verification_score: Mapped[float] = mapped_column(Float, default=1.0)
     matches_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    scoring_context_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -240,6 +267,7 @@ class BatchJobModel(Base):
     processed_files: Mapped[int] = mapped_column(Integer, default=0)
     failed_files: Mapped[int] = mapped_column(Integer, default=0)
     results_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)
+    progress_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -260,3 +288,16 @@ class TokenUsageLogModel(Base):
     status: Mapped[str] = mapped_column(String(50), default="success")  # success, failover, error
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
+
+
+class CVDocumentModel(Base):
+    """Original files and trash metadata, independent of parsing and screening."""
+    __tablename__ = "cv_documents"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    content: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(36), unique=True, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

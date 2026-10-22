@@ -25,6 +25,7 @@ class JobRequirement(BaseModel):
     weight: float = Field(default=1.0, ge=0.0, le=10.0, description="Relative scoring weight multiplier between 0.0 and 10.0")
     title: str = Field(description="Short summary of the requirement")
     description: str = Field(description="Full granular expectation for this requirement")
+    eligibility_evidence: Optional[str] = Field(default=None, description="Recruiter-defined source phrase that must be documented before automatic deep selection; absence requires clarification, never rejection")
     minimum_years_experience: Optional[int] = Field(default=None, description="Minimum years of experience required")
 
 

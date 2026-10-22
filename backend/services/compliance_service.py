@@ -100,16 +100,23 @@ class ComplianceService:
         )
         cvs_score = evaluation.citation_verification_score
 
-        # Article 14: Human Oversight Audit Gate
+        # Article 14: Human Oversight Audit Gate (E11)
+        algo_rec = getattr(evaluation, "llm_recommendation", None) or evaluation.recommendation
+        recruiter_dec = getattr(evaluation, "recruiter_decision", None) or (evaluation.recommendation if evaluation.hitl_validated else "PENDING_REVIEW")
+        override_exercised = bool(evaluation.hitl_validated and recruiter_dec != algo_rec)
+
         hitl_status = {
             "human_in_the_loop_mandatory": True,
             "is_decision_finalized_by_human": evaluation.hitl_validated,
-            "recruiter_decision": evaluation.recommendation if evaluation.hitl_validated else "PENDING_REVIEW",
+            "recruiter_decision": recruiter_dec,
             "recruiter_audit_notes": evaluation.recruiter_notes or "Awaiting recruiter review sign-off.",
-            "algorithmic_recommendation": evaluation.recommendation,
-            "human_override_exercised": bool(evaluation.hitl_validated and evaluation.recruiter_notes),
+            "algorithmic_recommendation": algo_rec,
+            "human_override_exercised": override_exercised,
             "human_oversight_article": "EU AI Act Article 14 (Human Oversight)",
         }
+
+        eval_model = getattr(evaluation, "evaluated_with_model", None) or cls._get_active_model_name()
+        eval_prov = getattr(evaluation, "evaluated_with_provider", None) or settings.llm_provider
 
         dossier: Dict[str, Any] = {
             "compliance_standard": "Regulation (EU) 2024/1689 (EU AI Act)",
@@ -147,21 +154,21 @@ class ComplianceService:
                 "status": "COMPLIANT",
                 "pii_redaction_enforced": True,
                 "protected_attributes_scrubbed": pii_scrubbed_fields,
-                "demographic_data_isolation": "Demographic tokens isolated in encrypted audit store; excluded from semantic matching vector index.",
+                "demographic_data_isolation": "Demographic tokens isolated in structured storage; excluded from semantic matching vector index.",
                 "vector_store_cleanliness": f"{candidate.chunks_indexed} anonymous semantic chunks indexed.",
             },
             "article_11_technical_documentation": {
                 "status": "COMPLIANT",
                 "retrieval_architecture": "Asymmetric RAG with dense vector cosine similarity (ChromaDB + SentenceTransformers)",
                 "embedding_model": settings.embedding_model,
-                "inference_model": f"{settings.llm_provider}:{cls._get_active_model_name()}",
+                "inference_model": f"{eval_prov}:{eval_model}",
                 "inference_temperature": 0.0,
                 "structured_output_mode": settings.compatibility_mode,
                 "multi_tier_failover": "Enabled (Groq Cloud -> OpenRouter -> Local Ollama fallback)",
             },
             "article_12_record_keeping": {
                 "status": "COMPLIANT",
-                "immutable_logging": "Enabled via SQLite/PostgreSQL append-only relational audit log",
+                "immutable_logging": "Relational audit log with SHA-256 cryptographic seal",
                 "audit_timestamp": evaluation.created_at.isoformat() if evaluation.created_at else now_utc,
                 "data_integrity_hash": crypto_hash,
             },

@@ -271,7 +271,7 @@ def build_candidate(profile_key: str, tier: str, idx: int) -> ParsedCV:
         chosen_projs = random.sample(available_templates, k=min(len(available_templates), proj_count))
         for p_name, p_stack, p_bullets in chosen_projs:
             projects.append(Project(
-                project_name=f"{p_name} ({tier.upper()} Tier)",
+                project_name=p_name,
                 description=p_bullets,
                 technologies=p_stack,
                 start_date=f"{current_year - 2}-01",
@@ -319,6 +319,8 @@ PROFESSIONAL EXPERIENCE
     raw_text += f"\nEDUCATION\n{education[0].degree_title} - {education[0].institution_name} ({education[0].graduation_year})\nMajor: {education[0].field_of_study}\n"
 
     parsed = ParsedCV(
+        dataset="benchmark",
+        benchmark_annotations={"tier": tier, "profile": profile_key},
         contact_info=ContactInfo(
             full_name=full_name,
             email=email,
@@ -374,7 +376,7 @@ async def seed_cohort(total_count: int = 300):
             total_chunks += chunks
 
             # Save in SQLite Relational DB
-            filename = f"{anonymized.candidate_id[:8]}_{profile}_{tier}.json"
+            filename = f"{anonymized.candidate_id[:8]}_benchmark.json"
             await DatabaseRepository.save_candidate(
                 parsed_cv=parsed_cv,
                 anonymized_candidate=anonymized,

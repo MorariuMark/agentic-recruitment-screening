@@ -150,7 +150,7 @@ export function Shell({ children }: ShellProps) {
       const savedTab = localStorage.getItem("atos_session_active_tab") as NavTab | null;
       if (
         savedTab &&
-        ["pipeline", "requisitions", "comparison", "evaluation", "interview", "settings"].includes(savedTab)
+        ["library", "pipeline", "requisitions", "comparison", "evaluation", "interview", "settings"].includes(savedTab)
       ) {
         setActiveTabState(savedTab);
       }

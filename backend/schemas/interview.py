@@ -101,6 +101,8 @@ class InterviewPlan(BaseModel):
     interview_focus_summary: str = Field(default="", description="Executive summary of what the interviewers should probe")
     executive_summary: Optional[str] = Field(default=None, description="Alias for interview_focus_summary")
     interviewer_tips: Optional[List[str]] = Field(default_factory=list, description="Practical advice and follow-up probes for interviewers")
+    is_draft: bool = Field(default=False, description="True if plan is an unapproved preliminary draft")
+    hitl_approved: bool = Field(default=False, description="True if progression to interview was validated by recruiter")
 
     @model_validator(mode="after")
     def sync_duration_and_summary(self) -> "InterviewPlan":

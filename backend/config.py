@@ -3,6 +3,8 @@ backend/config.py
 Application settings and configuration management using Pydantic Settings.
 """
 
+import secrets
+
 from typing import Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,8 +20,16 @@ class Settings(BaseSettings):
     screening_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     screening_reranker_batch_size: int = Field(default=16, ge=1, le=64)
     screening_reranker_local_only: bool = True
-    screening_reranker_timeout_seconds: float = Field(default=30, ge=1, le=120)
+    screening_reranker_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    screening_reranker_load_timeout_seconds: float = Field(default=180.0, gt=0, le=600)
     screening_embedding_cache_version: str = "1"
+
+    # Authentication & Authorization Settings (E4)
+    auth_required: bool = Field(default=True, description="Enforce strict authentication at API boundary")
+    auth_admin_password: str = Field(default="AdminSecret2026!", description="Admin password")
+    auth_user_password: str = Field(default="Recruiter2026!", description="Recruiter user password")
+    auth_demo_mode: bool = Field(default=True, description="Enable scoped demo fallback access")
+    auth_secret_key: str = Field(default_factory=lambda: secrets.token_urlsafe(48), description="Session signing key; configure AUTH_SECRET_KEY for stable sessions across restarts and workers")
 
     # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', or 'lmstudio'
     llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama", "lmstudio"] = Field(
@@ -78,6 +88,12 @@ class Settings(BaseSettings):
         default="qwen/qwen3.8-27b",
         description="Groq model identifier",
     )
+    groq_max_output_tokens: int = Field(default=800, ge=128, le=32768,
+        description="Per-request Groq output reservation; keep below the account OTPM allowance")
+    groq_parser_max_output_tokens: int = Field(default=8192, ge=1024, le=32768,
+        description="Groq output budget for a complete CV profile, separate from short screening decisions")
+    parser_provider_wait_seconds: float = Field(default=90, ge=0, le=3600,
+        description="Wait for temporary provider cooldowns before preserving an interrupted parsing batch")
 
     # NVIDIA NIM Settings
     nvidia_nim_api_key: Optional[str] = Field(

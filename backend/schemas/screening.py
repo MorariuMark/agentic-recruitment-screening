@@ -9,9 +9,10 @@ from backend.schemas.match import MatchEvaluationResult
 
 class FastRankRequest(BaseModel):
     job_id: UUID
-    candidate_ids: list[UUID] = Field(min_length=1, max_length=1000)
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=50000)
     top_k: int = Field(default=10, ge=1, le=100)
     deep_evaluation: bool = True
+    include_benchmark: bool = False
     pipeline_version: Literal["v1", "v2"] = "v1"
     rerank_enabled: bool = True
     rerank_pool_size: int = Field(default=100, ge=1, le=200)
@@ -21,6 +22,10 @@ class FastRankRequest(BaseModel):
     @classmethod
     def unique_candidates(cls, value):
         return list(dict.fromkeys(value))
+
+
+class DeepEvaluationRequest(BaseModel):
+    candidate_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
 class EvidencePassage(BaseModel):
@@ -64,6 +69,7 @@ class PreScreenRow(BaseModel):
     rerank_score: float | None = None
     reranked: bool = False
     initial_rank: int | None = None
+    language_priority: int = 0
 
 
 class ReviewDecision(BaseModel):
@@ -73,3 +79,4 @@ class ReviewDecision(BaseModel):
 
 class ShortlistRequest(BaseModel):
     count: int = Field(default=10, ge=1, le=100)
+    candidate_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=100)

@@ -28,8 +28,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from backend.db.session import init_db
         await init_db()
+        from backend.services.operation_timing import recover_interrupted_timings
+        await recover_interrupted_timings()
         from backend.api.recruiter import recover_interrupted_runs
         await recover_interrupted_runs()
+        from backend.db.repository import DatabaseRepository
+        recovered_batches = await DatabaseRepository.recover_interrupted_batches()
+        if recovered_batches > 0:
+            logger.info("Recovered %d interrupted batch parsing jobs.", recovered_batches)
         logger.info("Relational database initialized.")
     except Exception as db_err:
         logger.error(f"Failed to initialize database: {db_err}")
@@ -61,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning(f"Phoenix health check failed: {e}")
 
     # Non-blocking background pre-warming of local models and embedding weights
+    reranker_warmup = None
     try:
         import asyncio
         from backend.services.vector_store import get_cached_embedding_function
@@ -69,11 +76,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         asyncio.create_task(asyncio.to_thread(get_cached_embedding_function))
         asyncio.create_task(asyncio.to_thread(sync_all_local_models))
         asyncio.create_task(asyncio.to_thread(OllamaService().get_hardware_profile))
+        from backend.api.recruiter import _RERANKER_EXECUTOR
+        from backend.services.screening_reranker import get_reranker
+
+        async def warm_reranker():
+            try:
+                await asyncio.get_running_loop().run_in_executor(_RERANKER_EXECUTOR, get_reranker)
+                logger.info("Local screening reranker is ready.")
+            except Exception as error:
+                logger.info("Reranker pre-warming skipped; hybrid fallback remains available: %s", error)
+
+        reranker_warmup = asyncio.create_task(warm_reranker())
         logger.info("Dispatched background pre-warming for local models and vector embedding model.")
     except Exception as warm_err:
         logger.warning(f"Could not dispatch embedding pre-warming: {warm_err}")
 
+    from backend.services.cv_library import maintenance_loop
+    cleanup_task = asyncio.create_task(maintenance_loop())
     yield
+    cleanup_task.cancel()
+    await asyncio.gather(cleanup_task, return_exceptions=True)
+    if reranker_warmup is not None:
+        reranker_warmup.cancel()
+        await asyncio.gather(reranker_warmup, return_exceptions=True)
 
     logger.info("Shutting down Agentic Recruitment Screening Backend...")
     try:
@@ -135,19 +160,36 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 app.include_router(api_router)
 app.include_router(recruiter_router)
+from backend.api.cv_library import router as cv_library_router
+app.include_router(cv_library_router)
+from backend.api.recruiter import auth_router
+app.include_router(auth_router)
 
 
 # ---------------------------------------------------------------------------
 # Health & Root Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/health", tags=["Monitoring"], summary="Health check endpoint")
-async def health_check() -> Dict[str, Any]:
-    """Basic health check endpoint confirming API availability and inference engine metadata."""
+async def health_check(response: Response) -> Dict[str, Any]:
+    """Readiness and liveness health check verifying database connectivity and engine configuration (E13)."""
     from backend.api.routes import _get_active_model_for_provider
     from backend.agents.llm_factory import get_last_fallback_event
+    from backend.db.session import async_session_scope
+    from sqlalchemy import text
+
+    db_status = "ok"
+    try:
+        async with async_session_scope() as s:
+            await s.execute(text("SELECT 1"))
+    except Exception as db_err:
+        db_status = f"unhealthy: {db_err}"
+        response.status_code = 503
+
+    overall_status = "ok" if db_status == "ok" else "degraded"
 
     return {
-        "status": "ok",
+        "status": overall_status,
+        "database": db_status,
         "app_name": settings.app_name,
         "environment": settings.environment,
         "llm_provider": settings.llm_provider,
@@ -155,7 +197,7 @@ async def health_check() -> Dict[str, Any]:
         "model": _get_active_model_for_provider(settings.llm_provider),
         "active_model": _get_active_model_for_provider(settings.llm_provider),
         "compatibility_mode": settings.compatibility_mode,
-        "fallback_enabled": True,
+        "fallback_enabled": getattr(settings, "fallback_enabled", True),
         "last_fallback_event": get_last_fallback_event(),
     }
 

@@ -175,7 +175,7 @@ def test_transferable_skills_prevent_false_rejection():
             requirement_id="req_aws",
             status=MatchStatus.PARTIAL,
             score=0.70,
-            reasoning="Candidate has GCP experience.",
+            reasoning="Candidate has GCP experience.", citations=[{"quote": "GCP"}],
             transferable_skill="GCP → AWS",
             is_objective=True,
         ),
@@ -183,7 +183,7 @@ def test_transferable_skills_prevent_false_rejection():
             requirement_id="req_mysql",
             status=MatchStatus.PARTIAL,
             score=0.70,
-            reasoning="Candidate has PostgreSQL experience.",
+            reasoning="Candidate has PostgreSQL experience.", citations=[{"quote": "PostgreSQL"}],
             transferable_skill="PostgreSQL → MySQL",
             is_objective=True,
         ),
@@ -191,7 +191,7 @@ def test_transferable_skills_prevent_false_rejection():
 
     eval_result = scoring.compute_evaluation(candidate, job, matches)
     assert eval_result.must_have_score == 70.0
-    assert eval_result.overall_score == 77.5
+    assert eval_result.overall_score == 70.0  # Normalized: no absent preferred bonus
     # Candidate must be BORDERLINE, NOT REJECTED!
     assert eval_result.recommendation == Recommendation.BORDERLINE
     assert eval_result.requirement_matches[0].transferable_skill == "GCP → AWS"
@@ -202,6 +202,7 @@ def test_matching_agent_language_guardrail_upgrades_status():
     """Verify MatchingAgent upgrades language requirement to MET if CEFR scale satisfies requirement."""
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     mock_llm = MockTestLLM()
     # Mock LLM returns MET by default, let's create a subclass that returns NOT_MET for test
@@ -217,7 +218,7 @@ def test_matching_agent_language_guardrail_upgrades_status():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockUnmetLLM())
+    agent = MatchingAgent(llm_client=MockUnmetLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
 
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
@@ -242,13 +243,15 @@ def test_matching_agent_language_guardrail_upgrades_status():
     # Hierarchical scale must have upgraded to MET with score 1.0!
     assert match.status == MatchStatus.MET
     assert match.score == 1.0
-    assert "Language Hierarchy" in match.reasoning
+    assert "Documented" in match.reasoning
+    assert match.citations[0].quote == "Fluent German"
 
 
 def test_matching_agent_degree_guardrail_upgrades_status():
     """Verify MatchingAgent upgrades degree requirement to MET if candidate holds higher degree."""
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     class MockUnmetLLM(MockTestLLM):
         def generate_structured(self, prompt, response_model, system_prompt=None, temperature=0.0):
@@ -262,7 +265,7 @@ def test_matching_agent_degree_guardrail_upgrades_status():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockUnmetLLM())
+    agent = MatchingAgent(llm_client=MockUnmetLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
 
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
@@ -296,6 +299,7 @@ def test_matching_agent_benefit_of_doubt_guardrail():
     """Verify low-confidence or hedged NOT_MET verdicts upgrade to PARTIAL with interview probe."""
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     class MockHedgedLLM(MockTestLLM):
         def generate_structured(self, prompt, response_model, system_prompt=None, temperature=0.0):
@@ -310,7 +314,7 @@ def test_matching_agent_benefit_of_doubt_guardrail():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockHedgedLLM())
+    agent = MatchingAgent(llm_client=MockHedgedLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
 
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
@@ -374,6 +378,7 @@ def test_matching_agent_preserves_field_mismatch_unmet_status():
     """Verify MatchingAgent does not override LLM's NOT_MET verdict when degree field doesn't match."""
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     class MockFieldMismatchLLM(MockTestLLM):
         def generate_structured(self, prompt, response_model, system_prompt=None, temperature=0.0):
@@ -387,7 +392,7 @@ def test_matching_agent_preserves_field_mismatch_unmet_status():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockFieldMismatchLLM())
+    agent = MatchingAgent(llm_client=MockFieldMismatchLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
         anonymized_education=[
@@ -428,6 +433,7 @@ def test_location_not_confused_with_language_hierarchy():
     # 2. MatchingAgent workflow check: LLM rejection on location must NOT be overridden to MET
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     class MockLocationLLM(MockTestLLM):
         def generate_structured(self, prompt, response_model, system_prompt="", temperature=0.0):
@@ -441,7 +447,7 @@ def test_location_not_confused_with_language_hierarchy():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockLocationLLM())
+    agent = MatchingAgent(llm_client=MockLocationLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
         anonymized_languages=langs,
@@ -482,6 +488,7 @@ def test_study_field_mismatch_not_overridden_by_degree_hierarchy():
     # 2. MatchingAgent workflow check: LLM rejection with "study field does not match" must NOT be overridden to MET
     from backend.agents.matching_agent import MatchingAgent
     from tests.test_agents import MockTestLLM
+    from types import SimpleNamespace
 
     class MockStudyFieldLLM(MockTestLLM):
         def generate_structured(self, prompt, response_model, system_prompt="", temperature=0.0):
@@ -495,7 +502,7 @@ def test_study_field_mismatch_not_overridden_by_degree_hierarchy():
                 )
             return super().generate_structured(prompt, response_model, system_prompt, temperature)
 
-    agent = MatchingAgent(llm_client=MockStudyFieldLLM())
+    agent = MatchingAgent(llm_client=MockStudyFieldLLM(), vector_store=SimpleNamespace(query_candidate_chunks=lambda **kw: [{"text": candidate.sanitized_text, "metadata": {"type": "experience"}}]))
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
         anonymized_education=edu,
@@ -518,5 +525,60 @@ def test_study_field_mismatch_not_overridden_by_degree_hierarchy():
     assert "Degree Hierarchy" not in match.reasoning
 
 
+def test_e6_tenure_calculations_multi_term_and_no_invented_dates():
+    """Verify E6 fixes: conjunctive multi-skill does not over-credit, no 12-month invention, and overlaps merge."""
+    from backend.services.tenure_calculator import TenureCalculator
 
+    # 1. Java-only 5-year role against multi-term "Java and Python"
+    cand_java_only = AnonymizedCandidate(
+        anonymized_work_experiences=[
+            WorkExperience(
+                job_title="Java Developer",
+                skills_used=["Java"],
+                start_date="Jan 2018",
+                end_date="Dec 2022",  # 60 months = 5.0 years
+            )
+        ]
+    )
+    # Conjunctive: requires both Java and Python
+    years, dated = TenureCalculator.calculate_requirement_tenure(
+        cand_java_only,
+        terms=["java", "python"],
+        requirement_text="5+ years experience in Java and Python",
+    )
+    # Must be 0.0, NOT 5.0! Candidate has 0 Python experience.
+    assert years == 0.0
 
+    # 2. No invented 12-month tenure for undated role with unstated duration
+    cand_blank_exp = AnonymizedCandidate(
+        anonymized_work_experiences=[
+            WorkExperience(job_title="Software Intern", skills_used=["Python"])
+        ]
+    )
+    tenure_blank = SkillEquivalenceService.calculate_tenure_for_skill(
+        cand_blank_exp.anonymized_work_experiences, "Python"
+    )
+    assert tenure_blank == 0.0  # Must NOT default to 12 months (1.0 year)!
+
+    # 3. Overlapping roles merge calendar intervals
+    cand_overlapping = AnonymizedCandidate(
+        anonymized_work_experiences=[
+            WorkExperience(
+                job_title="Role 1",
+                skills_used=["Python"],
+                start_date="Jan 2020",
+                end_date="Dec 2021",  # 24 months
+            ),
+            WorkExperience(
+                job_title="Role 2",
+                skills_used=["Python"],
+                start_date="Jan 2021",
+                end_date="Dec 2022",  # 24 months, 12 months overlap
+            ),
+        ]
+    )
+    tenure_overlap = SkillEquivalenceService.calculate_tenure_for_skill(
+        cand_overlapping.anonymized_work_experiences, "Python"
+    )
+    # Jan 2020 to Dec 2022 = 36 months = 3.0 years, NOT 48 months (4.0 years)
+    assert tenure_overlap == 3.0

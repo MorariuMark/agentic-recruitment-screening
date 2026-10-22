@@ -4,6 +4,9 @@ FastAPI REST routes for CV ingestion, JD evaluation, semantic matching,
 Human-in-the-Loop (HITL) recruiter validation, and tailored interview guide generation.
 """
 
+from backend.services.operation_timing import record_operation, mark_reused_profile
+from backend.agents.llm_factory import LLMProvidersCoolingDownError
+
 import asyncio
 import logging
 import re
@@ -11,10 +14,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.services.process_control import CancellableRoute, schedule_job
 from backend.services.compliance_service import ComplianceService
 
 from backend.agents.interview_agent import InterviewAgent
@@ -23,6 +27,8 @@ from backend.agents.llm_factory import create_llm_client
 from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
+from backend.api.auth import get_current_user, require_role
+from backend.services.evidence import is_benchmark_profile
 from backend.services.batch_processor import BatchProcessorService
 from backend.services.event_stream import event_broadcaster
 from backend.db.models import (
@@ -52,7 +58,7 @@ from backend.services.vector_store import VectorStoreService
 
 logger = logging.getLogger("recruitment_screening.api")
 
-router = APIRouter(prefix="/api/v1", tags=["Recruitment Screening"])
+router = APIRouter(route_class=CancellableRoute, prefix="/api/v1", tags=["Recruitment Screening"], dependencies=[Depends(get_current_user)])
 
 # ---------------------------------------------------------------------------
 # In-Memory Datastores (State cache for candidate sessions and evaluations)
@@ -103,41 +109,15 @@ def _reconstruct_candidate_from_db(cand_model: CandidateModel) -> Tuple[ParsedCV
 
 
 def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEvaluationResult:
+    scoring_context = getattr(eval_model, "scoring_context_json", None) or {}
     matches: List[RequirementMatch] = []
     for m in (eval_model.matches_json or []):
         rm = RequirementMatch.model_validate(m)
-        req_id_lower = rm.requirement_id.lower()
-        reasoning_lower = rm.reasoning.lower()
-
-        # Retroactive normalizer: if an existing evaluation marked interpretive items as NOT_MET
-        if rm.status == MatchStatus.NOT_MET and (
-            any(kw in req_id_lower for kw in ["night", "shift", "shifts", "attention", "detail", "learning", "growth", "fast_paced", "relocat", "travel"])
-            or any(kw in reasoning_lower for kw in ["night shift", "attention to detail", "eagerness to learn", "learn and grow"])
-        ):
-            rm.status = MatchStatus.CLARIFICATION_NEEDED
-            rm.is_objective = False
-            rm.score = 0.5
-            if not rm.clarification_question:
-                if "shift" in req_id_lower:
-                    rm.clarification_question = "Are you available and willing to work rotating or night shifts as required? [Yes / No]"
-                elif "detail" in req_id_lower:
-                    rm.clarification_question = "Can you confirm your ability to uphold strict attention to detail in procedural execution? [Yes / No]"
-                elif "learn" in req_id_lower or "growth" in req_id_lower:
-                    rm.clarification_question = "Are you committed to continuous learning and eager to develop new technical skills in a fast-paced environment? [Yes / No]"
-                else:
-                    rm.clarification_question = f"Can you confirm your readiness for '{rm.requirement_id}'? [Yes / No]"
-            rm.gap_analysis = f"Interpretive / logistical detail requiring confirmation on application form or screening call: {rm.clarification_question}"
-
         matches.append(rm)
 
     clarification_count = sum(1 for m in matches if m.status == MatchStatus.CLARIFICATION_NEEDED)
-    objective_must_have_gaps = sum(
-        1 for m in matches if m.status == MatchStatus.NOT_MET and getattr(m, "is_objective", True)
-    )
 
     rec = Recommendation(eval_model.recommendation)
-    if rec == Recommendation.REJECT and objective_must_have_gaps == 0 and eval_model.overall_score >= 45.0:
-        rec = Recommendation.BORDERLINE
 
     return MatchEvaluationResult(
         id=UUID(eval_model.id),
@@ -146,19 +126,23 @@ def _reconstruct_evaluation_from_db(eval_model: MatchEvaluationModel) -> MatchEv
         overall_score=eval_model.overall_score,
         must_have_score=eval_model.must_have_score,
         nice_to_have_score=eval_model.nice_to_have_score,
-        must_have_gaps_count=objective_must_have_gaps,
-        clarification_count=clarification_count,
+        must_have_gaps_count=eval_model.must_have_gaps_count,
+        clarification_count=scoring_context.get("clarification_count", clarification_count),
         recommendation=rec,
         hitl_validated=eval_model.hitl_validated,
+        recruiter_decision=eval_model.recruiter_decision,
         recruiter_notes=eval_model.recruiter_notes,
         citation_verification_score=eval_model.citation_verification_score,
         requirement_matches=matches,
+        strictness=scoring_context.get("strictness", 50),
+        job_snapshot=scoring_context.get("job"),
     )
 
 
 def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
     structured_data = getattr(job_model, "structured_data", None)
     extra = dict(structured_data.data) if structured_data else {}
+    requirement_extra = {r["id"]: r for r in extra.get("requirements", []) if isinstance(r, dict) and "id" in r}
     reqs = [
         JobRequirement(
             id=r.id,
@@ -167,6 +151,7 @@ def _reconstruct_job_from_db(job_model: JobRequisitionModel) -> JobDescription:
             weight=r.weight,
             description=r.description or "",
             minimum_years_experience=r.minimum_years_experience,
+            eligibility_evidence=requirement_extra.get(r.id, {}).get("eligibility_evidence"),
         )
         for r in (job_model.requirements or [])
     ]
@@ -201,6 +186,7 @@ def _reconstruct_interview_plan_from_db(plan_model: InterviewPlanModel) -> Inter
 # Request / Response Schemas
 # ---------------------------------------------------------------------------
 class CandidateListItem(BaseModel):
+    is_benchmark: bool = False
     """Summary item for candidate pipeline listing."""
     id: UUID = Field(description="Candidate identifier")
     masked_name: Optional[str] = Field(default=None, description="Anonymized name or alias")
@@ -259,6 +245,13 @@ class BatchJobStatusResponse(BaseModel):
     results: List[Dict[str, Any]] = Field(default_factory=list, description="Array of per-candidate processing results")
     created_at: Optional[str] = Field(default=None)
     updated_at: Optional[str] = Field(default=None)
+    files: List[Dict[str, Any]] = Field(default_factory=list)
+    currently_processing: List[Dict[str, Any]] = Field(default_factory=list)
+    remaining_files: int = 0
+    queued_files: int = 0
+    concurrency_limit: int = 4
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 class MatchEvaluateRequest(BaseModel):
@@ -323,12 +316,18 @@ class HITLValidationRequest(BaseModel):
     updated_matches: Optional[List[RequirementMatch]] = Field(default=None, description="Optional updated requirement matches if clarifications were resolved")
 
 
+class HITLPreviewRequest(BaseModel):
+    evaluation_id: UUID
+    updated_matches: List[RequirementMatch]
+
+
 class InterviewGenerateRequest(BaseModel):
     """Request payload to synthesize a tailored interview plan."""
     candidate_id: UUID = Field(description="UUID of candidate")
     evaluation_id: UUID = Field(description="UUID of evaluation report")
     job_description: JobDescription = Field(description="Job description being interviewed for")
     target_duration_minutes: int = Field(default=45, ge=5, le=240, description="Target interview length")
+    require_approval: bool = Field(default=False, description="Whether human progression approval is strictly required")
 
 
 class JobUrlParseRequest(BaseModel):
@@ -450,6 +449,7 @@ async def get_active_task_progress(task_key: Optional[str] = Query(default=None)
     response_model=JobExtractionResult,
     summary="Fetch, parse, and decompose a Job Description from a web URL",
 )
+@record_operation("job_extraction")
 async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     """
     Retrieves the HTML content of the job posting URL, extracts structured metadata
@@ -502,6 +502,7 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
     response_model=JobExtractionResult,
     summary="Parse and decompose raw pasted Job Description text",
 )
+@record_operation("job_extraction")
 async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     """
     Parses raw pasted job posting text, extracts structured metadata
@@ -555,7 +556,29 @@ async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
     status_code=status.HTTP_201_CREATED,
     summary="Upload, parse, scrub PII, and index a candidate CV",
 )
+@record_operation("cv_parse", lambda a: {"label": a["file"].filename or "CV"})
 async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
+    from backend.services.cv_library import ingestion_gate, store_file, attach_candidate
+    content = await file.read(20 * 1024 * 1024 + 1)
+    async with ingestion_gate.parsing(content):
+        if not content or len(content) > 20 * 1024 * 1024 or not (file.filename or "").lower().endswith((".pdf", ".docx", ".txt")):
+            raise HTTPException(400, "Use a non-empty PDF, DOCX or TXT up to 20 MB.")
+        document, duplicate = await store_file(file.filename, content)
+        if document.deleted_at:
+            raise HTTPException(409, "This exact CV is in Trash. Restore it first.")
+        if document.candidate_id:
+            record = await DatabaseRepository.get_candidate(document.candidate_id)
+            if record:
+                parsed, anonymized, chunks = _reconstruct_candidate_from_db(record)
+                mark_reused_profile()
+                return CVUploadResponse(candidate_id=anonymized.candidate_id, parsed_cv=parsed, anonymized_candidate=anonymized, chunks_indexed=chunks)
+        await file.seek(0)
+        result = await _upload_cv(file)
+        await attach_candidate(document.id, result.candidate_id)
+        return result
+
+
+async def _upload_cv(file: UploadFile) -> CVUploadResponse:
     """
     Accepts a CV file (PDF or text), extracts textual contents, invokes the Parser Agent
     for structured extraction, scrubs all PII, indexes chunks in ChromaDB, and returns
@@ -610,6 +633,8 @@ async def upload_cv(file: UploadFile = File(...)) -> CVUploadResponse:
             chunks_indexed=chunks_indexed,
             token_usage=token_usage_record,
         )
+    except LLMProvidersCoolingDownError as e:
+        raise HTTPException(status_code=503, detail=str(e), headers={"Retry-After": str(max(1, int(e.retry_after + 1)))}) from e
     except ScannedPDFException as e:
         logger.warning(f"Single CV upload scanned PDF rejected '{getattr(file, 'filename', 'unknown')}': {e}")
         raise HTTPException(
@@ -669,12 +694,7 @@ async def batch_upload_cvs(
     )
 
     # Dispatch asynchronous background task
-    background_tasks.add_task(
-        _batch_processor.execute_batch,
-        batch_id=batch_id,
-        file_payloads=file_payloads,
-        job_id=job_id,
-    )
+    schedule_job(background_tasks, f"batch:{batch_id}", _batch_processor.execute_batch, batch_id, file_payloads, job_id)
 
     return BatchUploadResponse(
         batch_id=batch_id,
@@ -713,6 +733,13 @@ async def get_batch_job_status(batch_id: UUID) -> BatchJobStatusResponse:
         failed_files=record.failed_files,
         progress_percentage=min(progress, 100.0),
         results=record.results_json or [],
+        files=(record.progress_json or {}).get("files", []),
+        currently_processing=[item for item in (record.progress_json or {}).get("files", []) if item["status"] == "PROCESSING"] if record.status == "PROCESSING" else [],
+        remaining_files=max(0, record.total_files - processed_or_failed),
+        queued_files=sum(item["status"] == "QUEUED" for item in (record.progress_json or {}).get("files", [])) if record.status == "PROCESSING" else 0,
+        concurrency_limit=(record.progress_json or {}).get("concurrency_limit", 4),
+        started_at=(record.progress_json or {}).get("started_at"),
+        finished_at=(record.progress_json or {}).get("finished_at"),
         created_at=record.created_at.isoformat() if record.created_at else None,
         updated_at=record.updated_at.isoformat() if record.updated_at else None,
     )
@@ -799,12 +826,15 @@ async def export_job(job_description: JobDescription) -> JDTaggedExport:
     response_model=MatchEvaluationResult,
     summary="Evaluate candidate against job criteria with grounded RAG reasoning",
 )
+@record_operation("candidate_screening", lambda a: {"candidate_id": a["request"].candidate_id, "job_id": a["request"].job_description.id})
 async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult:
     """
     Retrieves candidate chunks from ChromaDB for each job requirement, executes
     grounded LLM matching, deterministically verifies citation quotes, calculates
     the weighted score (75% must-have / 25% nice-to-have), and assigns a recommendation tier.
     """
+    from backend.services.cv_library import require_available
+    await require_available([request.candidate_id])
     candidate = _CANDIDATE_ANONYMIZED_STORE.get(request.candidate_id)
 
     # Fallback to database if not in memory
@@ -822,6 +852,12 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
             detail=f"Candidate {request.candidate_id} not found. Please upload the CV first.",
         )
 
+    if not request.job_description.requirements:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Job description must contain at least one requirement.",
+        )
+
     try:
         # Run matching agent pipeline in worker thread to prevent event loop blocking
         result = await asyncio.to_thread(
@@ -831,7 +867,7 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
             strictness=request.strictness,
         )
 
-        # Persist job and evaluation report to database
+        # Persist job and evaluation report to database (E8)
         try:
             await DatabaseRepository.save_job(request.job_description)
             await DatabaseRepository.save_evaluation(
@@ -840,9 +876,13 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
                 job_id=request.job_description.id,
             )
         except Exception as db_err:
-            logger.warning(f"Failed to persist evaluation to database: {db_err}")
+            logger.error(f"Failed to persist evaluation to database: {db_err}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to persist evaluation to database: {str(db_err)}",
+            )
 
-        # Cache evaluation result
+        # Cache evaluation result only after successful persistence
         _EVALUATION_STORE[result.id] = result
         return result
     except Exception as e:
@@ -851,6 +891,49 @@ async def evaluate_match(request: MatchEvaluateRequest) -> MatchEvaluationResult
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing semantic matching: {str(e)}",
         )
+
+
+async def _recalculate_review(evaluation: MatchEvaluationResult, matches: List[RequirementMatch]) -> MatchEvaluationResult:
+    job = evaluation.job_snapshot
+    if job is None:
+        # Evaluations created before scoring snapshots use the stored role.
+        job_record = await DatabaseRepository.get_job(evaluation.job_id)
+        if not job_record:
+            raise HTTPException(409, "The evaluation's job is unavailable. Run the evaluation again before correcting scores.")
+        job = _reconstruct_job_from_db(job_record)
+    candidate = _CANDIDATE_ANONYMIZED_STORE.get(evaluation.candidate_id)
+    if candidate is None:
+        candidate_record = await DatabaseRepository.get_candidate(evaluation.candidate_id)
+        if not candidate_record:
+            raise HTTPException(409, "The evaluation's CV is unavailable. Restore or reparse it before correcting scores.")
+        _, candidate, _ = _reconstruct_candidate_from_db(candidate_record)
+    try:
+        recalculated = _scoring_engine.compute_evaluation(
+            candidate, job, matches, evaluation.strictness, human_reviewed=True,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    updated = evaluation.model_copy(deep=True)
+    for field in ("overall_score", "must_have_score", "nice_to_have_score",
+                  "must_have_gaps_count", "clarification_count", "citation_verification_score",
+                  "requirement_matches", "job_snapshot", "recommendation"):
+        setattr(updated, field, getattr(recalculated, field))
+    return updated
+
+
+@router.post("/hitl/preview", response_model=MatchEvaluationResult)
+async def preview_hitl(request: HITLPreviewRequest) -> MatchEvaluationResult:
+    """Preview human corrections using the same scoring rules as durable sign-off."""
+    evaluation = _EVALUATION_STORE.get(request.evaluation_id)
+    if evaluation is None:
+        record = await DatabaseRepository.get_evaluation(request.evaluation_id)
+        if not record:
+            raise HTTPException(404, "Evaluation not found.")
+        evaluation = _reconstruct_evaluation_from_db(record)
+    updated = await _recalculate_review(evaluation, request.updated_matches)
+    updated.hitl_validated = False
+    updated.recruiter_decision = None
+    return updated
 
 
 @router.post(
@@ -879,33 +962,45 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
             detail=f"Evaluation {request.evaluation_id} not found.",
         )
 
-    # Apply recruiter decision and audit log
-    evaluation.recommendation = request.recruiter_decision
-    evaluation.recruiter_notes = request.recruiter_notes
-    evaluation.hitl_validated = True
-
-    if request.updated_matches:
-        evaluation.requirement_matches = request.updated_matches
-        evaluation.clarification_count = sum(1 for m in request.updated_matches if m.status == MatchStatus.CLARIFICATION_NEEDED)
-        evaluation.must_have_gaps_count = sum(1 for m in request.updated_matches if m.status == MatchStatus.NOT_MET and getattr(m, "is_objective", True))
+    # Clone evaluation so dirty cache mutation does not occur if persistence fails (E8)
+    updated_eval = (await _recalculate_review(evaluation, request.updated_matches)
+                    if request.updated_matches is not None else evaluation.model_copy(deep=True))
+    updated_eval.recommendation = request.recruiter_decision
+    updated_eval.recruiter_decision = request.recruiter_decision
+    updated_eval.recruiter_notes = request.recruiter_notes
+    updated_eval.hitl_validated = True
 
     try:
-        if request.updated_matches:
-            await DatabaseRepository.save_evaluation(
-                eval_result=evaluation,
-                candidate_id=evaluation.candidate_id,
-                job_id=evaluation.job_id,
-            )
-        await DatabaseRepository.update_hitl_validation(
+        persisted = await DatabaseRepository.update_hitl_validation(
             evaluation_id=request.evaluation_id,
             decision=request.recruiter_decision.value if hasattr(request.recruiter_decision, "value") else str(request.recruiter_decision),
             notes=request.recruiter_notes,
+            **({"updated_evaluation": updated_eval} if request.updated_matches is not None else {}),
         )
+        if not persisted:
+            # If evaluation was only held in memory, persist it durably to database now (E8)
+            await DatabaseRepository.save_evaluation(
+                eval_result=updated_eval,
+                candidate_id=updated_eval.candidate_id,
+                job_id=updated_eval.job_id,
+            )
+            persisted = await DatabaseRepository.update_hitl_validation(
+                evaluation_id=request.evaluation_id,
+                decision=request.recruiter_decision.value if hasattr(request.recruiter_decision, "value") else str(request.recruiter_decision),
+                notes=request.recruiter_notes,
+            )
+    except HTTPException:
+        raise
     except Exception as db_err:
-        logger.warning(f"Failed to persist HITL validation to database: {db_err}")
+        logger.error(f"Failed to persist HITL validation to database: {db_err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Durable database persistence failed: {str(db_err)}",
+        )
 
-    _EVALUATION_STORE[request.evaluation_id] = evaluation
-    return evaluation
+    # Update cache only after durable DB commit succeeds
+    _EVALUATION_STORE[request.evaluation_id] = updated_eval
+    return updated_eval
 
 
 @router.post(
@@ -913,7 +1008,10 @@ async def validate_hitl(request: HITLValidationRequest) -> MatchEvaluationResult
     response_model=CandidateComparisonReport,
     summary="Compare 2 to 4 candidates side-by-side against a job requisition",
 )
+@record_operation("candidate_comparison", lambda a: {"job_id": a["payload"].job_id, "item_count": len(a["payload"].candidate_ids)})
 async def compare_candidates(payload: CandidateCompareRequest) -> CandidateComparisonReport:
+    from backend.services.cv_library import require_available
+    await require_available(payload.candidate_ids)
     """
     Executes a side-by-side comparative analysis of 2 to 4 candidates evaluated against
     the same job requisition. Yields head-to-head metrics, requirement fulfillment matrix,
@@ -1074,11 +1172,14 @@ async def compare_candidates(payload: CandidateCompareRequest) -> CandidateCompa
     response_model=InterviewPlan,
     summary="Synthesize tailored interview plan focusing on candidate gaps",
 )
+@record_operation("interview_generation", lambda a: {"candidate_id": a["request"].candidate_id, "job_id": a["request"].job_description.id})
 async def generate_interview_plan(request: InterviewGenerateRequest) -> InterviewPlan:
     """
     Synthesizes a personalized, rubric-driven interview plan based on the candidate's
     identified gaps, borderline criteria, and key technical claims.
     """
+    from backend.services.cv_library import require_available
+    await require_available([request.candidate_id])
     candidate = _CANDIDATE_ANONYMIZED_STORE.get(request.candidate_id)
     if not candidate:
         cand_record = await DatabaseRepository.get_candidate(request.candidate_id)
@@ -1133,6 +1234,19 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
                 detail=f"Evaluation {request.evaluation_id} not found and auto-evaluation failed: {eval_err}",
             )
 
+    # Enforce case identity and progression approval gate (E9)
+    from backend.services.interview_service import InterviewValidationService
+    InterviewValidationService.validate_case_identity(
+        candidate_id=request.candidate_id,
+        job_id=request.job_description.id,
+        evaluation=evaluation,
+    )
+
+    is_draft, hitl_approved = InterviewValidationService.check_progression_approval(
+        evaluation=evaluation,
+        require_approval=request.require_approval,
+    )
+
     try:
         plan = await asyncio.to_thread(
             _interview_agent.generate_interview_plan,
@@ -1141,17 +1255,26 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
             evaluation_result=evaluation,
             target_minutes=request.target_duration_minutes,
         )
+        plan.is_draft = is_draft
+        plan.hitl_approved = hitl_approved
 
+        # Persist interview plan to database durably (E8)
         try:
             await DatabaseRepository.save_interview_plan(
                 plan=plan,
                 evaluation_id=evaluation.id,
             )
         except Exception as db_err:
-            logger.warning(f"Failed to persist interview plan to database: {db_err}")
+            logger.error(f"Failed to persist interview plan to database: {db_err}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Durable database persistence failed for interview plan: {str(db_err)}",
+            )
 
         _INTERVIEW_PLAN_STORE[plan.id] = plan
         return plan
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1188,8 +1311,8 @@ async def get_evaluation(evaluation_id: UUID) -> MatchEvaluationResult:
 )
 async def list_candidates(
     job_id: Optional[UUID] = None,
-    limit: int = 1000,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> List[CandidateListItem]:
     """Returns candidate records stored in the persistent database with scoring breakdown."""
     records = await DatabaseRepository.list_candidates(limit=limit, offset=offset)
@@ -1238,6 +1361,7 @@ async def list_candidates(
 
         items.append(
             CandidateListItem(
+                is_benchmark=is_benchmark_profile(raw),
                 id=UUID(r.id),
                 masked_name=masked_name,
                 original_filename=r.original_filename,
@@ -1351,6 +1475,7 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
 
 @router.delete(
     "/candidates/{candidate_id}",
+    dependencies=[Depends(require_role("admin"))],
     status_code=status.HTTP_200_OK,
     summary="Delete a candidate and all associated data",
 )
@@ -1360,6 +1485,8 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
     and removes vector chunks from ChromaDB and memory caches.
     """
     cid_str = str(candidate_id)
+    # Delete vectors before committing relational erasure, so a vector failure remains retryable.
+    await asyncio.to_thread(_vector_store.delete_candidate, candidate_id)
     deleted = await DatabaseRepository.delete_candidate(candidate_id)
     in_memory = (
         candidate_id in _CANDIDATE_RAW_STORE
@@ -1371,13 +1498,22 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
             detail=f"Candidate {candidate_id} not found.",
         )
 
-    # Remove from ChromaDB vector store
-    await asyncio.to_thread(_vector_store.delete_candidate, candidate_id)
+    from backend.services.action_logger import action_logger
+    action_logger.remove_candidate(cid_str)
 
     # Clear memory caches
     _CANDIDATE_RAW_STORE.pop(candidate_id, None)
     _CANDIDATE_ANONYMIZED_STORE.pop(candidate_id, None)
     _CANDIDATE_CHUNKS_STORE.pop(candidate_id, None)
+
+    # Clear evaluation & interview caches (E15)
+    eval_ids_to_remove = [eid for eid, ev in _EVALUATION_STORE.items() if getattr(ev, "candidate_id", None) == candidate_id]
+    for eid in eval_ids_to_remove:
+        _EVALUATION_STORE.pop(eid, None)
+
+    plan_ids_to_remove = [pid for pid, p in _INTERVIEW_PLAN_STORE.items() if getattr(p, "candidate_id", None) == candidate_id]
+    for pid in plan_ids_to_remove:
+        _INTERVIEW_PLAN_STORE.pop(pid, None)
 
     return {
         "status": "deleted",
@@ -1867,6 +2003,11 @@ async def update_job_requirements(
     payload: RequirementUpdateRequest,
 ) -> JobDescription:
     """Updates requirement criteria weights and categories, saving changes to database."""
+    if not payload.requirements:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Job requisition must contain at least one requirement.",
+        )
     job_record = await DatabaseRepository.get_job(job_id)
     if not job_record:
         raise HTTPException(
@@ -1933,6 +2074,7 @@ def _get_active_model_for_provider(provider: str) -> str:
 
 @router.get(
     "/settings/llm",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMSettingsResponse,
     summary="Fetch current LLM provider, active model, and complete catalog",
 )
@@ -2018,6 +2160,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
 
 @router.post(
     "/settings/llm",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMSettingsResponse,
     summary="Hot-swap the active LLM provider, model, and compatibility mode",
 )
@@ -2093,6 +2236,7 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
 
 @router.post(
     "/settings/llm/fallback-toggle",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMSettingsResponse,
     summary="Toggle multi-tier automatic failover on or off",
 )
@@ -2104,6 +2248,7 @@ async def toggle_fallback(payload: FallbackToggleRequest) -> LLMSettingsResponse
 
 @router.post(
     "/settings/llm/fallback-chain",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMSettingsResponse,
     summary="Save user-defined fallback failover hierarchy",
 )
@@ -2122,6 +2267,7 @@ async def update_fallback_chain(payload: FallbackHierarchyRequest) -> LLMSetting
 
 @router.post(
     "/settings/llm/fallback-chain/reset",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMSettingsResponse,
     summary="Reset fallback hierarchy to automatic cascading failover",
 )
@@ -2134,6 +2280,7 @@ async def reset_fallback_chain() -> LLMSettingsResponse:
 
 @router.post(
     "/settings/llm/clear-fallback",
+    dependencies=[Depends(require_role("admin"))],
     summary="Clear or dismiss the last failover event metadata",
 )
 async def clear_fallback_endpoint() -> Dict[str, str]:
@@ -2145,6 +2292,7 @@ async def clear_fallback_endpoint() -> Dict[str, str]:
 
 @router.post(
     "/settings/llm/test",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMTestResponse,
     summary="Test connection and measure latency for a given provider/model (alias)",
 )
@@ -2154,6 +2302,7 @@ async def test_llm_connection_alias(payload: LLMTestRequest) -> LLMTestResponse:
 
 @router.post(
     "/settings/test",
+    dependencies=[Depends(require_role("admin"))],
     response_model=LLMTestResponse,
     summary="Test connection and measure latency for a given provider/model",
 )
@@ -2209,19 +2358,22 @@ async def test_llm_connection(payload: LLMTestRequest) -> LLMTestResponse:
 # ---------------------------------------------------------------------------
 @router.get(
     "/analytics/token-usage",
+    dependencies=[Depends(require_role("admin"))],
     response_model=TokenUsageAnalytics,
     summary="Get aggregated token usage statistics, model comparisons, and activity heatmap",
 )
 async def get_token_usage_analytics(
-    time_range: str = Query("all", pattern="^(today|7d|30d|month|all)$")
+    time_range: str = Query("all", pattern="^(today|7d|30d|month|all)$"),
+    include_synthetic: Optional[bool] = Query(None, description="Include synthetic demonstration data"),
 ) -> TokenUsageAnalytics:
     """Returns platform token statistics, model consumption comparisons, activity calendar, and trends."""
     from backend.services.token_tracker import token_tracker
-    return token_tracker.get_analytics(time_range=time_range)
+    return token_tracker.get_analytics(time_range=time_range, include_synthetic=include_synthetic)
 
 
 @router.post(
     "/analytics/token-usage/reset",
+    dependencies=[Depends(require_role("admin"))],
     summary="Reset and clear all token usage logs",
 )
 async def reset_token_usage_analytics() -> Dict[str, str]:
@@ -2237,24 +2389,27 @@ async def reset_token_usage_analytics() -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 @router.get(
     "/ollama/status",
+    dependencies=[Depends(require_role("admin"))],
     summary="Check local Ollama daemon status, installed version, and binary path",
 )
 async def get_ollama_status() -> Dict[str, Any]:
     """Returns whether Ollama is installed, running on port 11434, and its active version."""
-    return _ollama_service.get_status()
+    return await asyncio.to_thread(_ollama_service.get_status)
 
 
 @router.post(
     "/ollama/start",
+    dependencies=[Depends(require_role("admin"))],
     summary="Start the local Ollama background server daemon",
 )
 async def start_ollama_service() -> Dict[str, Any]:
     """Launches 'ollama serve' in background if not already running."""
-    return _ollama_service.start_service()
+    return await asyncio.to_thread(_ollama_service.start_service)
 
 
 @router.get(
     "/ollama/models",
+    dependencies=[Depends(require_role("admin"))],
     summary="List all installed local models and models currently loaded in RAM/VRAM",
 )
 async def get_ollama_models() -> Dict[str, Any]:
@@ -2273,6 +2428,7 @@ async def get_ollama_models() -> Dict[str, Any]:
 
 @router.get(
     "/ollama/hardware",
+    dependencies=[Depends(require_role("admin"))],
     summary="Get hardware profile and context window recommendations",
 )
 async def get_ollama_hardware() -> Dict[str, Any]:
@@ -2282,29 +2438,32 @@ async def get_ollama_hardware() -> Dict[str, Any]:
 
 @router.post(
     "/ollama/load",
+    dependencies=[Depends(require_role("admin"))],
     summary="Pre-load a local Ollama model into GPU VRAM / system RAM",
 )
 async def load_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, Any]:
     """Loads weights into memory with specified keep_alive duration and context window."""
-    return _ollama_service.load_model(model_name=payload.model, keep_alive=payload.keep_alive)
+    return await asyncio.to_thread(_ollama_service.load_model, model_name=payload.model, keep_alive=payload.keep_alive)
 
 
 @router.post(
     "/ollama/unload",
+    dependencies=[Depends(require_role("admin"))],
     summary="Evict and unload an Ollama model from memory immediately",
 )
 async def unload_ollama_model(payload: OllamaModelActionRequest) -> Dict[str, Any]:
     """Immediately unloads model from VRAM/RAM (keep_alive=0)."""
-    return _ollama_service.unload_model(model_name=payload.model)
+    return await asyncio.to_thread(_ollama_service.unload_model, model_name=payload.model)
 
 
 @router.post(
     "/ollama/pull",
+    dependencies=[Depends(require_role("admin"))],
     summary="Pull a model from the Ollama library",
 )
 async def pull_ollama_model(payload: OllamaPullRequest) -> Dict[str, Any]:
     """Downloads model weights to local storage."""
-    return _ollama_service.pull_model(model_name=payload.model)
+    return await asyncio.to_thread(_ollama_service.pull_model, model_name=payload.model)
 
 
 # ---------------------------------------------------------------------------
@@ -2312,6 +2471,7 @@ async def pull_ollama_model(payload: OllamaPullRequest) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 @router.get(
     "/settings/local-models",
+    dependencies=[Depends(require_role("admin"))],
     summary="List all discovered local AI models from Ollama, LM Studio, Jan, and filesystem",
 )
 async def get_local_models(force: bool = False) -> Dict[str, Any]:
@@ -2323,6 +2483,7 @@ async def get_local_models(force: bool = False) -> Dict[str, Any]:
 
 @router.post(
     "/settings/local-models/scan",
+    dependencies=[Depends(require_role("admin"))],
     summary="Automatically search for available local AI models and update platform access",
 )
 async def scan_local_models(payload: Optional[LocalModelScanRequest] = None) -> Dict[str, Any]:
@@ -2339,11 +2500,12 @@ async def scan_local_models(payload: Optional[LocalModelScanRequest] = None) -> 
 
 @router.post(
     "/settings/local-models/import",
+    dependencies=[Depends(require_role("admin"))],
     summary="Import and register a local GGUF model file into Ollama for immediate inference",
 )
 async def import_local_model_to_ollama(payload: LocalModelImportRequest) -> Dict[str, Any]:
     """Creates a local Ollama model from a detected GGUF model file path."""
-    res = _ollama_service.auto_import_gguf_to_ollama(payload.full_path, payload.model_tag)
+    res = await asyncio.to_thread(_ollama_service.auto_import_gguf_to_ollama, payload.full_path, payload.model_tag)
     if res.get("success"):
         from backend.services.local_model_scanner import get_local_model_scanner
         await asyncio.to_thread(get_local_model_scanner().scan_all, force=True)

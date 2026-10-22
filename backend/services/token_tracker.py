@@ -7,6 +7,7 @@ Settings Usage dashboard (inspired by Agnes AI usage analytics).
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import contextvars
 import json
 import logging
 import math
@@ -31,6 +32,7 @@ logger = logging.getLogger("recruitment_screening.token_tracker")
 _LOCK = threading.RLock()
 _IN_MEMORY_LOGS: List[Dict[str, Any]] = []
 _THREAD_LOCAL = threading.local()
+_ACTIVE_ACTION_VAR: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("active_action", default=None)
 _LAST_GLOBAL_RECORD: Optional[Dict[str, Any]] = None
 
 
@@ -73,9 +75,16 @@ def _get_friendly_model_name(provider: str, model: str) -> str:
 
 def _seed_initial_history_if_empty() -> None:
     """
-    Seeds initial realistic historical usage if the tracking store is empty,
-    so the Agnes AI usage charts and heatmap are immediately active and engaging.
+    Seeds initial realistic historical usage ONLY if auth_demo_mode is enabled (E12).
+    In pure operational/production mode, starts with pure zero-based usage data.
     """
+    try:
+        from backend.config import settings
+        if not getattr(settings, "auth_demo_mode", True):
+            return
+    except Exception:
+        pass
+
     global _IN_MEMORY_LOGS
     with _LOCK:
         if _IN_MEMORY_LOGS:
@@ -174,9 +183,9 @@ class TokenTracker:
         # Record into thread-local for instant retrieval
         _THREAD_LOCAL.last_usage = record
 
-        # Accumulate into action session if active
-        if hasattr(_THREAD_LOCAL, "active_action"):
-            act = _THREAD_LOCAL.active_action
+        # Accumulate into action session if active (propagated across asyncio tasks and threads)
+        act = _ACTIVE_ACTION_VAR.get() or getattr(_THREAD_LOCAL, "active_action", None)
+        if act:
             with _LOCK:
                 acc = _SESSION_ACCUMULATOR[act]
                 acc["provider"] = provider.lower()
@@ -186,6 +195,9 @@ class TokenTracker:
                 acc["total_tokens"] += total_tokens
                 acc["latency_ms"] += float(latency_ms)
                 acc["call_count"] += 1
+                target = f"{provider.lower()}/{model}"
+                if target not in acc.setdefault("models_used", []):
+                    acc["models_used"].append(target)
 
         friendly = _get_friendly_model_name(provider, model)
         return TokenUsageInfo(
@@ -196,6 +208,9 @@ class TokenTracker:
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             latency_ms=round(float(latency_ms), 1),
+            model_call_duration_ms=round(float(latency_ms), 1),
+            model_calls=1,
+            models_used=[f"{provider.lower()}/{model}"],
             status=status,
         )
 
@@ -232,10 +247,14 @@ class TokenTracker:
 
     def start_action_session(self, action: str) -> None:
         """Starts aggregating token usage across multiple calls for a composite action."""
-        _THREAD_LOCAL.active_action = action
+        session_id = f"{action}:{uuid.uuid4()}"
+        _ACTIVE_ACTION_VAR.set(session_id)
+        _THREAD_LOCAL.active_action = session_id
         prov, mod = _get_active_provider_and_model()
         with _LOCK:
-            _SESSION_ACCUMULATOR[action] = {
+            _SESSION_ACCUMULATOR[session_id] = {
+                "started_at": time.perf_counter(),
+                "models_used": [],
                 "provider": prov,
                 "model": mod,
                 "prompt_tokens": 0,
@@ -248,9 +267,10 @@ class TokenTracker:
     def end_action_session(self, action: str) -> TokenUsageInfo:
         """Ends aggregation session and returns total tokens used during the action."""
         prov, mod = _get_active_provider_and_model()
+        session_id = _ACTIVE_ACTION_VAR.get() or getattr(_THREAD_LOCAL, "active_action", None)
         with _LOCK:
             acc = _SESSION_ACCUMULATOR.pop(
-                action,
+                session_id,
                 {
                     "provider": prov,
                     "model": mod,
@@ -261,11 +281,15 @@ class TokenTracker:
                     "call_count": 0,
                 },
             )
-        if hasattr(_THREAD_LOCAL, "active_action") and _THREAD_LOCAL.active_action == action:
+        _ACTIVE_ACTION_VAR.set(None)
+        if hasattr(_THREAD_LOCAL, "active_action") and _THREAD_LOCAL.active_action == session_id:
             delattr(_THREAD_LOCAL, "active_action")
 
-        prov = acc["provider"]
-        mod = acc["model"]
+        used = acc.get("models_used", [])
+        providers = {target.split("/", 1)[0] for target in used}
+        prov = acc["provider"] if len(providers) == 1 else "mixed" if providers else "system"
+        mod = acc["model"] if len(used) == 1 else "mixed" if used else "deterministic"
+        ended_at = time.perf_counter()
         return TokenUsageInfo(
             provider=prov,
             model=mod,
@@ -273,15 +297,25 @@ class TokenTracker:
             prompt_tokens=acc["prompt_tokens"],
             completion_tokens=acc["completion_tokens"],
             total_tokens=acc["total_tokens"],
-            latency_ms=round(acc["latency_ms"], 1),
+            latency_ms=round(max(0.0, ended_at - acc.get("started_at", ended_at)) * 1000, 1),
+            model_call_duration_ms=round(acc["latency_ms"], 1),
+            model_calls=acc["call_count"],
+            models_used=acc.get("models_used", []),
             status="success",
         )
 
-    def get_analytics(self, time_range: str = "all") -> TokenUsageAnalytics:
+    def get_analytics(self, time_range: str = "all", include_synthetic: Optional[bool] = None) -> TokenUsageAnalytics:
         """
         Computes aggregated statistics, per-model breakdowns, activity heatmap,
         and trend lines for the Settings Usage dashboard.
         """
+        if include_synthetic is None:
+            try:
+                from backend.config import settings
+                include_synthetic = getattr(settings, "auth_demo_mode", False)
+            except Exception:
+                include_synthetic = False
+
         now = datetime.now(timezone.utc)
         filter_start: Optional[datetime] = None
 
@@ -300,9 +334,12 @@ class TokenTracker:
         filtered_logs = [
             log
             for log in all_logs
-            if filter_start is None
-            or (log["created_at"].replace(tzinfo=timezone.utc) if log["created_at"].tzinfo is None else log["created_at"])
-            >= filter_start
+            if (include_synthetic or not log.get("synthetic"))
+            and (
+                filter_start is None
+                or (log["created_at"].replace(tzinfo=timezone.utc) if log["created_at"].tzinfo is None else log["created_at"])
+                >= filter_start
+            )
         ]
 
         total_tokens = sum(l["total_tokens"] for l in filtered_logs)

@@ -14,6 +14,12 @@ from backend.agents.llm_factory import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_provider_cooldowns(monkeypatch):
+    import backend.agents.llm_factory as factory
+    monkeypatch.setattr(factory, "_MODEL_COOLDOWNS", {})
+
+
 class MockResultSchema(BaseModel):
     name: str
     score: int
@@ -52,7 +58,8 @@ class DummyClient(BaseLLMClient):
         return response_model(name="Test Candidate", score=95, summary="Seamless fallback success")
 
 
-def test_fallback_chain_construction():
+def test_fallback_chain_construction(monkeypatch):
+    monkeypatch.setattr(DynamicLLMClient, "_get_or_create_client", lambda *a, **kw: DummyClient())
     client = DynamicLLMClient()
     chain = client.get_fallback_chain()
     assert len(chain) >= 2, "Fallback chain must include primary plus at least one fallback candidate"
@@ -191,7 +198,8 @@ def test_groq_dual_key_failover(monkeypatch):
     assert secondary_mock.chat.completions.create.called
 
 
-def test_fallback_chain_prioritizes_qwen38_27b():
+def test_fallback_chain_prioritizes_qwen38_27b(monkeypatch):
+    monkeypatch.setattr(DynamicLLMClient, "_get_or_create_client", lambda *a, **kw: DummyClient())
     from backend.config import settings
     settings.llm_provider = "groq"
     settings.groq_model = "qwen/qwen3.8-27b"

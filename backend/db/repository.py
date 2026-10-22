@@ -8,21 +8,25 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID, uuid4
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.db.models import (
     AuditLogModel,
     CandidateModel,
+    CVDocumentModel,
     InterviewPlanModel,
     JobRequirementModel,
     JobRequisitionModel,
     JobDescriptionDataModel,
     MatchEvaluationModel,
     BatchJobModel,
+    ScreeningRunModel,
+    ScreeningFeatureCacheModel,
 )
 from backend.db.session import async_session_scope
+from backend.config import settings
 from backend.schemas.cv import AnonymizedCandidate, ParsedCV
 from backend.schemas.interview import InterviewPlan
 from backend.schemas.job import JobDescription, JobRequirement
@@ -98,7 +102,8 @@ class DatabaseRepository:
         cid_str = str(candidate_id)
 
         async def _op(s: AsyncSession) -> Optional[CandidateModel]:
-            return await s.get(CandidateModel, cid_str)
+            hidden = await s.scalar(select(CVDocumentModel.id).where(CVDocumentModel.candidate_id == cid_str, CVDocumentModel.deleted_at.is_not(None)))
+            return None if hidden else await s.get(CandidateModel, cid_str)
 
         if session:
             return await _op(session)
@@ -113,7 +118,8 @@ class DatabaseRepository:
     ) -> List[CandidateModel]:
         """Lists candidates ordered by most recently updated."""
         async def _op(s: AsyncSession) -> List[CandidateModel]:
-            stmt = select(CandidateModel).order_by(desc(CandidateModel.updated_at)).offset(offset).limit(limit)
+            hidden = select(CVDocumentModel.candidate_id).where(CVDocumentModel.deleted_at.is_not(None), CVDocumentModel.candidate_id.is_not(None))
+            stmt = select(CandidateModel).where(CandidateModel.id.not_in(hidden)).order_by(desc(CandidateModel.updated_at), CandidateModel.id).offset(offset).limit(limit)
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
@@ -127,13 +133,94 @@ class DatabaseRepository:
         candidate_id: Union[UUID, str],
         session: Optional[AsyncSession] = None,
     ) -> bool:
-        """Deletes a candidate by primary UUID, cascading to evaluations and interview plans."""
+        """
+        Deletes a candidate by primary UUID, cascading across:
+        - CandidateModel
+        - MatchEvaluationModel
+        - InterviewPlanModel
+        - Redacts candidate references from ScreeningRunModel payloads (E15)
+        """
         cid_str = str(candidate_id)
 
         async def _op(s: AsyncSession) -> bool:
             record = await s.get(CandidateModel, cid_str)
             if not record:
                 return False
+
+            # Cascade delete associated evaluations
+            await s.execute(
+                delete(MatchEvaluationModel).where(MatchEvaluationModel.candidate_id == cid_str)
+            )
+
+            # Cascade delete associated interview plans
+            await s.execute(
+                delete(InterviewPlanModel).where(InterviewPlanModel.candidate_id == cid_str)
+            )
+            s.expire(record, ["evaluations", "interview_plans"])
+
+            # Redact candidate from ScreeningRunModel payloads (E15)
+            runs_result = await s.execute(select(ScreeningRunModel))
+            runs = runs_result.scalars().all()
+            for run in runs:
+                payload = dict(run.payload or {})
+                modified = False
+
+                if "candidate_ids" in payload and isinstance(payload["candidate_ids"], list):
+                    orig_len = len(payload["candidate_ids"])
+                    payload["candidate_ids"] = [c for c in payload["candidate_ids"] if str(c) != cid_str]
+                    if len(payload["candidate_ids"]) != orig_len:
+                        modified = True
+
+                if "rows" in payload and isinstance(payload["rows"], list):
+                    orig_len = len(payload["rows"])
+                    payload["rows"] = [
+                        row for row in payload["rows"]
+                        if not (isinstance(row, dict) and (str(row.get("candidate_id")) == cid_str or str(row.get("id")) == cid_str))
+                    ]
+                    if len(payload["rows"]) != orig_len:
+                        modified = True
+
+                if "decisions" in payload and isinstance(payload["decisions"], dict):
+                    if cid_str in payload["decisions"]:
+                        payload["decisions"].pop(cid_str, None)
+                        modified = True
+
+                if "interviews" in payload and isinstance(payload["interviews"], dict):
+                    if cid_str in payload["interviews"]:
+                        payload["interviews"].pop(cid_str, None)
+                        modified = True
+
+                if "evaluations" in payload and isinstance(payload["evaluations"], dict):
+                    if cid_str in payload["evaluations"]:
+                        payload["evaluations"].pop(cid_str, None)
+                        modified = True
+
+                for key in ("shortlist_ids", "deep_candidate_ids", "evaluation_candidate_ids"):
+                    if isinstance(payload.get(key), list):
+                        updated = [value for value in payload[key] if str(value) != cid_str]
+                        modified = modified or updated != payload[key]
+                        payload[key] = updated
+                for key in ("profile_hashes",):
+                    if cid_str in payload.get(key, {}):
+                        payload[key] = {k: v for k, v in payload[key].items() if k != cid_str}
+                        modified = True
+                if payload.get("duplicates"):
+                    updated = [entry for entry in payload["duplicates"] if cid_str not in str(entry)]
+                    modified = modified or updated != payload["duplicates"]
+                    payload["duplicates"] = updated
+                if modified:
+                    run.payload = payload
+                    s.add(run)
+
+            # Cached embeddings contain passages; invalidate them on permanent erasure.
+            await s.execute(delete(ScreeningFeatureCacheModel))
+            # Original files follow the same permanent deletion path in both workspaces.
+            await s.execute(delete(CVDocumentModel).where(CVDocumentModel.candidate_id == cid_str))
+            logs = (await s.scalars(select(AuditLogModel))).all()
+            for log in logs:
+                details = log.details_json or {}
+                if cid_str in str(details):
+                    log.details_json = {"redacted": True, "reason": "Candidate permanently deleted"}
             await s.delete(record)
             await s.commit()
             return True
@@ -266,7 +353,16 @@ class DatabaseRepository:
             existing = await s.get(MatchEvaluationModel, eid_str)
 
             matches_dump = [m.model_dump(mode="json") for m in eval_result.requirement_matches]
+            scoring_context = {
+                "job": eval_result.job_snapshot.model_dump(mode="json"),
+                "strictness": eval_result.strictness,
+                "clarification_count": eval_result.clarification_count,
+            } if eval_result.job_snapshot else None
             rec_val = eval_result.recommendation.value if hasattr(eval_result.recommendation, "value") else str(eval_result.recommendation)
+
+            prov_str = getattr(settings, "llm_provider", "unknown")
+            model_attr = f"{prov_str}_model"
+            mod_str = getattr(settings, model_attr, None) or prov_str
 
             if existing:
                 existing.overall_score = eval_result.overall_score
@@ -274,10 +370,16 @@ class DatabaseRepository:
                 existing.nice_to_have_score = eval_result.nice_to_have_score
                 existing.must_have_gaps_count = eval_result.must_have_gaps_count
                 existing.recommendation = rec_val
+                if not getattr(existing, "llm_recommendation", None):
+                    existing.llm_recommendation = rec_val
+                existing.evaluated_with_provider = prov_str
+                existing.evaluated_with_model = mod_str
                 existing.hitl_validated = eval_result.hitl_validated
                 existing.recruiter_notes = eval_result.recruiter_notes
                 existing.citation_verification_score = eval_result.citation_verification_score
                 existing.matches_json = matches_dump
+                if scoring_context is not None:
+                    existing.scoring_context_json = scoring_context
                 record = existing
             else:
                 record = MatchEvaluationModel(
@@ -289,10 +391,14 @@ class DatabaseRepository:
                     nice_to_have_score=eval_result.nice_to_have_score,
                     must_have_gaps_count=eval_result.must_have_gaps_count,
                     recommendation=rec_val,
+                    llm_recommendation=rec_val,
+                    evaluated_with_provider=prov_str,
+                    evaluated_with_model=mod_str,
                     hitl_validated=eval_result.hitl_validated,
                     recruiter_notes=eval_result.recruiter_notes,
                     citation_verification_score=eval_result.citation_verification_score,
                     matches_json=matches_dump,
+                    scoring_context_json=scoring_context,
                 )
                 s.add(record)
 
@@ -363,6 +469,7 @@ class DatabaseRepository:
         decision: str,
         notes: str,
         session: Optional[AsyncSession] = None,
+        updated_evaluation: Optional[MatchEvaluationResult] = None,
     ) -> Optional[MatchEvaluationModel]:
         """Applies Human-in-the-Loop decision override and audit justification."""
         eid_str = str(evaluation_id)
@@ -372,6 +479,23 @@ class DatabaseRepository:
             if not eval_record:
                 return None
 
+            if not getattr(eval_record, "llm_recommendation", None):
+                eval_record.llm_recommendation = eval_record.recommendation
+            if updated_evaluation is not None:
+                # Scores, corrected matches and the human decision commit together.
+                eval_record.overall_score = updated_evaluation.overall_score
+                eval_record.must_have_score = updated_evaluation.must_have_score
+                eval_record.nice_to_have_score = updated_evaluation.nice_to_have_score
+                eval_record.must_have_gaps_count = updated_evaluation.must_have_gaps_count
+                eval_record.citation_verification_score = updated_evaluation.citation_verification_score
+                eval_record.matches_json = [match.model_dump(mode="json") for match in updated_evaluation.requirement_matches]
+                if updated_evaluation.job_snapshot:
+                    eval_record.scoring_context_json = {
+                        "job": updated_evaluation.job_snapshot.model_dump(mode="json"),
+                        "strictness": updated_evaluation.strictness,
+                        "clarification_count": updated_evaluation.clarification_count,
+                    }
+            eval_record.recruiter_decision = decision
             eval_record.recommendation = decision
             eval_record.recruiter_notes = notes
             eval_record.hitl_validated = True
@@ -538,10 +662,25 @@ class DatabaseRepository:
             record = await s.get(BatchJobModel, bid_str)
             if not record:
                 return None
+            if record.status in {"CANCELLED", "INTERRUPTED"}:
+                return record
+            file_id = candidate_result.get("file_id")
+            if file_id is not None and any(r.get("file_id") == file_id for r in (record.results_json or [])):
+                return record
 
             curr_results = list(record.results_json or [])
             curr_results.append(candidate_result)
             record.results_json = curr_results
+            if file_id is not None and record.progress_json:
+                import copy
+                progress = copy.deepcopy(record.progress_json)
+                for item in progress.get("files", []):
+                    if item["id"] == file_id:
+                        item.update(status=candidate_result["status"], phase="Ready for verification" if is_success else "Parsing failed",
+                                    candidate_id=candidate_result.get("candidate_id"), error=candidate_result.get("error"),
+                                    duplicate_removed=bool(candidate_result.get("duplicate_removed")),
+                                    finished_at=datetime.now(timezone.utc).isoformat())
+                record.progress_json = progress
 
             if is_success:
                 record.processed_files += 1
@@ -550,10 +689,91 @@ class DatabaseRepository:
 
             if is_completed or (record.processed_files + record.failed_files >= record.total_files):
                 record.status = "COMPLETED" if record.failed_files == 0 else ("PARTIAL" if record.processed_files > 0 else "FAILED")
+                record.progress_json = {**(record.progress_json or {}), "finished_at": datetime.now(timezone.utc).isoformat()}
 
             await s.commit()
             await s.refresh(record)
             return record
+
+        if session:
+            return await _op(session)
+        async with async_session_scope() as s:
+            return await _op(s)
+
+    @staticmethod
+    async def initialize_batch_files(batch_id, filenames, concurrency=4, document_ids=None):
+        async with async_session_scope() as db:
+            record = await db.get(BatchJobModel, str(batch_id))
+            if record and not record.progress_json:
+                record.progress_json = {"started_at": datetime.now(timezone.utc).isoformat(), "concurrency_limit": concurrency, "files": [
+                    {"id": str(index), "document_id": document_ids[index] if document_ids else None,
+                     "filename": name, "status": "QUEUED", "phase": "Waiting to parse"}
+                    for index, name in enumerate(filenames)]}
+                await db.commit()
+
+    @staticmethod
+    async def update_batch_file(batch_id, file_id, phase):
+        import copy
+        async with async_session_scope() as db:
+            record = await db.get(BatchJobModel, str(batch_id))
+            if not record or record.status != "PROCESSING":
+                return
+            progress = copy.deepcopy(record.progress_json or {})
+            for item in progress.get("files", []):
+                if item["id"] == file_id:
+                    item.update(status="PROCESSING", phase=phase)
+                    item.setdefault("started_at", datetime.now(timezone.utc).isoformat())
+            record.progress_json = progress
+            await db.commit()
+
+    @staticmethod
+    async def finish_batch_files(batch_id, status, error=None):
+        import copy
+        async with async_session_scope() as db:
+            record = await db.get(BatchJobModel, str(batch_id))
+            if not record:
+                return
+            progress = copy.deepcopy(record.progress_json or {})
+            progress.setdefault("finished_at", datetime.now(timezone.utc).isoformat())
+            for item in progress.get("files", []):
+                if item["status"] in {"QUEUED", "PROCESSING"}:
+                    item.update(status=status, phase=error or status.capitalize(), error=error)
+                    if status == "FAILED":
+                        record.failed_files += 1
+                        record.results_json = [*(record.results_json or []),
+                            {"file_id": item["id"], "filename": item["filename"], "status": "FAILED", "error": error}]
+            record.progress_json = progress
+            record.status = status
+            await db.commit()
+
+    @staticmethod
+    async def recover_interrupted_batches(session: Optional[AsyncSession] = None) -> int:
+        """Transitions any batch jobs stuck in PROCESSING state from a previous crash/restart to INTERRUPTED (E10)."""
+        async def _op(s: AsyncSession) -> int:
+            stmt = select(BatchJobModel).where(BatchJobModel.status == "PROCESSING")
+            res = await s.execute(stmt)
+            stuck_batches = res.scalars().all()
+            recovered = 0
+            for batch in stuck_batches:
+                batch.status = "INTERRUPTED"
+                import copy
+                progress = copy.deepcopy(batch.progress_json or {})
+                progress.setdefault("finished_at", batch.updated_at.replace(tzinfo=timezone.utc).isoformat())
+                for item in progress.get("files", []):
+                    if item["status"] in {"QUEUED", "PROCESSING"}:
+                        item.update(status="INTERRUPTED", phase="Interrupted by server restart")
+                batch.progress_json = progress
+                curr_results = list(batch.results_json or [])
+                curr_results.append({
+                    "status": "INTERRUPTED",
+                    "error": "Batch parsing interrupted by server restart. Unfinished files require re-upload.",
+                })
+                batch.results_json = curr_results
+                s.add(batch)
+                recovered += 1
+            if recovered > 0:
+                await s.commit()
+            return recovered
 
         if session:
             return await _op(session)

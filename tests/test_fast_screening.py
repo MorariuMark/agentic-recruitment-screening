@@ -189,6 +189,45 @@ def test_improved_reranker_failure_retains_hybrid_order_and_top_k(funnel, monkey
     assert client.post(f"/api/v1/screening/runs/{result['id']}/shortlist", json={"count": 2}).status_code == 200
 
 
+def test_improved_reranker_executes_successfully(funnel, monkeypatch):
+    from types import SimpleNamespace
+    predictions = []
+
+    def predict(pairs):
+        predictions.append(pairs)
+        return list(range(len(pairs)))
+
+    monkeypatch.setattr(recruiter, "get_reranker", lambda: SimpleNamespace(model_name="demo-reranker", predict=predict))
+    *_, start = funnel
+    result = start(pipeline_version="v2", deep_evaluation=False)
+    assert result["status"] == "completed"
+    assert predictions and result["diagnostics"]["reranked_candidates"] > 0
+    assert result["diagnostics"]["reranker_model"] == "demo-reranker"
+    assert not result["diagnostics"].get("reranker_fallback", False)
+
+
+def test_improved_reranker_timeout_retains_unmodified_hybrid_rows(funnel, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    release = threading.Event()
+
+    def predict(pairs):
+        release.wait(timeout=2)
+        return [1] * len(pairs)
+
+    monkeypatch.setattr(recruiter.settings, "screening_reranker_timeout_seconds", 0.02)
+    monkeypatch.setattr(recruiter, "get_reranker", lambda: SimpleNamespace(model_name="slow-reranker", predict=predict))
+    *_, start = funnel
+    try:
+        result = start(pipeline_version="v2", deep_evaluation=False)
+        assert result["status"] == "completed"
+        assert result["diagnostics"]["reranker_error"] == "TimeoutError"
+        assert result["diagnostics"]["reranked_candidates"] == 0
+        assert not any(row["reranked"] for row in result["rows"])
+    finally:
+        release.set()
+
+
 def test_retry_reuses_completed_evaluations_and_detects_changed_profiles(funnel, monkeypatch):
     client, job, candidates, calls, _, start = funnel
     original = MatchingAgent.match_candidate
@@ -205,6 +244,11 @@ def test_retry_reuses_completed_evaluations_and_detects_changed_profiles(funnel,
     assert response.status_code == 202
     final = client.get(f"/api/v1/screening/runs/{run['id']}").json()
     assert final["status"] == "completed" and len(calls) == 2
+    timings = client.get(f"/api/v1/screening/statistics/actions?run_id={run['id']}&operation=screening_run").json()
+    assert len(timings["history"]) == 2
+    assert timings["history"][0]["item_count"] == 1
+    assert timings["history"][0]["completed_count"] == 1
+    assert timings["history"][1]["status"] == "partial"
     assert final["rows"][0]["deep_evaluation"]["id"] == completed_id
     assert client.post(f"/api/v1/screening/runs/{run['id']}/retry").status_code == 409
 
@@ -224,21 +268,22 @@ def test_improved_options_are_validated(funnel, options):
     assert client.post("/api/v1/screening/rank", json={"job_id": str(job.id), "candidate_ids": [str(candidates[0].candidate_id)], **options}).status_code == 422
 
 
-def test_same_name_excluded_before_embedding_and_first_selected_copy_kept(funnel):
+def test_same_name_without_shared_identity_is_preserved(funnel):
     client, job, candidates, calls, embeddings, start = funnel
     asyncio.run(DatabaseRepository.save_candidate(
         ParsedCV(contact_info=ContactInfo(full_name="Test Candidate 0")), candidates[1]))
     ordered = [candidates[1], candidates[0], *candidates[2:]]
     run = start(candidate_ids=[str(c.candidate_id) for c in ordered], deep_evaluation=False)
-    assert len(run["rows"]) == 3 and len(embeddings[0]) == 4 and not calls
-    assert run["duplicates"] == [{"candidate_id": str(candidates[0].candidate_id), "kept_candidate_id": str(candidates[1].candidate_id), "reason": "same_name"}]
-    assert str(candidates[0].candidate_id) not in [r["candidate_id"] for r in run["rows"]]
+    assert len(run["rows"]) == 4 and len(embeddings[0]) == 5 and not calls
+    assert run["duplicates"] == []
+    assert str(candidates[0].candidate_id) in [r["candidate_id"] for r in run["rows"]]
     # Exclusion affects this ranking only, not the stored CV.
     assert asyncio.run(DatabaseRepository.get_candidate(candidates[0].candidate_id)) is not None
     assert client.get(f"/api/v1/screening/jobs/{job.id}/latest").json()["duplicates"] == run["duplicates"]
 
 
-def test_identical_full_evaluations_keep_highest_rank_without_extra_llm_calls(funnel, monkeypatch):
+def test_identical_full_evaluations_do_not_drop_distinct_candidates(funnel, monkeypatch):
+    """Verify E5: Do not infer duplicate identity from evaluation output."""
     client, job, candidates, calls, _, start = funnel
     def match(self, candidate, job_description):
         calls.append(candidate.candidate_id)
@@ -247,13 +292,27 @@ def test_identical_full_evaluations_keep_highest_rank_without_extra_llm_calls(fu
             requirement_matches=[RequirementMatch(requirement_id=job_description.requirements[0].id, status="met", score=1, reasoning="Identical documented Python evidence")])
     monkeypatch.setattr(MatchingAgent, "match_candidate", match)
     run = start()
-    assert run["status"] == "completed" and len(calls) == 2 and len(run["rows"]) == 3
-    assert [row["rank"] for row in run["rows"]] == [1, 2, 3]
-    assert sum(row["deep_status"] == "completed" for row in run["rows"]) == 1
-    assert run["duplicates"] == [{"candidate_id": str(calls[1]), "kept_candidate_id": str(calls[0]), "reason": "identical_evaluation"}]
+    assert run["status"] == "completed" and len(calls) == 2 and len(run["rows"]) == 4
+    assert [row["rank"] for row in run["rows"]] == [1, 2, 3, 4]
+    assert sum(row["deep_status"] == "completed" for row in run["rows"]) == 2
+    assert run["duplicates"] == []
     assert len(client.get(f"/api/v1/jobs/{job.id}/evaluations").json()) == 2
-    response = client.post(f"/api/v1/screening/runs/{run['id']}/shortlist", json={"count": 1})
-    assert response.status_code == 200 and response.json()["shortlist_ids"] == [str(calls[0])]
+
+
+def test_same_name_different_email_are_both_preserved(funnel):
+    """Verify E5: Two people with the same full name but different email addresses are both preserved."""
+    client, job, candidates, calls, embeddings, start = funnel
+    asyncio.run(DatabaseRepository.save_candidate(
+        ParsedCV(contact_info=ContactInfo(full_name="John Smith", email="john.smith@alpha.com")), candidates[0]))
+    asyncio.run(DatabaseRepository.save_candidate(
+        ParsedCV(contact_info=ContactInfo(full_name="John Smith", email="john.smith@beta.com")), candidates[1]))
+    ordered = [candidates[0], candidates[1], *candidates[2:]]
+    run = start(candidate_ids=[str(c.candidate_id) for c in ordered], deep_evaluation=False)
+    # Both John Smiths must be retained in rows!
+    assert len(run["rows"]) == 4
+    assert run["duplicates"] == []
+    assert str(candidates[0].candidate_id) in [r["candidate_id"] for r in run["rows"]]
+    assert str(candidates[1].candidate_id) in [r["candidate_id"] for r in run["rows"]]
 
 
 def test_equal_scores_with_different_reasoning_are_not_duplicates(funnel):
@@ -269,7 +328,7 @@ def test_placeholder_names_never_merge_unrelated_candidates(name):
 
 
 def test_exact_name_normalization_preserves_real_name_differences():
-    assert candidate_name_key({"contact_info": {"full_name": "  Ana   POPESCU "}}) == "ana popescu"
+    assert candidate_name_key({"contact_info": {"full_name": "  Ana   POPESCU ", "email": "ana@example.com"}}) == "ana popescu:ana@example.com"
     assert candidate_name_key({"contact_info": {"full_name": "Ana Popescu-Ionescu"}}) != "ana popescu"
 
 
@@ -324,7 +383,7 @@ def test_human_gate_persistence_and_interview(funnel, monkeypatch):
     cid = run["rows"][0]["candidate_id"]
     assert client.post(base + "/interview", json={"candidate_id": cid}).status_code == 409
     assert client.post(base + f"/decisions/{cid}", json={"decision": "interview"}).status_code == 409
-    assert client.post(base + "/shortlist", json={"count": 3}).status_code == 409
+    assert len(client.post(base + "/shortlist", json={"count": 3}).json()["shortlist_ids"]) == 2
     assert client.post(base + "/shortlist", json={"count": 2}).status_code == 200
     approved = client.post(base + f"/decisions/{cid}", json={"decision": "interview", "notes": "Verified relevant evidence."})
     assert approved.status_code == 200
@@ -343,12 +402,13 @@ def test_human_gate_persistence_and_interview(funnel, monkeypatch):
         assert client.post(base + "/interview", json={"candidate_id": cid}).status_code == 409
 
 
-def test_demo_login_both_roles_password_logout():
+def test_demo_login_both_roles_password_logout(monkeypatch):
+    monkeypatch.setattr(recruiter.settings, "auth_admin_password", "test-admin-secret")
     client = TestClient(app)
     assert client.get("/api/v1/auth/session").json()["role"] is None
     assert client.post("/api/v1/auth/login", json={"role":"user", "password":"wrong"}).status_code == 401
     for role in ["admin", "user"]:
-        response = client.post("/api/v1/auth/login", json={"role": role, "password":"1234"})
+        response = client.post("/api/v1/auth/login", json={"role": role, "password":"test-admin-secret" if role == "admin" else "1234"})
         assert response.status_code == 200 and "HttpOnly" in response.headers["set-cookie"]
         assert client.get("/api/v1/auth/session").json()["role"] == role
         assert client.post("/api/v1/auth/logout").status_code == 200
@@ -423,7 +483,7 @@ def test_single_and_cohort_cv_extraction_use_same_complete_contract(monkeypatch)
     client = TestClient(app)
     single = client.post("/api/v1/cv/upload", files={"file": ("single.txt", b"CV")})
     assert single.status_code == 201
-    batch = client.post("/api/v1/screening/cohort/upload", files=[("files", ("cohort.txt", b"CV"))])
+    batch = client.post("/api/v1/screening/cohort/upload", files=[("files", ("cohort.txt", b"CV cohort variant"))])
     assert batch.status_code == 202
     status = client.get(f"/api/v1/cv/batch/{batch.json()['batch_id']}").json()
     assert status["status"] == "COMPLETED"
@@ -472,3 +532,108 @@ async def test_concurrent_parsing_bounded_and_progress_serialized(monkeypatch):
 def test_cohort_upload_rejects_invalid_files(filename, content):
     client = TestClient(app)
     assert client.post("/api/v1/screening/cohort/upload", files=[("files", (filename, content))]).status_code == 400
+
+
+def test_action_trace_endpoint_returns_audit_dossier_and_llm_json(funnel):
+    from backend.services.action_logger import action_logger
+    action_logger.clear()
+
+    action_logger.record_action(
+        action_type="candidate_evaluation",
+        provider="groq",
+        model="llama-3.3-70b-versatile",
+        prompt="Evaluate candidate Python skills",
+        raw_response='{"status": "met", "score": 1.0, "reasoning": "Strong evidence"}',
+        latency_ms=320.5,
+        prompt_tokens=500,
+        completion_tokens=120,
+        status="success",
+        metadata={"candidate_id": "cand-123", "requirement_id": "req-py"},
+    )
+
+    client, job, candidates, calls, embeddings, start = funnel
+    run = start(top_k=2, deep_evaluation=True)
+
+    response = client.get(f"/api/v1/screening/action-trace?job_id={job.id}&run_id={run['id']}")
+    assert response.status_code == 200
+    trace = response.json()
+
+    assert "export_metadata" in trace
+    assert "job" in trace
+    assert "candidates" in trace
+    assert "actions" in trace
+    assert "screening_run" in trace
+
+    assert trace["export_metadata"]["schema_version"] == "2.0"
+    assert trace["export_metadata"]["job_id"] == str(job.id)
+    assert trace["export_metadata"]["run_id"] == run["id"]
+    assert trace["export_metadata"]["total_actions"] >= 1
+    assert trace["export_metadata"]["total_candidates"] >= 4
+
+    assert trace["job"]["id"] == str(job.id)
+    assert len(trace["job"]["requirements"]) >= 1
+
+    assert len(trace["candidates"]) >= 4
+    for cand in trace["candidates"]:
+        assert "candidate_id" in cand
+        assert "candidate_name" in cand
+        assert "raw_cv_text" in cand
+        assert "sanitized_text" in cand
+
+    found_action = next((a for a in trace["actions"] if a["action_type"] == "candidate_evaluation"), None)
+    assert found_action is not None
+    assert "prompt" in found_action
+    assert "raw_response" in found_action
+    assert "parsed_json" in found_action
+
+    job_trace_resp = client.get(f"/api/v1/screening/jobs/{job.id}/action-trace")
+    assert job_trace_resp.status_code == 200
+    assert job_trace_resp.json()["job"]["id"] == str(job.id)
+
+
+
+def test_selected_candidates_can_be_evaluated_without_replacing_ranking(funnel):
+    client, job, candidates, calls, embeddings, start = funnel
+    run = start(deep_evaluation=False)
+    candidate_id = run["rows"][2]["candidate_id"]
+    order = [row["candidate_id"] for row in run["rows"]]
+    response = client.post(f"/api/v1/screening/runs/{run['id']}/evaluate", json={"candidate_ids": [candidate_id]})
+    assert response.status_code == 202
+    updated = client.get(f"/api/v1/screening/runs/{run['id']}").json()
+    assert updated["status"] == "completed"
+    assert [row["candidate_id"] for row in updated["rows"]] == order
+    assert [row["candidate_id"] for row in updated["rows"] if row["deep_status"] == "completed"] == [candidate_id]
+    assert len(calls) == 1 and len(embeddings) == 1
+    assert client.post(f"/api/v1/screening/runs/{run['id']}/evaluate", json={"candidate_ids": [str(uuid4())]}).status_code == 422
+
+
+def test_unknown_mandatory_language_does_not_fill_automatic_deep_budget(funnel, monkeypatch):
+    from backend.services.pre_ranking import PreRankingEngine
+    client, job, candidates, calls, embeddings, start = funnel
+    original = PreRankingEngine.rank
+    def rank_with_language_policy(self, candidates, job):
+        rows = original(self, candidates, job)
+        for index, row in enumerate(rows):
+            row.language_priority = 0 if index == 0 else 1
+        return rows
+    monkeypatch.setattr(PreRankingEngine, "rank", rank_with_language_policy)
+    run = start(top_k=4)
+    assert len(run["rows"]) == 4 and len(calls) == 1
+    assert len(run["deep_candidate_ids"]) == 1
+    assert len(run["diagnostics"]["warnings"]) >= 1
+
+
+def test_statistics_persist_job_run_ranking_and_each_candidate_duration(funnel):
+    client, job, _, _, _, start = funnel
+    run = start(top_k=2)
+    response = client.get(f"/api/v1/screening/statistics/actions?run_id={run['id']}&job_id={job.id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 4  # One run, one ranking stage, two deep evaluations.
+    parent = next(row for row in data["history"] if row["operation"] == "screening_run")
+    children = [row for row in data["history"] if row["operation"] == "candidate_screening"]
+    assert parent["label"] == job.title and parent["status"] == "completed"
+    assert parent["duration_ms"] >= 0 and parent["finished_at"]
+    assert len(children) == 2 and len({row["candidate_id"] for row in children}) == 2
+    assert all(row["parent_id"] == parent["id"] and row["job_id"] == str(job.id) for row in children)
+    assert all(row["duration_ms"] >= 0 and row["status"] == "completed" for row in children)

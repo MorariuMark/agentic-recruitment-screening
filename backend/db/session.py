@@ -94,13 +94,37 @@ async def async_session_scope() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+def _reconcile_sqlite_columns(sync_conn) -> None:
+    """Auto-reconciles missing model columns on existing tables for SQLite."""
+    from sqlalchemy import inspect, text
+    from backend.db.models import Base
+
+    try:
+        inspector = inspect(sync_conn)
+        for table_name, table in Base.metadata.tables.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+            for column in table.columns:
+                if column.name not in existing_cols:
+                    col_type = column.type.compile(sync_conn.dialect)
+                    sql = f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type} NULL"
+                    try:
+                        sync_conn.execute(text(sql))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 async def init_db() -> None:
-    """Creates database tables if they do not already exist."""
+    """Creates database tables if they do not already exist and reconciles missing columns."""
     from backend.db.models import Base
 
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_reconcile_sqlite_columns)
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:

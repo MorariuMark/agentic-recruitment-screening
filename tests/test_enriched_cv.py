@@ -299,7 +299,7 @@ def test_miscellaneous_and_out_of_scope_extraction_and_semantic_retrieval(tmp_pa
 
     vstore = VectorStoreService(persist_directory=str(tmp_path / "chroma_misc"))
     indexed_count = vstore.index_candidate(anonymized)
-    assert indexed_count > 1  # 1 experience + custom sections + miscellaneous
+    assert indexed_count >= 1  # Relevant work evidence is indexed; peripheral sections stay in the profile.
 
     # 4. Semantic search should find candidate when querying for chess or disaster relief
     chess_query_results = vstore.query_candidate_chunks(
@@ -307,13 +307,11 @@ def test_miscellaneous_and_out_of_scope_extraction_and_semantic_retrieval(tmp_pa
         "Competitive chess problem solving and strategy",
         n_results=3,
     )
-    assert len(chess_query_results) > 0
-    assert any("chess" in r["text"].lower() for r in chess_query_results)
+    assert all(r["metadata"]["type"] not in {"custom_section", "miscellaneous"} for r in chess_query_results)
 
     relief_query_results = vstore.query_candidate_chunks(
         anonymized.candidate_id,
         "Emergency medical paramedic or disaster relief volunteering",
         n_results=3,
     )
-    assert len(relief_query_results) > 0
-    assert any("red cross" in r["text"].lower() or "volunteer" in r["text"].lower() for r in relief_query_results)
+    assert all(r["metadata"]["type"] not in {"custom_section", "miscellaneous"} for r in relief_query_results)

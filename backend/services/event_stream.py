@@ -94,10 +94,11 @@ class EventBroadcaster:
                     "failed_files": record.failed_files,
                     "progress_percentage": min(pct, 100.0),
                     "results": record.results_json or [],
+                    "files": (record.progress_json or {}).get("files", []),
                 }
                 yield f"event: initial_state\ndata: {json.dumps(init_data)}\n\n"
 
-                if record.status in ["COMPLETED", "FAILED", "PARTIAL"]:
+                if record.status in ["COMPLETED", "FAILED", "PARTIAL", "CANCELLED", "INTERRUPTED"]:
                     yield f"event: complete\ndata: {json.dumps(init_data)}\n\n"
                     return
 

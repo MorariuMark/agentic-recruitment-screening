@@ -104,6 +104,16 @@ class InterviewAgent:
         )
 
         # 3. Invoke LLM structured generation
+        if hasattr(self.llm_client, "set_action_context"):
+            self.llm_client.set_action_context(
+                "interview_generation",
+                metadata={
+                    "candidate_id": str(candidate.candidate_id),
+                    "job_id": str(job_description.id),
+                    "target_duration_minutes": target_duration_minutes,
+                },
+            )
+
         plan = self.llm_client.generate_structured(
             prompt=prompt,
             response_model=InterviewPlan,

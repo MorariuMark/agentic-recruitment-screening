@@ -1,9 +1,12 @@
+import { workspaceId, registerWorkspaceRequest } from "./workspace-session";
+import { trackProcess } from "./processes";
 /**
  * Unified API Client for FastAPI Backend Services
  */
 
 import {
   WorkspaceStatistics,
+  OperationStatistics,
   ScreeningRun,
   BatchJobStatus,
   CandidateComparisonReport,
@@ -20,6 +23,7 @@ import {
   MatchEvaluationResult,
   RequirementMatch,
   TokenUsageAnalytics,
+  ActionTraceResponse,
 } from "@/types";
 
 export interface ActiveProgressState {
@@ -35,6 +39,7 @@ export interface ActiveProgressState {
 }
 
 const getApiBase = (): string => {
+  if (typeof window !== "undefined") return "";
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
   }
@@ -58,9 +63,9 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit & { timeoutMs?: number; preferDirectBackend?: boolean; sameOrigin?: boolean } = {}
+    options: RequestInit & { timeoutMs?: number; preferDirectBackend?: boolean; sameOrigin?: boolean; responseType?: "json" | "text" } = {}
   ): Promise<T> {
-    const { timeoutMs = 60000, preferDirectBackend = false, sameOrigin = false, ...fetchOptions } = options;
+    const { timeoutMs = 60000, preferDirectBackend = false, sameOrigin = false, responseType = "json", ...fetchOptions } = options;
     const headers = new Headers(options.headers || {});
     if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
@@ -77,13 +82,24 @@ class ApiClient {
       primaryUrl = endpoint;
       fallbackUrl = endpoint;
     }
-    if (preferDirectBackend && typeof window !== "undefined" && !this.base) {
+    if (preferDirectBackend && typeof window === "undefined" && !this.base) {
       primaryUrl = `http://127.0.0.1:8000${endpoint}`;
       fallbackUrl = endpoint;
     }
 
     const executeFetch = async (targetUrl: string): Promise<T> => {
       const controller = new AbortController();
+      const unregister = registerWorkspaceRequest(controller, endpoint);
+      const tabId = workspaceId();
+      const processId = crypto.randomUUID();
+      const method = (fetchOptions.method || "GET").toUpperCase();
+      const longRead = /recommended-jobs|compliance\/dossier|settings\/local-models|ollama\/(models|hardware)/.test(endpoint);
+      const tracked = (method !== "GET" || longRead) && !endpoint.includes("/auth/") && !endpoint.includes("/cancel") && !endpoint.includes("/processes/");
+      const finishProcess = tracked ? trackProcess(processId, endpoint, async () => {
+        const response = await fetch(`${this.base}/api/v1/processes/${processId}/cancel`, {method: "POST", credentials: "include", headers: {"X-Workspace-ID": tabId}});
+        if (!response.ok) throw new Error("Cancellation failed. Try again.");
+        controller.abort(new DOMException("Process cancelled. Completed steps are retained.", "AbortError"));
+      }) : () => {};
       let timedOut = false;
       const timeoutId = setTimeout(() => {
         timedOut = true;
@@ -124,7 +140,7 @@ class ApiClient {
           credentials: "include",
           ...fetchOptions,
           signal: controller.signal,
-          headers,
+          headers: (() => {const requestHeaders = new Headers(headers); if (tabId) requestHeaders.set("X-Workspace-ID", tabId); if (tracked) requestHeaders.set("X-Process-ID", processId); return requestHeaders;})(),
         });
 
         if (!res.ok) {
@@ -155,7 +171,7 @@ class ApiClient {
           throw new Error(errorDetail);
         }
 
-        return res.json();
+        return responseType === "text" ? await res.text() as T : res.json();
       } catch (err: any) {
         if (timedOut) {
           const timeoutErr = new Error(`Request to ${targetUrl} timed out after ${timeoutMs}ms`);
@@ -165,6 +181,8 @@ class ApiClient {
         throw err;
       } finally {
         clearTimeout(timeoutId);
+        finishProcess();
+        unregister();
       }
     };
 
@@ -193,12 +211,33 @@ class ApiClient {
           primaryErr.message.includes("ECONNRESET") ||
           primaryErr.message.includes("Failed to proxy"));
 
-      if ((isNetworkError || isProxyOrGatewayError) && primaryUrl !== fallbackUrl && typeof window !== "undefined") {
+      if ((isNetworkError || isProxyOrGatewayError) && primaryUrl !== fallbackUrl && typeof window !== "undefined" && (fetchOptions.method || "GET") === "GET") {
         console.warn(`[ApiClient] Request to ${primaryUrl} encountered proxy/network failure (${primaryErr.message}); seamlessly retrying via fallback ${fallbackUrl}...`);
         return await executeFetch(fallbackUrl);
       }
       throw primaryErr;
     }
+  }
+
+  resetWorkspace(): Promise<{status: string}> {return this.request("/api/v1/processes/reset", {method: "POST", timeoutMs: 180000});}
+  cvLibrary(): Promise<CVDocument[]> {return this.request("/api/v1/cv-library");}
+  cvDocumentText(id: string): Promise<{id: string; filename: string; text: string}> {
+    return this.request(`/api/v1/cv-library/${encodeURIComponent(id)}/text`);
+  }
+  importCVs(files: File[]): Promise<{imported: number; duplicates_removed: number}> {
+    const body = new FormData(); files.forEach(file => body.append("files", file));
+    return this.request("/api/v1/cv-library/import", {method: "POST", body, timeoutMs: 180000});
+  }
+  libraryAction(ids: string[], action: "trash" | "restore" | "delete"): Promise<{changed: number}> {
+    return this.request("/api/v1/cv-library/actions", {method: "POST", body: JSON.stringify({ids, action}), timeoutMs: 180000});
+  }
+  prepareCVs(ids: string[], limit = 25, concurrency = 4): Promise<{batch_id: string; total_files: number; remaining_unparsed: number}> {
+    return this.request("/api/v1/cv-library/prepare", {method: "POST", body: JSON.stringify({ids, limit, concurrency})});
+  }
+  activeProcesses(): Promise<{id: string; label: string}[]> {return this.request("/api/v1/processes");}
+  cancelBackgroundProcess(id: string): Promise<unknown> {
+    const [kind, key] = id.split(":");
+    return this.request(`/api/v1/screening/${kind === "run" ? "runs" : "batches"}/${key}/cancel`, {method: "POST"});
   }
 
   // Health
@@ -213,6 +252,12 @@ class ApiClient {
   }
   async recruiterStatistics(): Promise<WorkspaceStatistics> {
     return this.request("/api/v1/screening/statistics");
+  }
+
+  async operationStatistics(options: {days?: number; operation?: string; job_id?: string; batch_id?: string; run_id?: string; offset?: number} = {}): Promise<OperationStatistics> {
+    const params = new URLSearchParams({limit: "25"});
+    Object.entries(options).forEach(([key, value]) => {if (value !== undefined && value !== "") params.set(key, String(value));});
+    return this.request(`/api/v1/screening/statistics/actions?${params}`);
   }
 
   async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
@@ -230,14 +275,22 @@ class ApiClient {
     const body = new FormData(); files.forEach(file => body.append("files", file));
     return this.request("/api/v1/screening/cohort/upload", {method: "POST", body, timeoutMs: 600000});
   }
-  async fastRank(jobId: string, candidateIds: string[], topK: number, deepEvaluation: boolean, options: {pipeline_version?: "v1" | "v2"; rerank_enabled?: boolean; rerank_pool_size?: number} = {}): Promise<ScreeningRun> {
+  async fastRank(jobId: string, candidateIds: string[], topK: number, deepEvaluation: boolean, options: {pipeline_version?: "v1" | "v2"; rerank_enabled?: boolean; rerank_pool_size?: number; include_benchmark?: boolean} = {}): Promise<ScreeningRun> {
     return this.request("/api/v1/screening/rank", {method: "POST", body: JSON.stringify({job_id: jobId, candidate_ids: candidateIds, top_k: topK, deep_evaluation: deepEvaluation, ...options})});
   }
+  async deepEvaluateSelected(id: string, candidateIds: string[]): Promise<ScreeningRun> {return this.request(`/api/v1/screening/runs/${id}/evaluate`, {method: "POST", body: JSON.stringify({candidate_ids: candidateIds})});}
   async retryScreeningRun(id: string): Promise<ScreeningRun> {return this.request(`/api/v1/screening/runs/${id}/retry`, {method: "POST"});}
-  async screeningRun(id: string): Promise<ScreeningRun> { return this.request(`/api/v1/screening/runs/${id}`); }
+  async screeningRun(id: string, jobId?: string): Promise<ScreeningRun> {
+    const run = await this.request<ScreeningRun>(`/api/v1/screening/runs/${id}${jobId ? `?job_id=${encodeURIComponent(jobId)}` : ""}`);
+    if (jobId && run.job_id !== jobId) throw new Error("This run belongs to another job. Load the latest run for this role.");
+    return run;
+  }
   async latestScreeningRun(jobId: string): Promise<ScreeningRun | null> { return this.request(`/api/v1/screening/jobs/${jobId}/latest`); }
-  async shortlist(id: string, count: number): Promise<ScreeningRun> {
-    return this.request(`/api/v1/screening/runs/${id}/shortlist`, {method: "POST", body: JSON.stringify({count})});
+  async jobScreeningRuns(jobId: string): Promise<Array<{id: string; job_id: string; status: string; created_at: string; pipeline_version?: string; total_candidates: number; ranked_candidates: number; deep_completed: number}>> {
+    return this.request(`/api/v1/screening/jobs/${jobId}/runs`);
+  }
+  async shortlist(id: string, count: number, candidateIds?: string[]): Promise<ScreeningRun> {
+    return this.request(`/api/v1/screening/runs/${id}/shortlist`, {method: "POST", body: JSON.stringify({count, candidate_ids: candidateIds})});
   }
   async reviewCandidate(id: string, candidateId: string, decision: "interview" | "hold" | "reject", notes: string): Promise<ScreeningRun> {
     return this.request(`/api/v1/screening/runs/${id}/decisions/${candidateId}`, {method: "POST", body: JSON.stringify({decision, notes})});
@@ -304,8 +357,8 @@ class ApiClient {
   }
 
   // Candidates & Batch
-  async getCandidates(limit: number = 1000): Promise<CandidateSummary[]> {
-    return this.request(`/api/v1/candidates?limit=${limit}`);
+  async getCandidates(limit: number = 100, offset: number = 0, signal?: AbortSignal): Promise<CandidateSummary[]> {
+    return this.request(`/api/v1/candidates?limit=${limit}&offset=${offset}`, {signal});
   }
 
   async getCandidate(candidateId: string): Promise<CandidateDetail> {
@@ -458,6 +511,13 @@ class ApiClient {
     });
   }
 
+  async previewHITLCorrections(evaluationId: string, updatedMatches: RequirementMatch[]): Promise<MatchEvaluationResult> {
+    return this.request("/api/v1/hitl/preview", {
+      method: "POST",
+      body: JSON.stringify({evaluation_id: evaluationId, updated_matches: updatedMatches}),
+    });
+  }
+
   // Multi-Candidate Comparison Matrix
   async compareCandidates(
     candidateIds: string[],
@@ -519,26 +579,7 @@ class ApiClient {
   }
 
   async getComplianceDossierMarkdown(evaluationId: string): Promise<string> {
-    const endpoint = `/api/v1/compliance/dossier/${evaluationId}?format=markdown`;
-    const primaryUrl = `${this.base}${endpoint}`;
-    const fallbackUrl = this.base ? endpoint : `http://127.0.0.1:8000${endpoint}`;
-
-    try {
-      const res = await fetch(primaryUrl);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch compliance markdown: ${res.statusText}`);
-      }
-      return res.text();
-    } catch (err) {
-      if (primaryUrl !== fallbackUrl && typeof window !== "undefined") {
-        const res = await fetch(fallbackUrl);
-        if (!res.ok) {
-          throw new Error(`Failed to fetch compliance markdown: ${res.statusText}`);
-        }
-        return res.text();
-      }
-      throw err;
-    }
+    return this.request(`/api/v1/compliance/dossier/${evaluationId}?format=markdown`, {responseType: "text", timeoutMs: 120000});
   }
 
   // Settings
@@ -669,7 +710,20 @@ class ApiClient {
       method: "POST",
     });
   }
+
+  async actionTrace(jobId?: string, runId?: string): Promise<ActionTraceResponse> {
+    const params = new URLSearchParams();
+    if (jobId) params.append("job_id", jobId);
+    if (runId) params.append("run_id", runId);
+    const q = params.toString() ? `?${params.toString()}` : "";
+    return this.request(`/api/v1/screening/action-trace${q}`);
+  }
 }
 
 
 export const api = new ApiClient();
+
+export interface CVDocument {
+  id: string; filename: string; candidate_id: string | null; size: number | null;
+  content_hash: string | null; created_at: string; deleted_at: string | null; expires_at: string | null;
+}

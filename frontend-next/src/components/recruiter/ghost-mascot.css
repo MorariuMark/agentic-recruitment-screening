@@ -1,0 +1,303 @@
+/* Expressions adapted from the supplied Ghost Orb Animation Studio. */
+    .r-ghost .ghost-svg {
+      overflow: visible;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .r-ghost .ghost-face-rig {
+      transform-origin: 150px 150px;
+      transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .r-ghost .ghost-idle-float {
+      transform-origin: 150px 150px;
+      animation: ghostOrbIdleFloat 4s ease-in-out infinite;
+    }
+    .r-ghost .ghost-eye-left {
+      transform-origin: 112px 145px;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+    }
+    .r-ghost .ghost-eye-right {
+      transform-origin: 188px 145px;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+    }
+    .r-ghost .ghost-eye-shine {
+      transform-origin: center;
+      transition: transform 0.3s ease;
+    }
+    .r-ghost .ghost-mouth {
+      transform-origin: 150px 205px;
+      transform: scale(0);
+      opacity: 0;
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+    }
+    .r-ghost .ghost-blush {
+      opacity: 0;
+      transform-origin: center;
+      transform: scale(0.7);
+      transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .r-ghost .ghost-happy-arc {
+      opacity: 0;
+      transform-origin: center;
+      transition: opacity 0.18s ease;
+    }
+    @keyframes ghostOrbIdleFloat {
+      0%, 100% { transform: translate(0px, 0px); }
+      50% { transform: translate(0px, -4px); }
+    }
+    .r-ghost.state-blink .ghost-eye-left,
+    .r-ghost.state-blink .ghost-eye-right {
+      animation: ghostOrbBlink 0.26s ease-in-out forwards;
+    }
+    @keyframes ghostOrbBlink {
+      0%, 100% { transform: scaleY(1) scaleX(1); }
+      45%, 55% { transform: scaleY(0.05) scaleX(1.12); }
+    }
+    .r-ghost.state-doubleBlink .ghost-eye-left,
+    .r-ghost.state-doubleBlink .ghost-eye-right {
+      animation: ghostOrbDoubleBlink 0.62s ease-in-out forwards;
+    }
+    @keyframes ghostOrbDoubleBlink {
+      0%, 100% { transform: scaleY(1) scaleX(1); }
+      20%, 26% { transform: scaleY(0.05) scaleX(1.12); }
+      48%, 52% { transform: scaleY(1) scaleX(1); }
+      72%, 78% { transform: scaleY(0.05) scaleX(1.12); }
+    }
+    .r-ghost.state-lookAround .ghost-face-rig {
+      animation: ghostOrbLookAroundRig 2.5s cubic-bezier(0.45, 0, 0.25, 1) forwards;
+    }
+    .r-ghost.state-lookAround .ghost-eye-left {
+      animation: ghostOrbLookAroundLeftEye 2.5s cubic-bezier(0.45, 0, 0.25, 1) forwards;
+    }
+    .r-ghost.state-lookAround .ghost-eye-right {
+      animation: ghostOrbLookAroundRightEye 2.5s cubic-bezier(0.45, 0, 0.25, 1) forwards;
+    }
+    @keyframes ghostOrbLookAroundRig {
+      0%   { transform: translate(0px, 0px); }
+      18%  { transform: translate(-38px, 2px); }
+      38%  { transform: translate(-38px, 2px); }
+      56%  { transform: translate(38px, 2px); }
+      74%  { transform: translate(38px, 2px); }
+      86%  { transform: translate(-16px, -22px); }
+      100% { transform: translate(0px, 0px); }
+    }
+    @keyframes ghostOrbLookAroundLeftEye {
+      0%, 100% { transform: scale(1, 1); }
+      18%, 38% { transform: scale(0.86, 0.96); } 
+      56%, 74% { transform: scale(1.04, 1.02); }
+      50%      { transform: scaleY(0.15); } 
+    }
+    @keyframes ghostOrbLookAroundRightEye {
+      0%, 100% { transform: scale(1, 1); }
+      18%, 38% { transform: scale(1.04, 1.02); }
+      56%, 74% { transform: scale(0.86, 0.96); } 
+      50%      { transform: scaleY(0.15); }
+    }
+    .r-ghost.state-yawn .ghost-face-rig {
+      animation: ghostOrbYawnRig 2.9s ease-in-out forwards;
+    }
+    .r-ghost.state-yawn .ghost-eye-left {
+      animation: ghostOrbYawnEyeL 2.9s ease-in-out forwards;
+    }
+    .r-ghost.state-yawn .ghost-eye-right {
+      animation: ghostOrbYawnEyeR 2.9s ease-in-out forwards;
+    }
+    .r-ghost.state-yawn .ghost-mouth {
+      animation: ghostOrbYawnMouth 2.9s ease-in-out forwards;
+    }
+    .r-ghost.state-yawn .ghost-blush {
+      animation: ghostOrbYawnBlush 2.9s ease-in-out forwards;
+    }
+    @keyframes ghostOrbYawnRig {
+      0%   { transform: translate(0px, 0px) rotate(0deg); }
+      20%  { transform: translate(0px, -12px) rotate(-2deg); }
+      45%  { transform: translate(0px, -18px) rotate(2deg); }
+      65%  { transform: translate(0px, -16px) rotate(-1deg); }
+      85%  { transform: translate(0px, 4px) rotate(0deg); }
+      100% { transform: translate(0px, 0px) rotate(0deg); }
+    }
+    @keyframes ghostOrbYawnEyeL {
+      0%   { transform: translate(0, 0) scale(1, 1) rotate(0deg); }
+      22%  { transform: translate(-2px, 6px) scale(1.12, 0.22) rotate(-6deg); }
+      62%  { transform: translate(-2px, 4px) scale(1.15, 0.14) rotate(-8deg); }
+      84%  { transform: translate(0, 2px) scale(1.03, 0.9) rotate(0deg); }
+      92%  { transform: translate(0, 0) scale(1.08, 0.08); } 
+      100% { transform: translate(0, 0) scale(1, 1) rotate(0deg); }
+    }
+    @keyframes ghostOrbYawnEyeR {
+      0%   { transform: translate(0, 0) scale(1, 1) rotate(0deg); }
+      22%  { transform: translate(2px, 6px) scale(1.12, 0.22) rotate(6deg); }
+      62%  { transform: translate(2px, 4px) scale(1.15, 0.14) rotate(8deg); }
+      84%  { transform: translate(0, 2px) scale(1.03, 0.9) rotate(0deg); }
+      92%  { transform: translate(0, 0) scale(1.08, 0.08); }
+      100% { transform: translate(0, 0) scale(1, 1) rotate(0deg); }
+    }
+    @keyframes ghostOrbYawnMouth {
+      0%   { opacity: 0; transform: translateY(-10px) scale(0.1, 0.1); }
+      15%  { opacity: 1; transform: translateY(-6px) scale(0.5, 0.6); }
+      35%  { opacity: 1; transform: translateY(0px) scale(1.05, 1.25); }
+      62%  { opacity: 1; transform: translateY(-2px) scale(1.1, 1.32); }
+      80%  { opacity: 1; transform: translateY(-8px) scale(0.25, 0.15); }
+      88%, 100% { opacity: 0; transform: translateY(-10px) scale(0, 0); }
+    }
+    @keyframes ghostOrbYawnBlush {
+      0%, 100% { opacity: 0; transform: scale(0.7); }
+      30%, 70% { opacity: 0.65; transform: scale(1); }
+    }
+    .r-ghost.state-happy .ghost-face-rig {
+      animation: ghostOrbHappyBounce 1.9s cubic-bezier(0.28, 0.84, 0.42, 1) forwards;
+    }
+    .r-ghost.state-happy .ghost-eye-main {
+      animation: ghostOrbHappyHideMainEyes 1.9s ease forwards;
+    }
+    .r-ghost.state-happy .ghost-happy-arc {
+      animation: ghostOrbHappyShowArcs 1.9s ease forwards;
+    }
+    .r-ghost.state-happy .ghost-blush {
+      animation: ghostOrbHappyBlush 1.9s ease forwards;
+    }
+    @keyframes ghostOrbHappyBounce {
+      0%, 100% { transform: translateY(0px) scale(1, 1); }
+      15%  { transform: translateY(10px) scale(1.05, 0.92); }
+      32%  { transform: translateY(-22px) scale(0.96, 1.06); }
+      48%  { transform: translateY(6px) scale(1.04, 0.95); }
+      64%  { transform: translateY(-14px) scale(0.98, 1.03); }
+      80%  { transform: translateY(3px) scale(1.01, 0.99); }
+    }
+    @keyframes ghostOrbHappyHideMainEyes {
+      0%, 100% { opacity: 1; transform: scaleY(1); }
+      8%, 85%  { opacity: 0; transform: scaleY(0.2); }
+    }
+    @keyframes ghostOrbHappyShowArcs {
+      0%, 100% { opacity: 0; transform: scale(0.8); }
+      8%, 85%  { opacity: 1; transform: scale(1); }
+    }
+    @keyframes ghostOrbHappyBlush {
+      0%, 100% { opacity: 0; transform: scale(0.7); }
+      12%, 85% { opacity: 0.85; transform: scale(1.08); }
+    }
+    .r-ghost.state-curious .ghost-face-rig {
+      animation: ghostOrbCuriousRig 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    .r-ghost.state-curious .ghost-eye-left {
+      animation: ghostOrbCuriousEyeL 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    .r-ghost.state-curious .ghost-eye-right {
+      animation: ghostOrbCuriousEyeR 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    @keyframes ghostOrbCuriousRig {
+      0%   { transform: translate(0px, 0px) rotate(0deg); }
+      25%  { transform: translate(22px, -8px) rotate(17deg); }
+      55%  { transform: translate(26px, -10px) rotate(20deg); }
+      75%  { transform: translate(-14px, -4px) rotate(-10deg); }
+      100% { transform: translate(0px, 0px) rotate(0deg); }
+    }
+    @keyframes ghostOrbCuriousEyeL {
+      0%, 100% { transform: scale(1, 1); }
+      25%, 55% { transform: scale(0.92, 0.92); }
+      75%      { transform: scale(1.08, 1.08); }
+    }
+    @keyframes ghostOrbCuriousEyeR {
+      0%, 100% { transform: scale(1, 1); }
+      25%, 55% { transform: scale(1.12, 1.12); }
+      75%      { transform: scale(0.94, 0.94); }
+    }
+    .r-ghost.state-sleepy .ghost-face-rig {
+      animation: ghostOrbSleepyRig 3.4s ease-in-out forwards;
+    }
+    .r-ghost.state-sleepy .ghost-eye-left,
+    .r-ghost.state-sleepy .ghost-eye-right {
+      animation: ghostOrbSleepyEyes 3.4s ease-in-out forwards;
+    }
+    @keyframes ghostOrbSleepyRig {
+      0%   { transform: translateY(0px) rotate(0deg); }
+      30%  { transform: translateY(14px) rotate(-2deg); }
+      50%  { transform: translateY(8px) rotate(1deg); }
+      72%  { transform: translateY(28px) rotate(-4deg); } 
+      78%  { transform: translateY(-10px) rotate(0deg); } 
+      86%  { transform: translateY(0px) rotate(0deg); }
+      100% { transform: translateY(0px) rotate(0deg); }
+    }
+    @keyframes ghostOrbSleepyEyes {
+      0%   { transform: translateY(0px) scale(1, 1); }
+      28%  { transform: translateY(6px) scale(1.06, 0.32); }
+      48%  { transform: translateY(4px) scale(1.04, 0.45); }
+      72%  { transform: translateY(10px) scale(1.12, 0.18); } 
+      78%  { transform: translateY(-2px) scale(1.08, 1.12); } 
+      88%  { transform: translateY(0px) scale(1.1, 0.08); } 
+      95%, 100% { transform: translateY(0px) scale(1, 1); }
+    }
+    .r-ghost.state-surprised .ghost-face-rig {
+      animation: ghostOrbSurprisedRig 1.6s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards;
+    }
+    .r-ghost.state-surprised .ghost-eye-left,
+    .r-ghost.state-surprised .ghost-eye-right {
+      animation: ghostOrbSurprisedEyes 1.6s ease-out forwards;
+    }
+    .r-ghost.state-surprised .ghost-eye-shine {
+      animation: ghostOrbSurprisedShine 1.6s ease-in-out forwards;
+    }
+    @keyframes ghostOrbSurprisedRig {
+      0%   { transform: translate(0, 0); }
+      12%  { transform: translate(0, -16px) scale(1.04); }
+      20%  { transform: translate(-5px, -14px); }
+      28%  { transform: translate(5px, -14px); }
+      36%  { transform: translate(-3px, -12px); }
+      44%  { transform: translate(3px, -12px); }
+      70%  { transform: translate(0, 4px); }
+      100% { transform: translate(0, 0); }
+    }
+    @keyframes ghostOrbSurprisedEyes {
+      0%   { transform: scale(1, 1); }
+      12%, 45% { transform: scale(0.76, 0.82); } 
+      75%  { transform: scale(1.08, 0.08); } 
+      88%, 100% { transform: scale(1, 1); }
+    }
+    @keyframes ghostOrbSurprisedShine {
+      0%, 100% { transform: translate(0, 0); }
+      15%, 35% { transform: translate(2px, -2px) scale(1.15); }
+      25%, 45% { transform: translate(-2px, 2px) scale(0.9); }
+    }
+    .r-ghost.state-dizzy .ghost-face-rig {
+      animation: ghostOrbDizzyRig 2.2s ease-in-out forwards;
+    }
+    .r-ghost.state-dizzy .ghost-eye-left {
+      animation: ghostOrbDizzyEyeL 2.2s ease-in-out forwards;
+    }
+    .r-ghost.state-dizzy .ghost-eye-right {
+      animation: ghostOrbDizzyEyeR 2.2s ease-in-out forwards;
+    }
+    @keyframes ghostOrbDizzyRig {
+      0%   { transform: rotate(0deg) translate(0, 0); }
+      25%  { transform: rotate(12deg) translate(18px, -12px); }
+      50%  { transform: rotate(0deg) translate(0px, 20px); }
+      75%  { transform: rotate(-12deg) translate(-18px, -12px); }
+      100% { transform: rotate(0deg) translate(0, 0); }
+    }
+    @keyframes ghostOrbDizzyEyeL {
+      0%, 100% { transform: scale(1, 1); }
+      25%  { transform: translateY(-10px) scale(0.85, 1.1); }
+      50%  { transform: translateY(8px) scale(1.1, 0.85); }
+      75%  { transform: translateY(-6px) scale(0.9, 1.05); }
+    }
+    @keyframes ghostOrbDizzyEyeR {
+      0%, 100% { transform: scale(1, 1); }
+      25%  { transform: translateY(10px) scale(1.1, 0.85); }
+      50%  { transform: translateY(-8px) scale(0.85, 1.1); }
+      75%  { transform: translateY(6px) scale(1.05, 0.9); }
+    }
+
+/* The orb replaces the workspace brand; controls retain their original handlers. */
+.recruiter .r-ghost {display:block; position:relative; flex:0 0 64px; width:64px; height:64px; padding:0; border:0; border-radius:50%; background:transparent; isolation:isolate;}
+.r-ghost > span, .r-ghost .ghost-svg {display:block; width:100%; height:100%;}
+.r-ghost .ghost-svg {pointer-events:none;}
+.recruiter .r-ghost:hover {background:rgba(156,188,255,.07);}
+.recruiter .r-ghost:focus-visible {outline:2px solid var(--r-accent); outline-offset:4px;}
+.r-ghost::after {content:""; position:absolute; inset:0; border-radius:50%; border:1px solid transparent; pointer-events:none; transition:border-color .3s ease, box-shadow .3s ease;}
+.r-ghost[data-busy="true"]::after {border-color:var(--r-accent); box-shadow:0 0 12px rgba(156,188,255,.18);}
+@media (min-width:701px) {.recruiter.sidebar-collapsed .r-ghost {width:44px; height:44px; flex-basis:44px;}}
+@media (prefers-reduced-motion:reduce) {
+  .r-ghost *, .r-ghost::after {animation:none !important; transition:none !important;}
+}
+@media (max-width:700px) {.r-sidebar:not(.open) .r-ghost * {animation-play-state:paused !important;}}
+.r-ghost:is([data-paused="true"]) * {animation-play-state:paused !important;}

@@ -231,6 +231,7 @@ class PIIScrubber:
 
         # 7. Construct and return the AnonymizedCandidate model
         return AnonymizedCandidate(
+            dataset=parsed_cv.dataset,
             candidate_id=uuid4(),
             anonymized_work_experiences=anonymized_experiences,
             anonymized_education=parsed_cv.education,

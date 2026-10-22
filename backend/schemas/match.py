@@ -7,6 +7,7 @@ from enum import Enum
 from typing import List, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
+from backend.schemas.job import JobDescription, RequirementCategory
 
 
 class MatchStatus(str, Enum):
@@ -33,6 +34,7 @@ class VerbatimCitation(BaseModel):
 
 class RequirementMatch(BaseModel):
     """Evaluation result for a single atomic requirement."""
+    category: Optional[RequirementCategory] = Field(default=None, description="Category inherited from the job requirement")
     requirement_id: str = Field(description="Referenced requirement ID")
     title: Optional[str] = Field(default=None, description="Human-readable requirement title")
     jd_summary: Optional[str] = Field(default=None, description="Summary of the requirement expectation from the JD")
@@ -66,8 +68,10 @@ class MatchEvaluationResult(BaseModel):
     clarification_count: int = Field(default=0, ge=0, description="Total count of requirements requiring applicant or recruiter clarification")
     citation_verification_score: float = Field(default=1.0, ge=0.0, le=1.0, description="CVS metric (valid citations / total citations)")
     hitl_validated: bool = Field(default=False, description="Whether a recruiter has reviewed and validated this result")
+    recruiter_decision: Optional[Recommendation] = Field(default=None, description="Explicit human progression decision, separate from model recommendation")
     recruiter_notes: Optional[str] = Field(default=None, description="Recruiter audit comments from the HITL gate")
     strictness: int = Field(default=50, ge=0, le=100, description="Evaluation strictness level from 0 (lenient) to 100 (ultra-strict)")
+    job_snapshot: Optional[JobDescription] = Field(default=None, description="Original criteria and weights used to calculate this evaluation")
     token_usage: Optional[TokenUsageInfo] = Field(default=None, description="Token consumption and model latency telemetry")
     audit_metadata: Optional[ActionAuditInfo] = Field(default=None, description="Action audit metadata including model name, token usage, latency, and initial document length")
 

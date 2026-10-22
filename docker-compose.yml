@@ -30,7 +30,20 @@ services:
     depends_on:
       - phoenix
     volumes:
+      - ./data:/app/data
       - ./data/chroma_db:/app/data/chroma_db
+
+  nextjs_ui:
+    build:
+      context: ./frontend-next
+      dockerfile: Dockerfile
+    container_name: screening_nextjs_ui
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_API_URL=http://fastapi_backend:8000
+    depends_on:
+      - fastapi_backend
 
   streamlit_ui:
     build:

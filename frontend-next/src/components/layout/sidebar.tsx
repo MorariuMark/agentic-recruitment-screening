@@ -12,7 +12,7 @@ import {
 import { ModelSelector } from "./model-selector";
 import { useTheme } from "@/components/providers/theme-provider";
 
-export type NavTab = "pipeline" | "requisitions" | "comparison" | "evaluation" | "interview" | "settings";
+export type NavTab = "library" | "pipeline" | "requisitions" | "comparison" | "evaluation" | "interview" | "settings";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -39,6 +39,7 @@ export function Sidebar({
   }
 
   const navItems = [
+    {id: "library" as NavTab, label: "CV Library", icon: FileCheck2, description: "Import, manage & recover CVs"},
     {
       id: "pipeline" as NavTab,
       label: "Candidate Pipeline",

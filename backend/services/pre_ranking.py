@@ -8,6 +8,7 @@ from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription
 from backend.schemas.screening import PreScreenRow
 from backend.services.skill_equivalence import EQUIVALENCE_CLUSTERS, SkillEquivalenceService
+from backend.services.evidence import assess_language, clean_model_text, language_priority
 
 
 def contains(text: str, term: str) -> bool:
@@ -29,34 +30,12 @@ def requirement_terms(title: str, description: str) -> list[str]:
     return terms or [t for t in re.findall(r"[\w+#.-]+", title.lower()) if t not in STOP_WORDS and not t.isdigit()]
 
 
-def month_index(value: str | None, end: bool = False) -> int | None:
-    if not value:
-        return None
-    if value.lower() in {"present", "current", "now", "ongoing"}:
-        today = date.today()
-        return today.year * 12 + today.month - 1
-    from dateutil.parser import parse
-    try:
-        parsed = parse(value, default=datetime(2000, 12 if end else 1, 1))
-        return parsed.year * 12 + parsed.month - 1
-    except (ValueError, TypeError, OverflowError):
-        return None
+from backend.services.tenure_calculator import TenureCalculator, month_index
 
 
 def experience_years(candidate: AnonymizedCandidate, terms: list[str]) -> float:
     """Union dated months to avoid double-counting overlapping jobs; never invent tenure."""
-    months: set[int] = set()
-    undated_months = 0
-    for role in candidate.anonymized_work_experiences:
-        evidence = " ".join([role.job_title, *role.skills_used, *role.work_description])
-        if terms and not any(contains(evidence, term) for term in terms):
-            continue
-        start, end = month_index(role.start_date), month_index(role.end_date, True)
-        if start is not None and end is not None and end >= start:
-            months.update(range(start, end + 1))
-        elif role.duration_months and role.duration_months > 0:
-            undated_months += role.duration_months
-    return (len(months) + undated_months) / 12
+    return TenureCalculator.calculate_experience_years(candidate, terms)
 
 
 class PreRankingEngine:
@@ -82,7 +61,8 @@ class PreRankingEngine:
                 *[patent.title for patent in candidate.anonymized_patents],
                 *[" ".join([section.section_title, *section.items]) for section in candidate.anonymized_custom_sections if section.is_relevant],
             ]) or "No documented professional evidence")
-        job_text = " ".join([job.title, *[f"{r.title}: {r.description}" for r in job.requirements]])
+        profiles = [clean_model_text(profile) for profile in profiles]
+        job_text = " ".join([job.title, *[f"{r.title}: {r.description}" for r in job.requirements if r.weight > 0]])
         vectors = np.asarray(self.embedding_fn([job_text, *profiles]), dtype=float)
         if vectors.ndim != 2 or vectors.shape[0] != len(candidates) + 1 or not np.isfinite(vectors).all():
             raise ValueError("Embedding service returned invalid vectors")
@@ -104,10 +84,10 @@ class PreRankingEngine:
                     buckets["degree_score"].append((float(passed), requirement.weight))
                     checks.append(f"{requirement.title}: {'documented qualification matches' if passed else 'qualification not verified from CV'}")
                     continue
-                language_evidence = SkillEquivalenceService.evaluate_language_hierarchy(candidate.anonymized_languages, requirement.title, requirement.description)
+                language_evidence = assess_language(candidate, requirement)
                 if language_evidence is not None:
-                    buckets["skills_score"].append((float(language_evidence[0]), requirement.weight))
-                    checks.append(f"{requirement.title}: documented {language_evidence[1]}, required {language_evidence[2]}")
+                    buckets["skills_score"].append((language_evidence[1] / 100, requirement.weight))
+                    checks.append(f"{requirement.title}: {language_evidence[0]}. {language_evidence[2]}")
                     continue
                 terms = requirement_terms(requirement.title, requirement.description)
                 if terms:
@@ -127,7 +107,10 @@ class PreRankingEngine:
             active_weight = sum(self.WEIGHTS[k] for k, v in scores.items() if v is not None)
             composite = sum(self.WEIGHTS[k] * v for k, v in scores.items() if v is not None) / active_weight
             rows.append(PreScreenRow(candidate_id=candidate.candidate_id, pre_screen_score=round(composite, 2), checks=checks, **{k: round(v, 2) if v is not None else None for k, v in scores.items()}))
-        rows.sort(key=lambda row: (-row.pre_screen_score, str(row.candidate_id)))
+        priorities = {str(c.candidate_id): language_priority(c, job) for c in candidates}
+        for row in rows:
+            row.language_priority = priorities[str(row.candidate_id)]
+        rows.sort(key=lambda row: (row.language_priority, -row.pre_screen_score, str(row.candidate_id)))
         for rank, row in enumerate(rows, 1):
             row.rank = rank
         return rows

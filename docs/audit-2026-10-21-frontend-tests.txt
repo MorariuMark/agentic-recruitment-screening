@@ -1,0 +1,22 @@
+✔ PDF whitespace and punctuation preserve original source offsets (1.7479ms)
+✔ technical tokens retain their meaning (0.2164ms)
+✔ Unicode compatibility normalization matches backend policy (1.9148ms)
+✔ valid imported decimal weights save and continue without rounding (1.2362ms)
+✔ invalid hidden criteria identify the field that needs attention (0.2105ms)
+✔ empty or inactive criteria cannot silently continue to screening (0.1903ms)
+✔ duplicate imported criterion IDs are surfaced before saving (0.1616ms)
+✔ a newly started library batch is immediately shared with the verification view (83.077ms)
+✔ each saved profile refreshes both views before the batch completes (12.5846ms)
+✔ only the central monitor polls active batches and polling stops on completion (13.2748ms)
+✔ workspace identity is stable inside a tab and separate between tabs (77.8561ms)
+✔ successful reset aborts outstanding reads and prevents new work until complete (9.6554ms)
+✔ reset clears only tab progress and navigation, preserving unrelated storage (8.7342ms)
+✔ a failed reset leaves pending requests and saved view state available (6.2432ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 469.5182

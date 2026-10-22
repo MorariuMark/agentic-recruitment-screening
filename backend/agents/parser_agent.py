@@ -12,7 +12,8 @@ import time
 from typing import Dict, List, Optional, Tuple, Union
 import unicodedata
 
-from backend.agents.llm_factory import BaseLLMClient, get_llm_client
+from backend.agents.llm_factory import BaseLLMClient, get_llm_client, LLMProvidersCoolingDownError
+from backend.services.evidence import clean_model_text
 from backend.config import settings
 from backend.schemas.cv import (
     AnonymizedCandidate,
@@ -1024,7 +1025,7 @@ class ParserAgent:
         # For local models (Ollama on GPU/CPU), cap text at 6,500 chars to prevent high inference latency / timeouts
         is_local = getattr(settings, "llm_provider", "").lower() == "ollama"
         max_chars = 6500 if is_local else 35000
-        trimmed = cleaned[:max_chars] if len(cleaned) > max_chars else cleaned
+        trimmed = clean_model_text(cleaned[:max_chars] if len(cleaned) > max_chars else cleaned)
 
         prompt = (
             "Extract the structured candidate profile from the following CV document text:\n\n"
@@ -1034,6 +1035,12 @@ class ParserAgent:
         )
 
         system_prompt = PARSER_LOCAL_SYSTEM_PROMPT if is_local else PARSER_SYSTEM_PROMPT
+        system_prompt += (
+            "\nReturn compact JSON without repeating facts across sections. "
+            "Omit raw_text, audit_metadata, dataset and benchmark_annotations: the application fills these fields. "
+            "Do not copy the original document into the response. Preserve documented roles, skills, dates, "
+            "qualifications and evidence without inventing or shortening away relevant facts."
+        )
 
         if hasattr(self.llm_client, "set_action_context"):
             self.llm_client.set_action_context("cv_extraction")
@@ -1046,9 +1053,11 @@ class ParserAgent:
                 system_prompt=system_prompt,
                 temperature=0.0,
             )
+        except LLMProvidersCoolingDownError:
+            raise
         except Exception as err:
             err_str = str(err).lower()
-            if "rate_limit" in err_str or "too large" in err_str or "413" in str(err) or "429" in str(err):
+            if any(marker in err_str for marker in ("context_length_exceeded", "maximum context length", "context window", "413")):
                 # Fallback: retry with tighter character window
                 fallback_prompt = (
                     "Extract the structured candidate profile from the following CV document text:\n\n"

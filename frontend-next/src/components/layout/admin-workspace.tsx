@@ -1,5 +1,7 @@
 "use client";
 
+import { CVLibrary } from "@/components/recruiter/cv-library";
+import { ActiveProcesses } from "@/components/recruiter/active-processes";
 import { Shell } from "@/components/layout/shell";
 import { PipelineView } from "@/components/pipeline/pipeline-view";
 import { RequisitionView } from "@/components/requisitions/requisition-view";
@@ -29,6 +31,8 @@ export default function Home() {
         refreshCandidates,
       }) => (
         <div className="relative w-full h-full">
+          <div className="recruiter"><ActiveProcesses/></div>
+          <div className="recruiter" hidden={activeTab !== "library"}><CVLibrary/></div>
           <div className={activeTab === "pipeline" ? "block" : "hidden"}>
             <PipelineView
               selectedJobId={selectedJobId}

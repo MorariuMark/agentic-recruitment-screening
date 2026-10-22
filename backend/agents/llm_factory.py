@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import time
+import threading
+import copy
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
@@ -20,6 +22,90 @@ from backend.config import settings
 logger = logging.getLogger("recruitment_screening.llm_factory")
 T = TypeVar("T", bound=BaseModel)
 _LAST_FALLBACK_EVENT: Optional[Dict[str, Any]] = None
+_CLIENT_STATE_LOCK = threading.Lock()
+
+
+# Shared across clients: concurrent requirement workers must not burst one key.
+_GROQ_PACING_LOCK = threading.Lock()
+_GROQ_NEXT_CALL: Dict[str, float] = {}
+
+
+class ProviderCoolingDownError(RuntimeError):
+    """A queued call was skipped after another worker exhausted this target."""
+
+
+class StructuredOutputTruncatedError(ValueError):
+    """The response budget was exhausted, not an unavailable API credential."""
+
+
+def _is_document_output_error(error: Exception) -> bool:
+    """Bad output for one document must not open the shared provider circuit."""
+    if isinstance(error, ValueError):
+        return True
+    return getattr(error, "status_code", None) in (400, 413, 422) and any(
+        marker in str(error).lower() for marker in (
+            "json_validate_failed", "failed to validate json", "context_length_exceeded",
+            "maximum context length", "context window", "request too large"))
+
+
+class LLMProvidersCoolingDownError(RuntimeError):
+    """Temporary provider unavailability, not a document parsing failure."""
+    retryable = True
+
+    def __init__(self, retry_after: float, details: str = ""):
+        self.retry_after = max(1.0, retry_after)
+        super().__init__(
+            "All LLM models in fallback chain failed or are temporarily cooling down. "
+            f"No healthy provider can be called; retry in {self.retry_after:.1f}s. "
+            + (details or "No new requests were sent because every configured target is in cooldown.")
+        )
+
+
+def _retry_after_seconds(error: Exception) -> Optional[float]:
+    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        if value is not None:
+            seconds = float(value)
+            if 0 <= seconds <= 86400:
+                return seconds
+    except (TypeError, ValueError):
+        pass
+    match = re.search(r"(?:try again in|retry after)\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?|m)?", str(error), re.I)
+    if match:
+        seconds = float(match.group(1))
+        unit = (match.group(2) or "s").lower()
+        seconds *= .001 if unit == "ms" else 60 if unit in ("m", "minute", "minutes") else 1
+        return min(seconds, 86400)
+    return None
+
+
+def _is_format_error(error: Exception) -> bool:
+    """Only unsupported JSON-mode errors justify another request to the same model."""
+    return getattr(error, "status_code", None) in (400, 422) and any(
+        marker in str(error).lower() for marker in ("response_format", "json mode", "json_object"))
+
+
+def _paced_groq_call(client: Any, kwargs: Dict[str, Any], key: str) -> Any:
+    model = kwargs.get("model", "")
+    if is_model_in_cooldown("groq", model, key):
+        raise ProviderCoolingDownError("Groq target is cooling down; use the next fallback.")
+    with _GROQ_PACING_LOCK:
+        now = time.monotonic()
+        scheduled = max(now, _GROQ_NEXT_CALL.get(key, now))
+        _GROQ_NEXT_CALL[key] = scheduled + 0.35
+    time.sleep(max(0.0, scheduled - now))
+    # Another worker may have received a 429 while this call was waiting.
+    if is_model_in_cooldown("groq", model, key):
+        raise ProviderCoolingDownError("Groq target entered cooldown while this request was queued.")
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as error:
+        if getattr(error, "status_code", None) == 429 or re.search(r"\b429\b|rate.?limit", str(error), re.I):
+            # Register immediately, before returning to the outer fallback client,
+            # so queued calls and standalone key rotation share the same breaker.
+            record_model_failure("groq", model, error, key)
+        raise
 
 
 def _build_compact_json_skeleton(model_cls: Type[BaseModel], depth: int = 0) -> Any:
@@ -32,6 +118,8 @@ def _build_compact_json_skeleton(model_cls: Type[BaseModel], depth: int = 0) -> 
         return {}
     skeleton: Dict[str, Any] = {}
     for name, field in getattr(model_cls, "model_fields", {}).items():
+        if model_cls.__name__ == "ParsedCV" and name in {"raw_text", "audit_metadata", "dataset", "benchmark_annotations"}:
+            continue  # Populated by application code, never generated from applicant instructions.
         annotation = field.annotation
         origin = get_origin(annotation)
         args = get_args(annotation)
@@ -104,7 +192,7 @@ def clean_and_parse_json(raw_content: str) -> Dict[str, Any]:
         text = text[start : end + 1]
 
     if not text:
-        return {}
+        raise ValueError("LLM returned an empty response")
 
     return json.loads(text)
 
@@ -114,8 +202,33 @@ class BaseLLMClient(ABC):
 
     def __init__(self) -> None:
         self.last_usage: Optional[Dict[str, int]] = None
+        self.last_raw_response: str = ""
+
+    def _thread_state(self):
+        if not hasattr(self, "_telemetry_state"):
+            with _CLIENT_STATE_LOCK:
+                if not hasattr(self, "_telemetry_state"):
+                    self._telemetry_state = threading.local()
+        return self._telemetry_state
+
+    @property
+    def last_usage(self):
+        return getattr(self._thread_state(), "usage", None)
+
+    @last_usage.setter
+    def last_usage(self, value):
+        self._thread_state().usage = value
+
+    @property
+    def last_raw_response(self):
+        return getattr(self._thread_state(), "raw_response", "")
+
+    @last_raw_response.setter
+    def last_raw_response(self, value):
+        self._thread_state().raw_response = value
 
     def _capture_usage(self, response: Any, prompt: str, output: str) -> Dict[str, int]:
+        self.last_raw_response = str(output or "")
         usage = getattr(response, "usage", None)
         if usage:
             p = getattr(usage, "prompt_tokens", 0) or 0
@@ -193,7 +306,7 @@ class AgnesClient(BaseLLMClient):
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=30.0,
-            max_retries=1,
+            max_retries=0,
         )
 
     def generate_text(
@@ -246,18 +359,18 @@ class AgnesClient(BaseLLMClient):
                 kwargs["response_format"] = {"type": "json_object"}
 
             response = self.client.chat.completions.create(**kwargs)
-            raw_content = response.choices[0].message.content or "{}"
+            raw_content = response.choices[0].message.content or ""
             self._capture_usage(response, prompt, raw_content)
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto":
+            if use_json_object and self.compatibility_mode == "auto" and _is_format_error(err):
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
                 )
-                raw_content = response.choices[0].message.content or "{}"
+                raw_content = response.choices[0].message.content or ""
                 self._capture_usage(response, prompt, raw_content)
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
@@ -287,7 +400,8 @@ class OpenRouterClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            timeout=60.0,
+            timeout=30.0,
+            max_retries=0,
             default_headers={
                 "HTTP-Referer": "https://github.com/MorariuMark/agentic-recruitment-screening",
                 "X-Title": "Agentic Recruitment Screening",
@@ -342,17 +456,17 @@ class OpenRouterClient(BaseLLMClient):
                 kwargs["response_format"] = {"type": "json_object"}
 
             response = self.client.chat.completions.create(**kwargs)
-            raw_content = response.choices[0].message.content or "{}"
+            raw_content = response.choices[0].message.content or ""
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto":
+            if use_json_object and self.compatibility_mode == "auto" and _is_format_error(err):
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
                 )
-                raw_content = response.choices[0].message.content or "{}"
+                raw_content = response.choices[0].message.content or ""
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
             raise err
@@ -421,7 +535,7 @@ class GroqClient(BaseLLMClient):
 
     def _execute_chat_completion(self, kwargs: Dict[str, Any]) -> Any:
         try:
-            res = self.client.chat.completions.create(**kwargs)
+            res = _paced_groq_call(self.client, kwargs, self.api_key)
             self.last_key_used = "primary"
             return res
         except Exception as primary_err:
@@ -432,7 +546,7 @@ class GroqClient(BaseLLMClient):
                     primary_err,
                 )
                 try:
-                    res = self.secondary_client.chat.completions.create(**kwargs)
+                    res = _paced_groq_call(self.secondary_client, kwargs, self.secondary_api_key)
                     self.last_key_used = "secondary"
                     return res
                 except Exception as secondary_err:
@@ -443,7 +557,7 @@ class GroqClient(BaseLLMClient):
                             secondary_err,
                         )
                         try:
-                            res = self.tertiary_client.chat.completions.create(**kwargs)
+                            res = _paced_groq_call(self.tertiary_client, kwargs, self.tertiary_api_key)
                             self.last_key_used = "tertiary"
                             return res
                         except Exception as tertiary_err:
@@ -503,24 +617,47 @@ class GroqClient(BaseLLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": 4096,
+            "max_tokens": settings.groq_parser_max_output_tokens if response_model.__name__ == "ParsedCV"
+                else min(700 if response_model.__name__ == "RequirementMatch" else 4096, settings.groq_max_output_tokens),
         }
+        if self.model.startswith("qwen/qwen3"):
+            kwargs.update(reasoning_effort="none", reasoning_format="hidden")
+        elif self.model.startswith("openai/gpt-oss"):
+            kwargs.update(reasoning_effort="low", include_reasoning=False)
         if use_json_object:
             kwargs["response_format"] = {"type": "json_object"}
 
         try:
             response = self._execute_chat_completion(kwargs)
-            raw_content = response.choices[0].message.content or "{}"
+            raw_content = response.choices[0].message.content or ""
             self._capture_usage(response, prompt, raw_content)
+            if getattr(response.choices[0], "finish_reason", None) == "length":
+                raise StructuredOutputTruncatedError("Groq structured output was truncated at its token budget; use a larger-capacity fallback.")
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto" and not self._is_rate_limit_error(err):
+            json_rejected = getattr(err, "status_code", None) == 400 and any(
+                marker in str(err).lower() for marker in ("json_validate_failed", "failed to validate json"))
+            if json_rejected:
+                body = getattr(err, "body", None)
+                detail = body.get("error", body) if isinstance(body, dict) else {}
+                failed_generation = detail.get("failed_generation") if isinstance(detail, dict) else None
+                if isinstance(failed_generation, str):
+                    try:
+                        # Only accept a complete response that passes the same schema validation.
+                        result = response_model.model_validate(json.loads(failed_generation))
+                        self._capture_usage(None, prompt, failed_generation)
+                        return result
+                    except ValueError:
+                        pass
+            if use_json_object and self.compatibility_mode == "auto" and (_is_format_error(err) or json_rejected):
                 kwargs_retry = dict(kwargs)
                 kwargs_retry.pop("response_format", None)
                 response = self._execute_chat_completion(kwargs_retry)
-                raw_content = response.choices[0].message.content or "{}"
+                raw_content = response.choices[0].message.content or ""
                 self._capture_usage(response, prompt, raw_content)
+                if getattr(response.choices[0], "finish_reason", None) == "length":
+                    raise StructuredOutputTruncatedError("Groq structured output was truncated at its token budget; use a larger-capacity fallback.")
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
             raise err
@@ -548,7 +685,8 @@ class NvidiaNimClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            timeout=12.0,
+            timeout=25.0,
+            max_retries=0,
         )
 
     def generate_text(
@@ -601,18 +739,18 @@ class NvidiaNimClient(BaseLLMClient):
                 kwargs["response_format"] = {"type": "json_object"}
 
             response = self.client.chat.completions.create(**kwargs)
-            raw_content = response.choices[0].message.content or "{}"
+            raw_content = response.choices[0].message.content or ""
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto":
+            if use_json_object and self.compatibility_mode == "auto" and _is_format_error(err):
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=4096,
                 )
-                raw_content = response.choices[0].message.content or "{}"
+                raw_content = response.choices[0].message.content or ""
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
             raise err
@@ -745,17 +883,17 @@ class GeminiClient(BaseLLMClient):
                 kwargs["response_format"] = {"type": "json_object"}
 
             response = self._execute_chat_completion(kwargs)
-            raw_content = response.choices[0].message.content or "{}"
+            raw_content = response.choices[0].message.content or ""
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
-            if use_json_object and self.compatibility_mode == "auto":
+            if use_json_object and self.compatibility_mode == "auto" and _is_format_error(err):
                 response = self._execute_chat_completion({
                     "model": self.model,
                     "messages": messages,
                     "temperature": temperature,
                 })
-                raw_content = response.choices[0].message.content or "{}"
+                raw_content = response.choices[0].message.content or ""
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
             raise err
@@ -951,7 +1089,7 @@ class OllamaClient(BaseLLMClient):
         duration_s = time.perf_counter() - t0
 
         self._record_telemetry(prompt, response, duration_s, action="structured_generation")
-        raw_content = response.message.content or "{}"
+        raw_content = response.message.content or ""
         parsed_dict = clean_and_parse_json(raw_content)
         return response_model.model_validate(parsed_dict)
 
@@ -981,7 +1119,7 @@ class LMStudioClient(BaseLLMClient):
             base_url=self.base_url,
             api_key="lm-studio",
             timeout=60.0,
-            max_retries=1,
+            max_retries=0,
         )
 
     def generate_text(
@@ -1235,16 +1373,19 @@ def record_model_failure(provider: str, model: str, error: Exception, key: Optio
     Marks a provider/model target (optionally key-specific) in temporary cooldown to prevent
     cascading repeated retries across concurrent threads or batch evaluation items.
     """
+    if isinstance(error, ProviderCoolingDownError) or _is_document_output_error(error):
+        return
     err_str = str(error).lower()
     # Permanent or long-lasting failures: 404 Not Found, 410 Gone, 402 Insufficient credits
     if any(code in err_str for code in ["404", "not_found", "not found", "410", "gone", "402", "credit"]):
         cooldown = 1800.0  # 30 minutes
     # Rate limit or quota exhaustion
-    elif any(code in err_str for code in ["429", "rate_limit", "quota", "resource_exhausted"]):
+    elif getattr(error, "status_code", None) == 429 or any(code in err_str for code in ["429", "rate_limit", "rate limit", "quota", "resource_exhausted"]):
         if any(w in err_str for w in ["per day", "daily", "day limit", "quota per day", "hours"]):
             cooldown = 900.0   # 15 minutes for daily quota exhaustion
         else:
-            cooldown = 45.0    # 45 seconds for short burst TPM rate limits
+            retry_after = _retry_after_seconds(error)
+            cooldown = max(1.0, retry_after + .25) if retry_after is not None else 45.0
     else:
         cooldown = 30.0        # 30 seconds for general errors / timeouts
 
@@ -1284,6 +1425,18 @@ def clear_all_model_cooldowns() -> None:
     _MODEL_COOLDOWNS.clear()
 
 
+def _cooling_down_error(chain, details=""):
+    now = time.time()
+    expiries = []
+    for provider, model, client in chain:
+        key = getattr(client, "api_key", None)
+        if not is_model_in_cooldown(provider, model, key):
+            return None
+        expiries.append(max(_MODEL_COOLDOWNS.get((provider.lower(), model, key), 0),
+                            _MODEL_COOLDOWNS.get((provider.lower(), model, None), 0)))
+    return LLMProvidersCoolingDownError(min(expiries) - now, details) if expiries else None
+
+
 class DynamicLLMClient(BaseLLMClient):
     """
     Dynamic LLM client proxy with multi-tier failover protection.
@@ -1319,6 +1472,12 @@ class DynamicLLMClient(BaseLLMClient):
                     base_url=base_url,
                     compatibility_mode=compatibility_mode,
                 )
+                # The dynamic chain owns key rotation; a per-key client must not
+                # internally retry the same secondary keys again.
+                if isinstance(client, (GroqClient, GeminiClient)) and api_key:
+                    client.secondary_client = None
+                    if hasattr(client, "tertiary_client"):
+                        client.tertiary_client = None
                 self._client_cache[cache_key] = client
             except Exception as e:
                 logger.debug("Failed to initialize fallback client for %s/%s: %s", provider, model, e)
@@ -1358,6 +1517,8 @@ class DynamicLLMClient(BaseLLMClient):
         ):
             if not prov or not mod:
                 return
+            if prov.lower() == "nvidia_nim" and mod == "nvidia/llama-3.1-nemotron-70b-instruct":
+                return  # Retired endpoint returns an account-level 404; never schedule it.
             target_key = (prov.lower(), mod, key)
             if target_key in seen_targets:
                 return
@@ -1425,7 +1586,7 @@ class DynamicLLMClient(BaseLLMClient):
         intra_fallbacks = {
             "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
             "groq": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
-            "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "mistralai/mistral-large-2-instruct"],
+            "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "mistralai/mistral-large-2-instruct"],
             "gemini": ["gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-lite-latest"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
@@ -1456,7 +1617,6 @@ class DynamicLLMClient(BaseLLMClient):
             elif p == "nvidia_nim":
                 if settings.nvidia_nim_api_key:
                     add_model_candidates("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct")
-                    add_model_candidates("nvidia_nim", "nvidia/llama-3.1-nemotron-70b-instruct")
             elif p == "ollama":
                 # Quick probe to see if local Ollama is responding
                 if _is_local_port_open("127.0.0.1", 11434):
@@ -1479,6 +1639,7 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.1,
     ) -> str:
         global _LAST_FALLBACK_EVENT
+        action_context = (getattr(self._thread_state(), "action", "general"), copy.deepcopy(getattr(self._thread_state(), "metadata", {})))
         fallback_enabled = getattr(self, "_snapshot_fallback_enabled", getattr(settings, "fallback_enabled", True))
         chain = self.get_fallback_chain()
         if not chain:
@@ -1492,6 +1653,8 @@ class DynamicLLMClient(BaseLLMClient):
         attempt_history: List[str] = []
 
         for idx, (prov, mod, client) in enumerate(chain):
+            if fallback_enabled and is_model_in_cooldown(prov, mod, getattr(client, "api_key", None)):
+                continue
             t0 = time.perf_counter()
             try:
                 result = client.generate_text(
@@ -1499,6 +1662,8 @@ class DynamicLLMClient(BaseLLMClient):
                     system_prompt=system_prompt,
                     temperature=temperature,
                 )
+                if isinstance(result, str) and not result.strip():
+                    raise ValueError("LLM returned an empty response")
                 lat_ms = (time.perf_counter() - t0) * 1000.0
                 usage = getattr(client, "last_usage", None) or {}
                 p_tok = usage.get("prompt_tokens") or max(1, len(prompt) // 4)
@@ -1507,15 +1672,34 @@ class DynamicLLMClient(BaseLLMClient):
 
                 from backend.services.token_tracker import token_tracker
                 is_key_failover = getattr(client, "last_key_used", None) in ("secondary", "tertiary")
-                self._last_usage = token_tracker.record_usage(
+                call_status = "success" if (idx == 0 and not is_key_failover) else "failover"
+                self._thread_state().last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
                     prompt_tokens=p_tok,
                     completion_tokens=c_tok,
                     total_tokens=t_tok,
-                    action=getattr(self, "_current_action", "general"),
+                    action=action_context[0],
                     latency_ms=lat_ms,
-                    status="success" if (idx == 0 and not is_key_failover) else "failover",
+                    status=call_status,
+                )
+
+                from backend.services.action_logger import action_logger
+                raw_resp = getattr(client, "last_raw_response", "") or result
+                action_logger.record_action(
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response=raw_resp,
+                    parsed_json=None,
+                    latency_ms=lat_ms,
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    status=call_status,
+                    metadata=action_context[1],
                 )
 
                 if idx > 0:
@@ -1528,9 +1712,10 @@ class DynamicLLMClient(BaseLLMClient):
                         "error": str(last_error),
                     }
                     # Hot-swap runtime configuration to the working fallback model
-                    settings.llm_provider = prov
-                    if hasattr(settings, f"{prov}_model"):
-                        setattr(settings, f"{prov}_model", mod)
+                    if not hasattr(self, "_snapshot_chain"):
+                        settings.llm_provider = prov
+                        if hasattr(settings, f"{prov}_model"):
+                            setattr(settings, f"{prov}_model", mod)
                     logger.warning(
                         "Failover event: Text generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
@@ -1540,8 +1725,25 @@ class DynamicLLMClient(BaseLLMClient):
                     )
                 clear_model_cooldown(prov, mod, getattr(client, "api_key", None))
                 return result
+            except ProviderCoolingDownError as err:
+                last_error = err
+                continue
             except Exception as err:
                 last_error = err
+                from backend.services.action_logger import action_logger
+                action_logger.record_action(
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response="",
+                    parsed_json=None,
+                    latency_ms=(time.perf_counter() - t0) * 1000.0,
+                    status="error",
+                    error=f"{type(err).__name__}: {str(err)}",
+                    metadata=action_context[1],
+                )
                 record_model_failure(prov, mod, err, getattr(client, "api_key", None))
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
@@ -1562,6 +1764,9 @@ class DynamicLLMClient(BaseLLMClient):
                 )
                 continue
 
+        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "")
+        if cooling:
+            raise cooling from last_error
         raise RuntimeError(
             f"All LLM models in fallback chain failed. Attempted: {'; '.join(attempt_history)}. Last error: {last_error}"
         ) from last_error
@@ -1574,6 +1779,7 @@ class DynamicLLMClient(BaseLLMClient):
         temperature: float = 0.0,
     ) -> T:
         global _LAST_FALLBACK_EVENT
+        action_context = (getattr(self._thread_state(), "action", "general"), copy.deepcopy(getattr(self._thread_state(), "metadata", {})))
         fallback_enabled = getattr(self, "_snapshot_fallback_enabled", getattr(settings, "fallback_enabled", True))
         chain = self.get_fallback_chain()
         if not chain:
@@ -1585,8 +1791,13 @@ class DynamicLLMClient(BaseLLMClient):
         primary_prov, primary_mod, _ = chain[0]
         last_error: Optional[Exception] = None
         attempt_history: List[str] = []
+        document_rejected_models = set()
 
         for idx, (prov, mod, client) in enumerate(chain):
+            if (prov, mod) in document_rejected_models:
+                continue
+            if fallback_enabled and is_model_in_cooldown(prov, mod, getattr(client, "api_key", None)):
+                continue
             t0 = time.perf_counter()
             try:
                 result = client.generate_structured(
@@ -1595,6 +1806,8 @@ class DynamicLLMClient(BaseLLMClient):
                     system_prompt=system_prompt,
                     temperature=temperature,
                 )
+                if isinstance(result, str) and not result.strip():
+                    raise ValueError("LLM returned an empty response")
                 lat_ms = (time.perf_counter() - t0) * 1000.0
                 usage = getattr(client, "last_usage", None) or {}
                 p_tok = usage.get("prompt_tokens") or max(1, len(prompt) // 4)
@@ -1603,15 +1816,43 @@ class DynamicLLMClient(BaseLLMClient):
 
                 from backend.services.token_tracker import token_tracker
                 is_key_failover = getattr(client, "last_key_used", None) in ("secondary", "tertiary")
-                self._last_usage = token_tracker.record_usage(
+                call_status = "success" if (idx == 0 and not is_key_failover) else "failover"
+                self._thread_state().last_usage = token_tracker.record_usage(
                     provider=prov,
                     model=mod,
                     prompt_tokens=p_tok,
                     completion_tokens=c_tok,
                     total_tokens=t_tok,
-                    action=getattr(self, "_current_action", "general"),
+                    action=action_context[0],
                     latency_ms=lat_ms,
-                    status="success" if (idx == 0 and not is_key_failover) else "failover",
+                    status=call_status,
+                )
+
+                from backend.services.action_logger import action_logger
+                raw_resp = getattr(client, "last_raw_response", "") or ""
+                parsed_payload = None
+                try:
+                    if hasattr(result, "model_dump"):
+                        parsed_payload = result.model_dump(mode="json")
+                    elif isinstance(result, (dict, list)):
+                        parsed_payload = result
+                except Exception:
+                    parsed_payload = None
+
+                action_logger.record_action(
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response=raw_resp,
+                    parsed_json=parsed_payload,
+                    latency_ms=lat_ms,
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    status=call_status,
+                    metadata=action_context[1],
                 )
 
                 if idx > 0:
@@ -1624,9 +1865,10 @@ class DynamicLLMClient(BaseLLMClient):
                         "error": str(last_error),
                     }
                     # Hot-swap runtime configuration to the working fallback model
-                    settings.llm_provider = prov
-                    if hasattr(settings, f"{prov}_model"):
-                        setattr(settings, f"{prov}_model", mod)
+                    if not hasattr(self, "_snapshot_chain"):
+                        settings.llm_provider = prov
+                        if hasattr(settings, f"{prov}_model"):
+                            setattr(settings, f"{prov}_model", mod)
                     logger.warning(
                         "Failover event: Structured generation succeeded via fallback [%s / %s] after primary [%s / %s] failed. Active engine updated.",
                         prov,
@@ -1636,8 +1878,27 @@ class DynamicLLMClient(BaseLLMClient):
                     )
                 clear_model_cooldown(prov, mod, getattr(client, "api_key", None))
                 return result
+            except ProviderCoolingDownError as err:
+                last_error = err
+                continue
             except Exception as err:
                 last_error = err
+                from backend.services.action_logger import action_logger
+                action_logger.record_action(
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response="",
+                    parsed_json=None,
+                    latency_ms=(time.perf_counter() - t0) * 1000.0,
+                    status="error",
+                    error=f"{type(err).__name__}: {str(err)}",
+                    metadata=action_context[1],
+                )
+                if _is_document_output_error(err):
+                    document_rejected_models.add((prov, mod))
                 record_model_failure(prov, mod, err, getattr(client, "api_key", None))
                 attempt_history.append(f"{prov}:{mod} ({type(err).__name__}: {str(err)[:100]})")
                 if not fallback_enabled:
@@ -1658,6 +1919,9 @@ class DynamicLLMClient(BaseLLMClient):
                 )
                 continue
 
+        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "")
+        if cooling:
+            raise cooling from last_error
         raise RuntimeError(
             f"All LLM models in fallback chain failed for schema '{response_model.__name__}'. "
             f"Attempted: {'; '.join(attempt_history)}. Last error: {last_error}"
@@ -1666,11 +1930,12 @@ class DynamicLLMClient(BaseLLMClient):
     def get_last_usage(self) -> Optional[Any]:
         """Returns the token usage info for the most recent successful LLM call."""
         from backend.services.token_tracker import token_tracker
-        return getattr(self, "_last_usage", None) or token_tracker.get_last_usage()
+        return getattr(self._thread_state(), "last_usage", None) or token_tracker.get_last_usage()
 
-    def set_action_context(self, action: str) -> None:
-        """Sets action tag (e.g. 'candidate_evaluation', 'cv_extraction', 'job_parsing') for usage logs."""
-        self._current_action = action
+    def set_action_context(self, action: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Sets action tag and metadata for usage and action logs."""
+        self._thread_state().action = action
+        self._thread_state().metadata = copy.deepcopy(metadata or {})
 
 
 

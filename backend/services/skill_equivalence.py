@@ -577,28 +577,8 @@ class SkillEquivalenceService:
         skill_or_tool: str,
     ) -> float:
         """
-        Aggregates estimated calendar years across all work experience entries
-        where the skill or tool is listed.
+        Aggregates calendar years across work experience entries using interval union.
+        Does not invent missing durations or double count overlapping tenures.
         """
-        target = skill_or_tool.lower().strip()
-        if not target:
-            return 0.0
-
-        pat = re.compile(rf"\b{re.escape(target)}\b", re.IGNORECASE)
-        total_months = 0
-
-        for exp in experiences:
-            matched = False
-            for s in exp.skills_used:
-                if target == s.lower() or pat.search(s):
-                    matched = True
-                    break
-            if not matched:
-                if pat.search(exp.job_title) or any(pat.search(d) for d in exp.work_description):
-                    matched = True
-
-            if matched:
-                duration = exp.duration_months or 12  # default 1 year per role if unstated
-                total_months += duration
-
-        return round(total_months / 12.0, 1)
+        from backend.services.tenure_calculator import TenureCalculator
+        return TenureCalculator.calculate_tenure_for_skill(experiences, skill_or_tool)

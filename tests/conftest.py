@@ -17,6 +17,12 @@ TEST_DB_FILE = "./data/test_pytest_isolated.db"
 TEST_DB_URL = f"sqlite+aiosqlite:///{TEST_DB_FILE}"
 
 
+@pytest.fixture(autouse=True)
+def isolated_test_auth(monkeypatch):
+    # Existing engine contracts are independent of login; auth tests opt into enforcement.
+    monkeypatch.setattr(settings, "auth_required", False)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolate_test_database():
     """

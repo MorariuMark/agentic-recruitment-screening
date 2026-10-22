@@ -6,12 +6,15 @@ ChromaDB vector store manager for local embeddings and asymmetric semantic retri
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
+import hashlib
+
 import chromadb
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription, JobRequirement
+from backend.services.evidence import clean_model_text
 
 
 DEFAULT_CHROMA_PATH = "./data/chroma_db"
@@ -89,13 +92,16 @@ class VectorStoreService:
             Number of indexed chunks.
         """
         cid_str = str(candidate.candidate_id)
+        source_hash = hashlib.sha256(clean_model_text(candidate.model_dump_json()).encode("utf-8")).hexdigest()
         if not force:
             try:
                 existing = self.candidate_collection.get(
                     where={"candidate_id": cid_str},
-                    include=[],
+                    include=["metadatas"],
                 )
-                if existing and existing.get("ids") and len(existing["ids"]) > 0:
+                if existing and existing.get("ids") and existing.get("metadatas") and all(
+                    m.get("evidence_version") == "source-v2" and m.get("source_hash") == source_hash for m in existing["metadatas"]
+                ):
                     return len(existing["ids"])
             except Exception:
                 pass
@@ -190,37 +196,7 @@ class VectorStoreService:
             })
             ids.append(f"candidate_{candidate.candidate_id}_certifications")
 
-        # 5. Add custom fallback sections chunks (index all sections including out-of-scope/miscellaneous)
-        for s_idx, sec in enumerate(getattr(candidate, "anonymized_custom_sections", [])):
-            if not sec.items:
-                continue
-            sec_content = f"{sec.section_title}: " + "; ".join(sec.items)
-            documents.append(sec_content)
-            metadatas.append({
-                "candidate_id": str(candidate.candidate_id),
-                "type": "custom_section",
-                "job_title": sec.section_title,
-                "company_name": "Additional Qualifications",
-                "experience_index": s_idx,
-                "bullet_index": 0,
-            })
-            ids.append(f"candidate_{candidate.candidate_id}_sec_{s_idx}")
-
-        # 5.5 Add miscellaneous and out-of-scope detail chunks for semantic search
-        for m_idx, misc_item in enumerate(getattr(candidate, "anonymized_miscellaneous", [])):
-            if not misc_item or not misc_item.strip():
-                continue
-            misc_doc = f"Miscellaneous / Additional Candidate Information: {misc_item.strip()}"
-            documents.append(misc_doc)
-            metadatas.append({
-                "candidate_id": str(candidate.candidate_id),
-                "type": "miscellaneous",
-                "job_title": "Miscellaneous / Other Information",
-                "company_name": "Additional Candidate Data",
-                "experience_index": m_idx,
-                "bullet_index": 0,
-            })
-            ids.append(f"candidate_{candidate.candidate_id}_misc_{m_idx}")
+        # Peripheral/custom sections remain in the profile, outside screening retrieval.
 
         # 6. Add education chunks
         for edu_idx, edu in enumerate(getattr(candidate, "anonymized_education", [])):
@@ -310,6 +286,11 @@ class VectorStoreService:
 
         # 10. Idempotently upsert all chunks into ChromaDB (safe against re-indexing existing IDs)
         if documents:
+            documents = [clean_model_text(document) for document in documents]
+            for metadata in metadatas:
+                metadata["evidence_version"] = "source-v2"
+                metadata["source_hash"] = source_hash
+            self.candidate_collection.delete(where={"candidate_id": cid_str})
             self.candidate_collection.upsert(
                 documents=documents,
                 metadatas=metadatas,
@@ -335,18 +316,12 @@ class VectorStoreService:
         try:
             results = self.candidate_collection.query(
                 query_texts=[query_text],
-                where={"candidate_id": str(candidate_id)},
+                where={"$and": [{"candidate_id": str(candidate_id)},
+                                 {"type": {"$nin": ["miscellaneous", "custom_section"]}}]},
                 n_results=n_results,
             )
-        except Exception:
-            try:
-                results = self.candidate_collection.query(
-                    query_texts=[query_text],
-                    where={"candidate_id": str(candidate_id)},
-                    n_results=1,
-                )
-            except Exception:
-                return []
+        except Exception as error:
+            raise RuntimeError("Candidate evidence retrieval is unavailable; retry this evaluation.") from error
 
         # 4. Unpack ChromaDB's 2D batch response structure into a clean list of dictionaries
         formatted: List[Dict[str, Any]] = []
@@ -356,28 +331,26 @@ class VectorStoreService:
             meta_list = results.get("metadatas", [[]])[0]
 
             for i, doc in enumerate(doc_list):
+                meta = meta_list[i] if i < len(meta_list) else {}
+                if meta.get("type") in {"miscellaneous", "custom_section"}:
+                    continue
+                if i < len(dist_list) and dist_list[i] > 0.75:
+                    continue
                 formatted.append({
-                    "text": doc,
+                    "text": clean_model_text(doc),
                     "distance": dist_list[i] if i < len(dist_list) else 0.0,
-                    "metadata": meta_list[i] if i < len(meta_list) else {},
+                    "metadata": meta,
                 })
 
         return formatted
 
     def delete_candidate(self, candidate_id: Union[UUID, str]) -> int:
-        """Deletes all chunks belonging to a specific candidate from ChromaDB."""
-        cid_str = str(candidate_id)
-        try:
-            existing = self.candidate_collection.get(
-                where={"candidate_id": cid_str},
-                include=[],
-            )
-            if existing and existing.get("ids") and len(existing["ids"]) > 0:
-                self.candidate_collection.delete(ids=existing["ids"])
-                return len(existing["ids"])
-        except Exception:
-            pass
-        return 0
+        """Remove every vector belonging to the candidate, regardless of cache version."""
+        existing = self.candidate_collection.get(where={"candidate_id": str(candidate_id)}, include=[])
+        ids = existing.get("ids", [])
+        if ids:
+            self.candidate_collection.delete(ids=ids)
+        return len(ids)
 
     def reset(self) -> None:
         """Helper to clear collections for testing and test isolation."""

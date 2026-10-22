@@ -95,8 +95,11 @@ export function LiveTokenCounter({
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
+    let initialTimer: NodeJS.Timeout | null = null;
     if (isRunning) {
-      setEstimatedTokens(120);
+      initialTimer = setTimeout(() => {
+        setEstimatedTokens(120);
+      }, 0);
       interval = setInterval(() => {
         setEstimatedTokens((prev) => {
           // Incrementally stream tokens roughly corresponding to inference generation
@@ -108,6 +111,7 @@ export function LiveTokenCounter({
       setEstimatedTokens(0);
     }
     return () => {
+      if (initialTimer) clearTimeout(initialTimer);
       if (interval) clearInterval(interval);
     };
   }, [isRunning]);

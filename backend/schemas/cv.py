@@ -323,6 +323,8 @@ class CustomSection(BaseModel):
 class ParsedCV(BaseModel):
     """Complete, raw parsed CV before PII scrubbing."""
     contact_info: ContactInfo
+    dataset: str = "recruiting"
+    benchmark_annotations: dict = Field(default_factory=dict, description="Benchmark ground truth; storage metadata only, never copied into anonymized model inputs")
     summary: Optional[str] = Field(default=None, description="Candidate summary or objective")
     skills: List[str] = Field(default_factory=list, description="List of identified skills")
     experiences: List[WorkExperience] = Field(default_factory=list, description="List of work experiences")
@@ -502,6 +504,7 @@ class ParsedCV(BaseModel):
 class AnonymizedCandidate(BaseModel):
     """Sanitized candidate profile used for de-biased semantic matching."""
     candidate_id: UUID = Field(default_factory=uuid4, description="Deterministic or random UUID for anonymity")
+    dataset: str = "recruiting"
     anonymized_work_experiences: List[WorkExperience] = Field(default_factory=list, description="Anonymized work experiences")
     anonymized_education: List[Education] = Field(default_factory=list, description="Anonymized education")
     anonymized_skills: List[str] = Field(default_factory=list, description="Anonymized skills")

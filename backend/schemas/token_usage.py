@@ -17,6 +17,9 @@ class TokenUsageInfo(BaseModel):
     completion_tokens: int = Field(default=0, description="Output / completion tokens")
     total_tokens: int = Field(default=0, description="Total tokens consumed")
     latency_ms: float = Field(default=0.0, description="Execution duration in milliseconds")
+    model_call_duration_ms: float = Field(default=0.0, description="Sum of model-call durations; concurrent calls can overlap")
+    model_calls: int = 0
+    models_used: List[str] = Field(default_factory=list)
     status: str = Field(default="success", description="Status: success, failover, error")
 
 

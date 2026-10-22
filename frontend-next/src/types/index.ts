@@ -5,7 +5,25 @@
 export type RequirementCategory = "must_have" | "nice_to_have" | "soft_skill";
 export type Recommendation = "strong_match" | "borderline" | "reject";
 
+export interface OperationTiming {
+  id: string; operation: string; label: string;
+  status: "running" | "completed" | "partial" | "failed" | "cancelled" | "interrupted" | "deferred";
+  parent_id: string | null; batch_id: string | null; run_id: string | null;
+  job_id: string | null; candidate_id: string | null;
+  started_at: string; finished_at: string | null; duration_ms: number | null;
+  item_count: number; completed_count: number; failed_count: number; cached: boolean;
+}
+
+export interface OperationStatistics {
+  summary: Array<{operation: string; label: string; count: number; completed: number;
+    failed: number; partial: number; cancelled: number; running: number; interrupted: number; deferred: number; cached: number;
+    average_ms: number | null; min_ms: number | null; max_ms: number | null;
+    total_ms: number; items: number; success_rate: number | null; items_per_minute: number | null}>;
+  history: OperationTiming[]; total: number; limit: number; offset: number; has_more: boolean;
+}
+
 export interface WorkspaceStatistics {
+  cv_parsing?: {sample_count: number; average_ms: number | null; estimates: Array<{cv_count: number; duration_ms: number | null}>};
   candidates: number; jobs: number; screening_runs: number; evaluations: number; interview_plans: number;
   cv_text_characters: number; batch_files: number; batch_processed: number; batch_failed: number;
   model_calls: number; tokens: number; model_duration_ms: number; model_average_ms: number;
@@ -13,6 +31,7 @@ export interface WorkspaceStatistics {
 }
 
 export interface PreScreenRow {
+  language_priority?: number;
   pipeline_version?: "v1" | "v2";
   requirement_assessments?: RequirementAssessment[];
   essential_supported?: number;
@@ -41,20 +60,24 @@ export interface RequirementAssessment {
   documented_years?: number | null; rerank_score?: number | null;
 }
 export interface ScreeningRun {
+  ranking_policy_version?: string;
+  evidence_policy_version?: string;
+  dataset?: "recruiting" | "benchmark";
   pipeline_version?: "v1" | "v2";
   phase?: string;
   ended_at?: number;
   attempt?: number;
   profile_hashes?: Record<string,string>;
   diagnostics?: {warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
-  duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation"}>;
+  duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation" | "same_document_or_contact"}>;
   started_at?: number;
   id: string;
   job_id: string;
   job: JobDescription;
-  status: "ranking" | "evaluating" | "completed" | "partial" | "failed";
+  status: "ranking" | "evaluating" | "completed" | "partial" | "failed" | "cancelled";
   top_k: number;
   deep_enabled: boolean;
+  deep_candidate_ids?: string[];
   rows: PreScreenRow[];
   shortlist_ids: string[];
   decisions: Record<string, {decision: "interview" | "hold" | "reject"; notes: string}>;
@@ -69,6 +92,7 @@ export interface JobRequirement {
   weight: number;
   description: string;
   minimum_years_experience?: number | null;
+  eligibility_evidence?: string | null;
 }
 
 export interface JobDescription {
@@ -231,6 +255,7 @@ export interface CandidateEducation {
 }
 
 export interface CandidateSummary {
+  is_benchmark?: boolean;
   id: string;
   candidate_id?: string;
   masked_name: string;
@@ -284,6 +309,7 @@ export interface VerbatimCitation {
 export type MatchStatus = "met" | "partial" | "clarification_needed" | "not_met";
 
 export interface RequirementMatch {
+  category?: RequirementCategory | null;
   requirement_id: string;
   title?: string | null;
   jd_summary?: string | null;
@@ -315,6 +341,7 @@ export interface MatchEvaluationResult {
   hitl_validated: boolean;
   recruiter_notes?: string | null;
   strictness?: number;
+  job_snapshot?: JobDescription | null;
   created_at?: string;
   token_usage?: TokenUsageInfo | null;
   audit_metadata?: ActionAuditInfo | null;
@@ -366,15 +393,28 @@ export interface BatchCandidateResult {
   error?: string;
 }
 
+export interface BatchFileProgress {
+  id: string; document_id?: string | null; filename: string;
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
+  phase: string; candidate_id?: string | null; error?: string | null; started_at?: string; finished_at?: string;
+}
+
 export interface BatchJobStatus {
   batch_id: string;
   job_id?: string | null;
-  status: "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  status: "QUEUED" | "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED" | "INTERRUPTED";
   total_files: number;
   processed_files: number;
   failed_files: number;
   progress_percentage: number;
   results: BatchCandidateResult[];
+  files?: BatchFileProgress[];
+  currently_processing?: BatchFileProgress[];
+  remaining_files?: number;
+  queued_files?: number;
+  concurrency_limit?: number;
+  started_at?: string | null;
+  finished_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -635,6 +675,9 @@ export interface ActionAuditInfo {
 }
 
 export interface TokenUsageInfo {
+  model_call_duration_ms?: number;
+  model_calls?: number;
+  models_used?: string[];
   provider: string;
   model: string;
   display_name?: string | null;
@@ -733,5 +776,65 @@ export interface JobRecommendationResponse {
   recommendations: JobRecommendationItem[];
 }
 
+export interface ActionTraceLogEntry {
+  id: string;
+  timestamp: string | null;
+  action_type: string;
+  provider: string;
+  model: string;
+  status: string;
+  latency_ms: number;
+  tokens: { prompt: number; completion: number; total: number };
+  prompt: string;
+  system_prompt?: string | null;
+  raw_response: string;
+  parsed_json: any;
+  error?: string | null;
+  metadata?: Record<string, any>;
+}
 
-
+export interface ActionTraceResponse {
+  export_metadata: {
+    schema_version: string;
+    generated_at: string;
+    job_id?: string | null;
+    job_title?: string | null;
+    run_id?: string | null;
+    total_actions: number;
+    total_candidates: number;
+    active_engine?: { provider: string; model: string; fallback_enabled: boolean };
+    instruction_for_agent?: string;
+  };
+  job?: {
+    id: string;
+    title: string;
+    department?: string | null;
+    seniority_level?: string | null;
+    location?: string | null;
+    work_model?: string | null;
+    employment_type?: string | null;
+    source_url?: string | null;
+    raw_text: string;
+    requirements: Array<{
+      id: string;
+      title: string;
+      category: string;
+      weight: number;
+      description: string;
+      minimum_years_experience?: number | null;
+    }>;
+    custom_sections?: any[];
+    unused_details?: string[];
+  } | null;
+  candidates?: Array<{
+    candidate_id: string;
+    candidate_name: string;
+    original_filename?: string | null;
+    raw_cv_text: string;
+    sanitized_text: string;
+    anonymized_profile: any;
+    created_at?: string | null;
+  }>;
+  actions: ActionTraceLogEntry[];
+  screening_run?: any;
+}
