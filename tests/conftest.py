@@ -5,22 +5,42 @@ Prevents unit tests from polluting the production screening.db database.
 """
 
 import asyncio
+import os
+import tempfile
+import socket
 from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
+
+# Isolate storage before application imports construct route-level singletons.
+_TEST_STORAGE = Path(tempfile.mkdtemp(prefix="atos-pytest-"))
+TEST_DB_FILE = str(_TEST_STORAGE / "screening.db")
+TEST_DB_URL = f"sqlite+aiosqlite:///{Path(TEST_DB_FILE).as_posix()}"
+os.environ["DATABASE_URL"] = TEST_DB_URL
+os.environ["CHROMA_DB_DIR"] = str(_TEST_STORAGE / "chroma")
+os.environ["ENVIRONMENT"] = "test"
+os.environ["AUTH_SECRET_FILE"] = str(_TEST_STORAGE / ".auth_session_secret")
 
 from backend.config import settings
 import backend.db.session as session_module
 from backend.db.models import Base
 
-TEST_DB_FILE = "./data/test_pytest_isolated.db"
-TEST_DB_URL = f"sqlite+aiosqlite:///{TEST_DB_FILE}"
-
-
 @pytest.fixture(autouse=True)
 def isolated_test_auth(monkeypatch):
     # Existing engine contracts are independent of login; auth tests opt into enforcement.
     monkeypatch.setattr(settings, "auth_required", False)
+
+
+@pytest.fixture(autouse=True)
+def reserved_test_hostnames(monkeypatch):
+    """Mock reserved fixtures here, never fabricate DNS answers in production."""
+    original = socket.getaddrinfo
+    def resolve(host, port, *args, **kwargs):
+        name = str(host).lower()
+        if name in {"example.com", "test.com", "fa-test.fa.ocs.oraclecloud.com"} or name.endswith((".example.com", ".example", ".test", ".test.com", ".invalid")):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+        return original(host, port, *args, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
 
 
 @pytest.fixture(scope="session", autouse=True)

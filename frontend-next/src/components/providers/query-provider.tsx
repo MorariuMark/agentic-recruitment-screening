@@ -10,7 +10,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 5000,
-            retry: (failureCount, error) => error.name !== "AbortError" && !error.message.includes("Process cancelled") && failureCount < 3,
+            retry: (failureCount, error) => error.name !== "AbortError" && error.name !== "AuthenticationError" && !error.message.includes("Process cancelled") && failureCount < 3,
             refetchOnWindowFocus: false,
           },
         },

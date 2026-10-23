@@ -28,6 +28,7 @@ from backend.agents.matching_agent import MatchingAgent
 from backend.agents.parser_agent import ParserAgent, ScannedPDFException
 from backend.config import settings
 from backend.api.auth import get_current_user, require_role
+from backend.api.job_errors import job_parse_http_error
 from backend.services.evidence import is_benchmark_profile
 from backend.services.batch_processor import BatchProcessorService
 from backend.services.event_stream import event_broadcaster
@@ -483,18 +484,9 @@ async def parse_job_url(request: JobUrlParseRequest) -> JobExtractionResult:
             logger.warning(f"Failed to persist job to database: {db_err}")
         progress_tracker.finish_task("job_parse", phase="Job parsing completed")
         return result
-    except ValueError as e:
-        progress_tracker.finish_task("job_parse", phase="Failed")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
     except Exception as e:
         progress_tracker.finish_task("job_parse", phase="Failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error extracting job description from URL: {str(e)}",
-        )
+        raise job_parse_http_error(e) from e
 
 
 @router.post(
@@ -536,18 +528,9 @@ async def parse_job_text(request: JobTextParseRequest) -> JobExtractionResult:
             logger.warning(f"Failed to persist job to database: {db_err}")
         progress_tracker.finish_task("job_parse", phase="Job parsing completed")
         return result
-    except ValueError as e:
-        progress_tracker.finish_task("job_parse", phase="Failed")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
     except Exception as e:
         progress_tracker.finish_task("job_parse", phase="Failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error parsing job description text: {str(e)}",
-        )
+        raise job_parse_http_error(e) from e
 
 
 @router.post(

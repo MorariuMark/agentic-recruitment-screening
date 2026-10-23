@@ -11,11 +11,11 @@ import numpy as np
 from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription
 from backend.schemas.screening import EvidencePassage, PreScreenRow, RequirementAssessment
-from backend.services.pre_ranking import contains, month_index, requirement_terms, STOP_WORDS
+from backend.services.pre_ranking import contains, month_index, requirement_terms, requirement_evidence_terms, evidence_term_matches, STOP_WORDS
 from backend.services.skill_equivalence import CEFR_LEVELS, SkillEquivalenceService
 from backend.services.evidence import assess_language, clean_model_text, language_priority
 
-VERSION = "evidence-v2.3"
+VERSION = "evidence-v2.4"
 ALIASES = {"postgres": "postgresql", "js": "javascript", "ts": "typescript", "k8s": "kubernetes", "node.js": "nodejs", "csharp": "c#"}
 
 
@@ -24,7 +24,7 @@ def tokens(text):
 
 
 def term_matches(text, term):
-    return contains(text, term) or ALIASES.get(term, term) in set(tokens(text))
+    return evidence_term_matches(text, term) or ALIASES.get(term, term) in set(tokens(text))
 
 
 def language_assessment(candidate, requirement):
@@ -52,9 +52,11 @@ def evidence_units(candidate: AnonymizedCandidate) -> list[EvidencePassage]:
         add(f"certifications[{i}]", certification)
     add("skills", " ".join(candidate.anonymized_skills), "listed")
     for i, role in enumerate(candidate.anonymized_work_experiences):
-        add(f"experience[{i}]", " ".join([role.job_title, *role.work_description, *role.skills_used]))
+        add(f"experience[{i}]", " ".join([role.job_title, *role.work_description]))
+        add(f"experience[{i}].skills", " ".join(role.skills_used), "listed")
     for i, project in enumerate(candidate.anonymized_projects):
-        add(f"projects[{i}]", " ".join([project.project_name, *project.description, *project.technologies]))
+        add(f"projects[{i}]", " ".join([project.project_name, *project.description]))
+        add(f"projects[{i}].technologies", " ".join(project.technologies), "listed")
     for i, section in enumerate(candidate.anonymized_custom_sections):
         if section.is_relevant:
             add(f"additional[{i}]", " ".join([section.section_title, *section.items]), "listed")
@@ -162,7 +164,11 @@ class HybridRankingEngine:
                 for ranking in [dense_order, lexical_order]:
                     for position, i in enumerate(ranking, 1):
                         fusion[i] += 1 / (60 + position)
-                best = sorted(indices, key=lambda i: (-fusion[i], corpus[i].id))[:evidence_limit]
+                terms = requirement_evidence_terms(requirement.title, requirement.description)
+                # Preserve explicit proof even when dense retrieval prefers generic passages.
+                best = sorted(indices, key=lambda i: (
+                    -sum(term_matches(corpus[i].text, term) for term in terms),
+                    corpus[i].strength != "demonstrated", -fusion[i], corpus[i].id))[:evidence_limit]
                 similarity = max([float(similarities[i, q]) for i in best], default=0)
                 assessments.append(self.assess(candidate, requirement, [corpus[i] for i in best], similarity,
                     {corpus[i].id: float(similarities[i, q]) for i in best}))
@@ -191,14 +197,16 @@ class HybridRankingEngine:
 
     @staticmethod
     def assess(candidate, requirement, passages, similarity, passage_scores=None):
-        terms = requirement_terms(requirement.title, requirement.description)
+        terms = requirement_evidence_terms(requirement.title, requirement.description)
         text = " ".join(unit.text for unit in passages)
         found = [term for term in terms if term_matches(text, term)]
-        fraction = len(found) / len(terms) if terms else 0
-        demonstrated = any(unit.strength == "demonstrated" and any(term_matches(unit.text, term) for term in terms) for unit in passages)
-        score = fraction * (100 if demonstrated else 55)
-        status = "supported" if fraction == 1 and demonstrated else "partial" if found else "unknown"
-        reasoning = f"{len(found)}/{len(terms)} terms supported in {'documented work or qualifications' if demonstrated else 'listed or incomplete evidence'}."
+        proven = [term for term in terms if any(unit.strength == "demonstrated" and term_matches(unit.text, term) for unit in passages)]
+        score = (100 * len(proven) + 55 * (len(found) - len(proven))) / len(terms) if terms else 0
+        status = "supported" if terms and len(proven) == len(terms) else "partial" if found else "unknown"
+        missing = [term for term in terms if term not in proven]
+        reasoning = f"{len(proven)}/{len(terms)} required concepts demonstrated; {len(found) - len(proven)} listed only."
+        if missing:
+            reasoning += f" Unverified: {', '.join(missing)}."
         years = None
         req_text = f"{requirement.title} {requirement.description}"
         # Generic semantic relevance is a retrieval signal, never credential proof.
@@ -222,7 +230,7 @@ class HybridRankingEngine:
             match = re.search(r"(\d+)\s*\+?\s*years?", req_text, re.I)
             minimum = int(match.group(1)) if match else None
         if minimum and minimum > 0:
-            years, dated = relevant_years(candidate, terms, req_text)
+            years, dated = relevant_years(candidate, requirement_terms(requirement.title, requirement.description), req_text)
             duration_score = 100 * min(years / minimum, 1)
             score = min(score, duration_score) if terms else duration_score
             if not terms:

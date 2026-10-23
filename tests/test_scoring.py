@@ -122,8 +122,8 @@ def test_scoring_weights_and_decision_matrix():
     assert res_reject.recommendation == Recommendation.REJECT
 
 
-def test_perfect_match_90_percent_normalized_to_100():
-    """Verify MET requirements with 0.90 score and no gap_analysis normalize to 1.0 (100%)."""
+def test_met_score_preserves_model_uncertainty():
+    """A met verdict must not automatically round 90% evidence confidence to 100%."""
     scoring = ScoringEngine()
     candidate = AnonymizedCandidate(
         candidate_id=uuid4(),
@@ -157,8 +157,8 @@ def test_perfect_match_90_percent_normalized_to_100():
     ]
 
     result = scoring.compute_evaluation(candidate, job, matches, strictness=50)
-    assert result.requirement_matches[0].score == 1.0
-    assert result.overall_score == 100.0
+    assert result.requirement_matches[0].score == 0.9
+    assert result.overall_score == 90.0
     assert result.strictness == 50
     assert result.recommendation == Recommendation.STRONG_MATCH
 

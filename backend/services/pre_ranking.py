@@ -30,6 +30,28 @@ def requirement_terms(title: str, description: str) -> list[str]:
     return terms or [t for t in re.findall(r"[\w+#.-]+", title.lower()) if t not in STOP_WORDS and not t.isdigit()]
 
 
+# Application context must survive extraction of tool names from a requirement.
+CONTEXT_PATTERNS = {
+    "rest": r"\brest(?:ful)?\b",
+    "microservices": r"\bmicro[ -]?services?\b",
+    "production": r"\bproduction\b",
+    "asynchronous": r"\basync(?:hronous(?:ly)?)?\b",
+}
+
+
+def context_terms(title: str, description: str) -> list[str]:
+    text = f"{title} {description}"
+    return [term for term, pattern in CONTEXT_PATTERNS.items() if re.search(pattern, text, re.I)]
+
+
+def evidence_term_matches(text: str, term: str) -> bool:
+    return bool(re.search(CONTEXT_PATTERNS[term], text, re.I)) if term in CONTEXT_PATTERNS else contains(text, term)
+
+
+def requirement_evidence_terms(title: str, description: str) -> list[str]:
+    return list(dict.fromkeys([*requirement_terms(title, description), *context_terms(title, description)]))
+
+
 from backend.services.tenure_calculator import TenureCalculator, month_index
 
 
@@ -89,9 +111,9 @@ class PreRankingEngine:
                     buckets["skills_score"].append((language_evidence[1] / 100, requirement.weight))
                     checks.append(f"{requirement.title}: {language_evidence[0]}. {language_evidence[2]}")
                     continue
-                terms = requirement_terms(requirement.title, requirement.description)
+                terms = requirement_evidence_terms(requirement.title, requirement.description)
                 if terms:
-                    found = [term for term in terms if contains(profile, term)]
+                    found = [term for term in terms if evidence_term_matches(profile, term)]
                     buckets["skills_score"].append((len(found) / len(terms), requirement.weight))
                     checks.append(f"{requirement.title}: {len(found)}/{len(terms)} skill terms documented ({', '.join(found) or 'none'})")
                 years = requirement.minimum_years_experience
@@ -99,7 +121,7 @@ class PreRankingEngine:
                     match = re.search(r"(\d+)\s*\+?\s*years?", text, re.I)
                     years = int(match.group(1)) if match else None
                 if years and years > 0:
-                    actual = experience_years(candidate, terms)
+                    actual = experience_years(candidate, requirement_terms(requirement.title, requirement.description))
                     buckets["experience_score"].append((min(actual / years, 1), requirement.weight))
                     checks.append(f"{requirement.title}: {actual:.1f}/{years} years documented; missing dates need review")
             scores = {key: (100 * sum(v * w for v, w in values) / sum(w for _, w in values)) if values else None for key, values in buckets.items()}

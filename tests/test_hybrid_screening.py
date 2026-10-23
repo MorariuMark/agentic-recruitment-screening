@@ -55,7 +55,7 @@ def test_missing_degree_is_unknown_and_wrong_discipline_never_passes():
 
 
 def test_alias_has_consistent_evidence_and_tenure():
-    candidate = AnonymizedCandidate(anonymized_work_experiences=[WorkExperience(job_title="Database developer", skills_used=["Postgres"], start_date="2020-01", end_date="2023-12")])
+    candidate = AnonymizedCandidate(anonymized_work_experiences=[WorkExperience(job_title="Database developer", work_description=["Maintained Postgres databases"], skills_used=["Postgres"], start_date="2020-01", end_date="2023-12")])
     result = rank([candidate], requirement("PostgreSQL", minimum_years_experience=3))[0].requirement_assessments[0]
     assert result.status == "supported" and result.documented_years == 4
     assert result.evidence and "Postgres" in result.evidence[0].text

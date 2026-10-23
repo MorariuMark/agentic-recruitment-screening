@@ -6,8 +6,6 @@ extracting structured atomic requirements via LLM, and detecting missing critica
 
 import html
 import json
-import os
-import sys
 from datetime import datetime, timezone
 import ipaddress
 import logging
@@ -32,6 +30,9 @@ from backend.schemas.job import (
     RequirementCategory,
 )
 from backend.schemas.token_usage import ActionAuditInfo
+from backend.services.url_errors import URLResolutionError
+
+DNS_RETRY_DELAYS = (0.25, 0.75)
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -116,20 +117,17 @@ def validate_and_sanitize_url(url: str) -> str:
     if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
         raise ValueError("Access to loopback endpoints is forbidden.")
 
-    try:
-        addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-    except socket.gaierror as e:
-        host_lower = hostname.lower()
-        if (
-            host_lower in ("example.com", "test.com")
-            or host_lower.endswith((".example.com", ".example", ".test", ".test.com", ".invalid"))
-            or "pytest" in sys.modules
-            or os.environ.get("PYTEST_CURRENT_TEST")
-            or getattr(settings, "environment", "") == "test"
-        ):
-            addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))]
-        else:
-            raise ValueError(f"Failed to resolve hostname '{hostname}': {e}")
+    for attempt in range(len(DNS_RETRY_DELAYS) + 1):
+        try:
+            addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+            if not addr_info:
+                raise socket.gaierror("DNS returned no addresses")
+            break
+        except socket.gaierror as error:
+            if attempt == len(DNS_RETRY_DELAYS):
+                raise URLResolutionError(hostname) from error
+            logger.warning("DNS lookup failed for %s; retrying (%s/2)", hostname, attempt + 1)
+            time.sleep(DNS_RETRY_DELAYS[attempt])
 
     for info in addr_info:
         ip_str = info[4][0]
@@ -169,7 +167,24 @@ def safe_http_get(
     ) as client:
         redirect_count = 0
         while True:
-            response = client.get(current_url)
+            for attempt in range(len(DNS_RETRY_DELAYS) + 1):
+                try:
+                    response = client.get(current_url)
+                    break
+                except httpx.ConnectError as error:
+                    # The HTTP transport resolves again after URL validation.
+                    # Retry only DNS failures; validate all retry destinations.
+                    cause = error
+                    seen = set()
+                    while cause is not None and id(cause) not in seen and not isinstance(cause, socket.gaierror):
+                        seen.add(id(cause))
+                        cause = cause.__cause__ or cause.__context__
+                    if not isinstance(cause, socket.gaierror):
+                        raise
+                    if attempt == len(DNS_RETRY_DELAYS):
+                        raise URLResolutionError(urlparse(current_url).hostname) from error
+                    time.sleep(DNS_RETRY_DELAYS[attempt])
+                    current_url = validate_and_sanitize_url(current_url)
 
             is_redirect = getattr(response, "is_redirect", False) or getattr(response, "status_code", 0) in (301, 302, 303, 307, 308)
             if is_redirect:

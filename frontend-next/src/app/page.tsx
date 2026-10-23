@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, BriefcaseBusiness, LogOut, ShieldCheck, Users } from "lucide-react";
 import AdminWorkspace from "@/components/layout/admin-workspace";
@@ -10,20 +10,30 @@ import "@/components/recruiter/recruiter.css";
 
 export default function Home() {
   const cache = useQueryClient();
-  const session = useQuery({queryKey: ["workspace-session"], queryFn: () => api.session(), retry: false});
+  const session = useQuery({queryKey: ["workspace-session"], queryFn: () => api.session(), retry: false, refetchOnReconnect: false});
+  const [sessionExpired, setSessionExpired] = useState(false);
+  useEffect(() => {
+    const expire = () => setSessionExpired(true);
+    window.addEventListener("atos-session-expired", expire);
+    return () => window.removeEventListener("atos-session-expired", expire);
+  }, []);
   const [role, setRole] = useState<"admin" | "user">("user");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function logout() {
     setBusy(true);
-    try { await api.logout(); cache.clear(); setPassword(""); setError(""); }
+    try { await api.logout(); setSessionExpired(false); cache.clear(); setPassword(""); setError(""); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not sign out."); }
     finally { setBusy(false); }
   }
   if (session.isPending) return <div className="recruiter r-loading" role="status">Opening your workspace…</div>;
-  if (session.data?.role === "admin") return <><AdminWorkspace /><button className="r-admin-exit" onClick={logout} disabled={busy}><LogOut size={16}/> Sign out of Admin</button>{error && <div className="r-admin-error" role="alert">{error}</div>}</>;
-  if (session.data?.role === "user") return <RecruiterWorkspace onLogout={logout} />;
+  const reauthentication = session.data?.role ? <SessionReauthentication active={sessionExpired} role={session.data.role} onSignedIn={() => {
+    setSessionExpired(false);
+    void cache.invalidateQueries({predicate: query => query.queryKey[0] !== "workspace-session"});
+  }} onSignOut={logout}/> : null;
+  if (session.data?.role === "admin") return <><AdminWorkspace /><button className="r-admin-exit" onClick={logout} disabled={busy}><LogOut size={16}/> Sign out of Admin</button>{error && <div className="r-admin-error" role="alert">{error}</div>}{reauthentication}</>;
+  if (session.data?.role === "user") return <><RecruiterWorkspace onLogout={logout} />{reauthentication}</>;
   return <div className="recruiter r-login" data-theme="dark">
     <section className="r-login-story">
       <div className="r-brand"><span className="r-brand-mark">a</span><span>atos<span className="r-brand-divider"/>Talent screening</span></div>
@@ -45,4 +55,30 @@ export default function Home() {
       <small className="r-demo-note">Local demo access · Shared password: 1234</small>
     </form></section>
   </div>;
+}
+
+function SessionReauthentication({active, role, onSignedIn, onSignOut}: {active: boolean; role: "admin" | "user"; onSignedIn: () => void; onSignOut: () => Promise<void>}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (active && !dialog.current?.open) dialog.current?.showModal();
+    if (!active) dialog.current?.close();
+  }, [active]);
+  return <dialog ref={dialog} className="recruiter r-session-dialog" aria-labelledby="session-expired-title" onCancel={event => event.preventDefault()}>
+    <form onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setError("");
+      try {await api.login(role, password); setPassword(""); onSignedIn();}
+      catch (error) {setError(error instanceof Error ? error.message : "Unable to sign in.");}
+      finally {setBusy(false);}
+    }}>
+      <h2 id="session-expired-title">Sign in to continue</h2>
+      <p>Your session has expired. Your current form stays open. Sign in, then retry the action.</p>
+      <label className="r-field">{role === "admin" ? "Admin" : "User"} password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)}/></label>
+      {error && <div className="r-alert" role="alert">{error}</div>}
+      <button className="r-button primary" disabled={busy}>{busy ? "Signing in…" : "Sign in again"}</button>
+      <button type="button" className="r-button subtle" disabled={busy} onClick={() => void onSignOut()}>Sign out</button>
+    </form>
+  </dialog>;
 }

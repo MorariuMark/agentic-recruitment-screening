@@ -32,10 +32,23 @@ _GROQ_NEXT_CALL: Dict[str, float] = {}
 
 class ProviderCoolingDownError(RuntimeError):
     """A queued call was skipped after another worker exhausted this target."""
+    retryable = True
 
 
 class StructuredOutputTruncatedError(ValueError):
     """The response budget was exhausted, not an unavailable API credential."""
+
+
+class ProviderResponseError(RuntimeError):
+    """An upstream service returned no usable completion envelope."""
+    retryable = True
+
+
+def _completion_content(response, provider):
+    choices = getattr(response, "choices", None)
+    if not choices or getattr(choices[0], "message", None) is None:
+        raise ProviderResponseError(f"{provider} returned no completion choices; the upstream service is unavailable or returned an invalid response.")
+    return choices[0].message.content or ""
 
 
 def _is_document_output_error(error: Exception) -> bool:
@@ -71,6 +84,29 @@ def _retry_after_seconds(error: Exception) -> Optional[float]:
                 return seconds
     except (TypeError, ValueError):
         pass
+    def retry_info(value, depth=0):
+        if depth > 6:
+            return None
+        if isinstance(value, dict):
+            duration = value.get("retryDelay")
+            if isinstance(duration, str) and re.fullmatch(r"\d+(?:\.\d+)?s", duration):
+                return min(float(duration[:-1]), 86400)
+            children = value.values()
+        elif isinstance(value, list):
+            children = value
+        else:
+            return None
+        for child in children:
+            seconds = retry_info(child, depth + 1)
+            if seconds is not None:
+                return seconds
+        return None
+    structured_delay = retry_info(getattr(error, "body", None))
+    if structured_delay is not None:
+        return structured_delay
+    duration = re.search(r"retry in\s+(?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s", str(error), re.I)
+    if duration:
+        return min(int(duration.group(1) or 0) * 3600 + int(duration.group(2) or 0) * 60 + float(duration.group(3)), 86400)
     match = re.search(r"(?:try again in|retry after)\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?|m)?", str(error), re.I)
     if match:
         seconds = float(match.group(1))
@@ -424,7 +460,9 @@ class OpenRouterClient(BaseLLMClient):
             messages=messages,
             temperature=temperature,
         )
-        return response.choices[0].message.content or ""
+        content = _completion_content(response, "OpenRouter")
+        self._capture_usage(response, prompt, content)
+        return content
 
     def generate_structured(
         self,
@@ -456,7 +494,8 @@ class OpenRouterClient(BaseLLMClient):
                 kwargs["response_format"] = {"type": "json_object"}
 
             response = self.client.chat.completions.create(**kwargs)
-            raw_content = response.choices[0].message.content or ""
+            raw_content = _completion_content(response, "OpenRouter")
+            self._capture_usage(response, prompt, raw_content)
             parsed_dict = clean_and_parse_json(raw_content)
             return response_model.model_validate(parsed_dict)
         except Exception as err:
@@ -466,7 +505,8 @@ class OpenRouterClient(BaseLLMClient):
                     messages=messages,
                     temperature=temperature,
                 )
-                raw_content = response.choices[0].message.content or ""
+                raw_content = _completion_content(response, "OpenRouter")
+                self._capture_usage(response, prompt, raw_content)
                 parsed_dict = clean_and_parse_json(raw_content)
                 return response_model.model_validate(parsed_dict)
             raise err
@@ -618,6 +658,7 @@ class GroqClient(BaseLLMClient):
             "messages": messages,
             "temperature": temperature,
             "max_tokens": settings.groq_parser_max_output_tokens if response_model.__name__ == "ParsedCV"
+                else settings.groq_jd_max_output_tokens if response_model.__name__ == "StructuredJobPosting"
                 else min(700 if response_model.__name__ == "RequirementMatch" else 4096, settings.groq_max_output_tokens),
         }
         if self.model.startswith("qwen/qwen3"):
@@ -1381,11 +1422,11 @@ def record_model_failure(provider: str, model: str, error: Exception, key: Optio
         cooldown = 1800.0  # 30 minutes
     # Rate limit or quota exhaustion
     elif getattr(error, "status_code", None) == 429 or any(code in err_str for code in ["429", "rate_limit", "rate limit", "quota", "resource_exhausted"]):
-        if any(w in err_str for w in ["per day", "daily", "day limit", "quota per day", "hours"]):
-            cooldown = 900.0   # 15 minutes for daily quota exhaustion
+        retry_after = _retry_after_seconds(error)
+        if retry_after is not None:
+            cooldown = max(1.0, retry_after + .25)
         else:
-            retry_after = _retry_after_seconds(error)
-            cooldown = max(1.0, retry_after + .25) if retry_after is not None else 45.0
+            cooldown = 900.0 if any(w in err_str for w in ["per day", "daily", "day limit", "quota per day", "hours"]) else 45.0
     else:
         cooldown = 30.0        # 30 seconds for general errors / timeouts
 
@@ -1425,16 +1466,27 @@ def clear_all_model_cooldowns() -> None:
     _MODEL_COOLDOWNS.clear()
 
 
-def _cooling_down_error(chain, details=""):
+def _cooling_down_error(chain, details="", failures=()):
     now = time.time()
     expiries = []
+    all_cooling = True
     for provider, model, client in chain:
         key = getattr(client, "api_key", None)
         if not is_model_in_cooldown(provider, model, key):
-            return None
-        expiries.append(max(_MODEL_COOLDOWNS.get((provider.lower(), model, key), 0),
-                            _MODEL_COOLDOWNS.get((provider.lower(), model, None), 0)))
-    return LLMProvidersCoolingDownError(min(expiries) - now, details) if expiries else None
+            all_cooling = False
+        else:
+            expiries.append(max(_MODEL_COOLDOWNS.get((provider.lower(), model, key), 0),
+                                _MODEL_COOLDOWNS.get((provider.lower(), model, None), 0)))
+    temporary_failure = any(
+        getattr(error, "retryable", False) or isinstance(error, TimeoutError)
+        or getattr(error, "status_code", None) in (408, 429, 500, 502, 503, 504)
+        or re.search(r"\b429\b|rate.?limit|quota|timed?\s*out|connection error", str(error), re.I)
+        for error in failures)
+    # A slow fallback can outlast the first provider's cooldown. That does not
+    # turn an upstream outage into a permanent candidate evaluation failure.
+    if chain and (all_cooling or temporary_failure):
+        return LLMProvidersCoolingDownError(min(expiries) - now if expiries else 2, details)
+    return None
 
 
 class DynamicLLMClient(BaseLLMClient):
@@ -1651,6 +1703,7 @@ class DynamicLLMClient(BaseLLMClient):
         primary_prov, primary_mod, _ = chain[0]
         last_error: Optional[Exception] = None
         attempt_history: List[str] = []
+        attempt_errors: List[Exception] = []
 
         for idx, (prov, mod, client) in enumerate(chain):
             if fallback_enabled and is_model_in_cooldown(prov, mod, getattr(client, "api_key", None)):
@@ -1727,9 +1780,11 @@ class DynamicLLMClient(BaseLLMClient):
                 return result
             except ProviderCoolingDownError as err:
                 last_error = err
+                attempt_errors.append(err)
                 continue
             except Exception as err:
                 last_error = err
+                attempt_errors.append(err)
                 from backend.services.action_logger import action_logger
                 action_logger.record_action(
                     action_type=action_context[0],
@@ -1753,6 +1808,9 @@ class DynamicLLMClient(BaseLLMClient):
                         mod,
                         err,
                     )
+                    cooling = _cooling_down_error(chain, failures=[err])
+                    if cooling:
+                        raise cooling from err
                     raise RuntimeError(
                         f"Primary LLM engine [{prov} / {mod}] failed: {err} (Failover disabled)"
                     ) from err
@@ -1764,7 +1822,7 @@ class DynamicLLMClient(BaseLLMClient):
                 )
                 continue
 
-        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "")
+        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "", attempt_errors)
         if cooling:
             raise cooling from last_error
         raise RuntimeError(
@@ -1791,6 +1849,7 @@ class DynamicLLMClient(BaseLLMClient):
         primary_prov, primary_mod, _ = chain[0]
         last_error: Optional[Exception] = None
         attempt_history: List[str] = []
+        attempt_errors: List[Exception] = []
         document_rejected_models = set()
 
         for idx, (prov, mod, client) in enumerate(chain):
@@ -1880,9 +1939,11 @@ class DynamicLLMClient(BaseLLMClient):
                 return result
             except ProviderCoolingDownError as err:
                 last_error = err
+                attempt_errors.append(err)
                 continue
             except Exception as err:
                 last_error = err
+                attempt_errors.append(err)
                 from backend.services.action_logger import action_logger
                 action_logger.record_action(
                     action_type=action_context[0],
@@ -1908,6 +1969,9 @@ class DynamicLLMClient(BaseLLMClient):
                         mod,
                         err,
                     )
+                    cooling = _cooling_down_error(chain, failures=[err])
+                    if cooling:
+                        raise cooling from err
                     raise RuntimeError(
                         f"Primary LLM engine [{prov} / {mod}] failed: {err} (Failover disabled)"
                     ) from err
@@ -1919,7 +1983,7 @@ class DynamicLLMClient(BaseLLMClient):
                 )
                 continue
 
-        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "")
+        cooling = _cooling_down_error(chain, "Attempted: " + "; ".join(attempt_history) if attempt_history else "", attempt_errors)
         if cooling:
             raise cooling from last_error
         raise RuntimeError(

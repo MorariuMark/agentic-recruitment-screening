@@ -49,7 +49,9 @@ export interface PreScreenRow {
   experience_score: number | null;
   degree_score: number | null;
   checks: string[];
-  deep_status: "not_selected" | "pending" | "completed" | "failed";
+  deep_status: "not_selected" | "pending" | "completed" | "failed" | "deferred";
+  deep_requirement_matches?: RequirementMatch[];
+  retry_after?: number | null;
   deep_evaluation: MatchEvaluationResult | null;
   error?: string | null;
 }
@@ -68,7 +70,7 @@ export interface ScreeningRun {
   ended_at?: number;
   attempt?: number;
   profile_hashes?: Record<string,string>;
-  diagnostics?: {warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
+  diagnostics?: {version?: string; warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
   duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation" | "same_document_or_contact"}>;
   started_at?: number;
   id: string;

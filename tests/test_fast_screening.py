@@ -122,7 +122,7 @@ def test_invalid_embedding_response_fails_explicitly(vectors):
 def funnel(monkeypatch):
     client = TestClient(app)
     job = JobDescription(title="Screening test role", requirements=[requirement()])
-    candidates = [AnonymizedCandidate(anonymized_skills=["Python"] if i < 2 else ["Excel"]) for i in range(4)]
+    candidates = [AnonymizedCandidate(anonymized_skills=["Python"] if i < 2 else ["Excel"], sanitized_text="Built Python services" if i < 2 else "Used Excel reports") for i in range(4)]
     async def seed():
         await DatabaseRepository.save_job(job)
         for i, candidate in enumerate(candidates):
@@ -164,6 +164,25 @@ def test_pre_screen_only_never_calls_llm(funnel):
     run = start(deep_evaluation=False)
     assert len(run["rows"]) == 4 and not calls and len(embeddings) == 1
     assert all(r["deep_status"] == "not_selected" for r in run["rows"])
+
+
+def test_sparse_job_warns_that_scores_do_not_establish_role_suitability(funnel):
+    *_, start = funnel
+    run = start(deep_evaluation=False)
+    warnings = " ".join(run["diagnostics"]["warnings"])
+    assert "only 1 active requirement" in warnings
+    assert "No original job description" in warnings
+
+
+def test_missing_original_source_does_not_waste_automatic_deep_budget(funnel):
+    client, job, candidates, calls, _, start = funnel
+    candidates[0].sanitized_text = ""
+    asyncio.run(DatabaseRepository.save_candidate(
+        ParsedCV(contact_info=ContactInfo(full_name="Source unavailable"), skills=["Python"]), candidates[0]))
+    run = start(top_k=2)
+    assert len(calls) == 2
+    assert candidates[0].candidate_id not in calls
+    assert any("no original CV source text" in warning for warning in run["diagnostics"]["warnings"])
 
 
 def test_improved_pipeline_cache_and_legacy_api_compatibility(funnel):
@@ -260,6 +279,60 @@ def test_retry_does_not_use_modified_candidate_data(funnel, monkeypatch):
     candidates[0].anonymized_skills.append("Changed content")
     asyncio.run(DatabaseRepository.save_candidate(ParsedCV(contact_info=ContactInfo(full_name="Test Candidate 0")), candidates[0]))
     assert client.post(f"/api/v1/screening/runs/{run['id']}/retry").status_code == 409
+
+
+def test_provider_deferral_persists_requirement_checkpoint_for_retry(funnel, monkeypatch):
+    from backend.agents.matching_agent import EvaluationDeferredError
+    from backend.config import settings
+    client, job, candidates, _, _, start = funnel
+    job.requirements.append(requirement("Collaboration"))
+    asyncio.run(DatabaseRepository.save_job(job))
+    original = MatchingAgent.match_candidate
+    checkpoint = RequirementMatch(requirement_id=job.requirements[0].id, status="met", score=1, reasoning="Completed before quota exhaustion")
+    def limited(self, candidate, job_description):
+        self.completed_matches = [checkpoint]
+        raise EvaluationDeferredError(job_description.requirements[1], 60)
+    monkeypatch.setattr(settings, "screening_provider_wait_seconds", 0)
+    monkeypatch.setattr(MatchingAgent, "match_candidate", limited)
+    run = start(candidate_ids=[str(candidates[0].candidate_id)], top_k=1)
+    row = run["rows"][0]
+    assert run["status"] == "partial" and row["deep_status"] == "deferred"
+    assert row["deep_evaluation"] is None and row["retry_after"] == 60
+    assert [match["requirement_id"] for match in row["deep_requirement_matches"]] == [checkpoint.requirement_id]
+    timings = client.get(f"/api/v1/screening/statistics/actions?run_id={run['id']}&operation=screening_run").json()
+    assert timings["history"][0]["status"] == "deferred"
+    assert timings["history"][0]["failed_count"] == 0
+    def recover(self, candidate, job_description):
+        assert [match.requirement_id for match in self.resume_matches] == [checkpoint.requirement_id]
+        result = original(self, candidate, job_description)
+        result.requirement_matches.append(RequirementMatch(requirement_id=job_description.requirements[1].id, status="clarification_needed", score=.5, reasoning="Needs candidate confirmation"))
+        return result
+    monkeypatch.setattr(MatchingAgent, "match_candidate", recover)
+    assert client.post(f"/api/v1/screening/runs/{run['id']}/retry").status_code == 202
+    updated = client.get(f"/api/v1/screening/runs/{run['id']}").json()
+    assert updated["status"] == "completed" and updated["rows"][0]["error"] is None
+
+
+def test_brief_provider_cooldown_is_retried_with_a_bounded_wait(funnel, monkeypatch):
+    from backend.agents.matching_agent import EvaluationDeferredError
+    from backend.config import settings
+    client, _, candidates, _, _, start = funnel
+    original = MatchingAgent.match_candidate
+    attempts = []
+    delays = []
+    def temporary(self, candidate, job_description):
+        attempts.append(candidate.candidate_id)
+        if len(attempts) == 1:
+            raise EvaluationDeferredError(job_description.requirements[0], 1)
+        return original(self, candidate, job_description)
+    async def wait(delay):
+        delays.append(delay)
+    monkeypatch.setattr(settings, "screening_provider_wait_seconds", 2)
+    monkeypatch.setattr(recruiter, "_wait_for_evaluation_provider", wait)
+    monkeypatch.setattr(MatchingAgent, "match_candidate", temporary)
+    run = start(candidate_ids=[str(candidates[0].candidate_id)], top_k=1)
+    assert run["status"] == "completed" and len(attempts) == 2
+    assert delays == [1]
 
 
 @pytest.mark.parametrize("options", [{"pipeline_version": "v3"}, {"rerank_pool_size": 0}, {"rerank_pool_size": 201}, {"evidence_per_requirement": 4}])
@@ -523,7 +596,8 @@ async def test_concurrent_parsing_bounded_and_progress_serialized(monkeypatch):
         results.append((result, is_success))
     monkeypatch.setattr(BatchProcessorService, "process_single_candidate", process)
     monkeypatch.setattr(DatabaseRepository, "update_batch_progress", save)
-    await routes._batch_processor.execute_parse_batch(uuid4(), [(name, b"cv") for name in ["bad.txt", *[f"{i}.txt" for i in range(8)]]])
+    batch = await DatabaseRepository.create_batch_job(total_files=9)
+    await routes._batch_processor.execute_parse_batch(UUID(batch.id), [(name, b"cv") for name in ["bad.txt", *[f"{i}.txt" for i in range(8)]]])
     assert 1 < peak <= 4 and len(results) == 9
     assert sum(success for _, success in results) == 8
 

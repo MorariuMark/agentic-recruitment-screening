@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import copy
 import json
+import logging
 import secrets
 import time
 from typing import Literal
@@ -17,7 +18,8 @@ from pydantic import Field
 from sqlalchemy import func, select
 
 from backend.api import routes as existing
-from backend.agents.matching_agent import MatchingAgent
+from backend.api.job_errors import job_parse_http_error
+from backend.agents.matching_agent import MatchingAgent, EvaluationDeferredError
 from backend.agents.llm_factory import DynamicLLMClient
 from backend.config import settings
 from backend.schemas.models_catalog import CATALOG_PROVIDERS
@@ -26,6 +28,7 @@ from backend.db.repository import DatabaseRepository
 from backend.db.session import async_session_scope
 from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription
+from backend.schemas.match import RequirementMatch
 from backend.schemas.screening import DeepEvaluationRequest, FastRankRequest, PreScreenRow, ReviewDecision, ShortlistRequest
 from backend.services.operation_timing import record_operation, measure, operation_statistics
 from backend.services.pre_ranking import PreRankingEngine
@@ -38,6 +41,10 @@ auth_router = APIRouter(prefix="/api/v1", tags=["Authentication"])
 _run_lock = asyncio.Lock()
 _screening_slots = asyncio.Semaphore(2)
 _RERANKER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="recruiter_reranker")
+
+
+async def _wait_for_evaluation_provider(delay):
+    await asyncio.sleep(delay)
 
 
 @router.get("/screening/statistics")
@@ -234,8 +241,13 @@ async def hybrid_rank(payload, candidates, job, embedding_fn):
             rows = await asyncio.wait_for(loop.run_in_executor(_RERANKER_EXECUTOR, lambda: engine.rerank(rows_copy, job, reranker, rerank_pool)), timeout=settings.screening_reranker_timeout_seconds)
             engine.diagnostics["reranker_model"] = reranker.model_name
         except Exception as error:
+            logging.exception("Screening reranker failed for model %s", settings.screening_reranker_model)
             engine.diagnostics["warnings"].append("Local reranker unavailable or timed out; hybrid order retained.")
             engine.diagnostics["reranker_error"] = type(error).__name__
+            engine.diagnostics["reranker_model"] = settings.screening_reranker_model
+            engine.diagnostics["warnings"].append(
+                f"Reranker model: {settings.screening_reranker_model}. "
+                "Retry reranking; if local model files are missing, run scripts/cache_screening_reranker.py.")
             engine.diagnostics["reranker_fallback"] = True
         engine.diagnostics["timings_ms"]["reranking"] = round((time.perf_counter() - started) * 1000, 2)
     engine.diagnostics["reranked_candidates"] = sum(row.reranked for row in rows)
@@ -265,7 +277,8 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                     rows = await hybrid_rank(payload, candidates, job, embedding_fn)
                 else:
                     rows = await asyncio.to_thread(PreRankingEngine(embedding_fn).rank, candidates, job)
-            selected = [row for row in rows if row.language_priority == 0][:payload["top_k"]] if payload["deep_enabled"] else []
+            source_ready = {str(candidate.candidate_id) for candidate in candidates if candidate.sanitized_text.strip()}
+            selected = [row for row in rows if row.language_priority == 0 and str(row.candidate_id) in source_ready][:payload["top_k"]] if payload["deep_enabled"] else []
             deferred = sum(row.language_priority > 0 for row in rows)
             if deferred:
                 payload.setdefault("diagnostics", {}).setdefault("warnings", []).append(
@@ -276,6 +289,17 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                 payload.setdefault("diagnostics", {}).setdefault("warnings", []).append(
                     f"{missing_source} profiles have no original CV source text. Their structured profiles can be ranked, "
                     "but deep evaluation is unavailable until the original CV is reparsed; this is not a negative candidate finding.")
+        warnings = payload.setdefault("diagnostics", {}).setdefault("warnings", [])
+        active_requirements = sum(req.weight > 0 for req in job.requirements)
+        if active_requirements < 3:
+            warning = (f"This job has only {active_requirements} active requirement(s). Scores cover only those criteria; "
+                       "100% does not establish overall suitability for the job title. Review the job requirements before shortlisting.")
+            if warning not in warnings:
+                warnings.append(warning)
+        if not (job.raw_text or "").strip():
+            warning = "No original job description is stored. Confirm that the configured requirements fully describe the intended role."
+            if warning not in warnings:
+                warnings.append(warning)
         for row in selected:
             row.deep_status = "pending"
             row.error = None
@@ -294,16 +318,37 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             agent.execution_context = {"run_id": payload["id"], "attempt": payload.get("attempt", 1), "job_id": str(job.id)}
         selected_ids = {str(row.candidate_id) for row in selected}
         deep_started = time.perf_counter()
+        provider_wait_remaining = settings.screening_provider_wait_seconds
         for row in [row for row in payload["rows"] if row["candidate_id"] in selected_ids]:
-            try:
-                async with measure("candidate_screening", candidate_id=row["candidate_id"], label=f"Candidate {row['candidate_id'][:8]}"):
-                    result = await asyncio.to_thread(agent.match_candidate, candidate=profiles[row["candidate_id"]], job_description=job)
-                    await DatabaseRepository.save_evaluation(result, row["candidate_id"], job.id)
-                row["deep_evaluation"] = result.model_dump(mode="json")
-                row["deep_status"] = "completed"
-            except Exception as error:
-                row["deep_status"] = "failed"
-                row["error"] = str(error)
+            while True:
+                agent.resume_matches = [RequirementMatch.model_validate(match) for match in row.get("deep_requirement_matches", [])]
+                agent.completed_matches = []
+                try:
+                    async with measure("candidate_screening", candidate_id=row["candidate_id"], label=f"Candidate {row['candidate_id'][:8]}"):
+                        result = await asyncio.to_thread(agent.match_candidate, candidate=profiles[row["candidate_id"]], job_description=job)
+                        await DatabaseRepository.save_evaluation(result, row["candidate_id"], job.id)
+                    row.update(deep_evaluation=result.model_dump(mode="json"), deep_status="completed", error=None, retry_after=None)
+                    row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
+                    break
+                except EvaluationDeferredError as error:
+                    row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
+                    delay = max(1.0, error.retry_after)
+                    row.update(deep_status="deferred", error=str(error), retry_after=delay)
+                    if delay > min(provider_wait_remaining, 30):
+                        break
+                    payload["phase"] = f"Waiting for AI providers; retrying unfinished criteria in {delay:.0f}s"
+                    await save_run(payload)
+                    await _wait_for_evaluation_provider(delay)
+                    provider_wait_remaining -= delay
+                    row.update(deep_status="pending", error=None, retry_after=None)
+                    payload["phase"] = "Deep evaluating unfinished criteria"
+                except Exception as error:
+                    row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
+                    row.update(deep_status="failed", error=str(error))
+                    break
+            for warning in getattr(agent, "retrieval_warnings", []):
+                if warning not in warnings:
+                    warnings.append(warning)
             try:
                 from backend.services.action_logger import action_logger
                 await action_logger.persist_run(payload["id"])
@@ -311,12 +356,12 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                 payload.setdefault("diagnostics", {}).setdefault("warnings", []).append("Action log persistence failed; trace may be incomplete.")
             await save_run(payload)
         payload.setdefault("diagnostics", {}).setdefault("timings_ms", {})["deep_evaluation"] = round((time.perf_counter() - deep_started) * 1000, 2)
-        payload["status"] = "partial" if any(r["deep_status"] == "failed" for r in payload["rows"]) else "completed"
+        payload["status"] = "partial" if any(r["deep_status"] in {"failed", "deferred"} for r in payload["rows"]) else "completed"
         representatives = {item["candidate_id"]: item["kept_candidate_id"] for item in payload.get("duplicates", [])}
         for item in payload.get("duplicates", []):
             while item["kept_candidate_id"] in representatives:
                 item["kept_candidate_id"] = representatives[item["kept_candidate_id"]]
-        payload["phase"] = "Completed" if payload["status"] == "completed" else "Completed with evaluation errors"
+        payload["phase"] = "Completed" if payload["status"] == "completed" else "Completed with deferred or unavailable evaluations"
     except Exception as error:
         payload["status"] = "failed"
         payload["error"] = str(error)
@@ -545,8 +590,8 @@ async def parse_job_draft(request: existing.JobTextParseRequest):
     """Extract an editable draft without creating a second, hidden job record."""
     try:
         return await asyncio.to_thread(existing._job_parser_agent.parse_job_text, request.text)
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
+    except Exception as error:
+        raise job_parse_http_error(error) from error
 
 
 @router.post("/screening/jobs/parse-url")
@@ -555,8 +600,8 @@ async def parse_job_url_draft(request: existing.JobUrlParseRequest):
     """Use the same URL extraction engine as Admin, returning a draft for review."""
     try:
         return await asyncio.to_thread(existing._job_parser_agent.parse_job_url, request.url)
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
+    except Exception as error:
+        raise job_parse_http_error(error) from error
 
 
 @router.post("/screening/cohort/upload", status_code=202)

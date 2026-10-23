@@ -304,6 +304,10 @@
 .r-question details {font-size: 12px; color: var(--r-accent); margin-top: 14px;}
 .r-profile-dialog {position: fixed; inset: 0 0 0 auto; margin: 0; width: min(760px,94vw); max-width: 94vw; height: 100dvh; max-height: 100dvh; border: 0; border-left: 1px solid var(--r-line); padding: 0;}
 .r-profile-dialog::backdrop {background: #06090db3;}
+.r-session-dialog {width: min(440px, 92vw); margin: auto; padding: 28px; border: 1px solid var(--r-line); border-radius: 12px;}
+.r-session-dialog::backdrop {background: #06090dcc;}
+.r-session-dialog p {margin: 12px 0 20px; color: var(--r-muted);}
+.r-session-dialog .r-button {margin: 18px 10px 0 0;}
 .r-profile-dialog > header {display: flex; align-items: center; justify-content: space-between; padding: 24px 28px; border-bottom: 1px solid var(--r-line); position: sticky; top: 0; background: var(--r-panel); z-index: 2;}
 .r-profile-content {padding: 28px;}
 .r-profile-content > h3 {margin: 24px 0 15px; font-size: 17px;}

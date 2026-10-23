@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 import hashlib
+import logging
+from threading import Lock
 
 import chromadb
 from chromadb.config import Settings
@@ -15,6 +17,11 @@ from chromadb.utils import embedding_functions
 from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription, JobRequirement
 from backend.services.evidence import clean_model_text
+from backend.config import settings
+
+
+class EvidenceRetrievalError(RuntimeError):
+    """The evidence index failed; this is independent of the LLM provider."""
 
 
 DEFAULT_CHROMA_PATH = "./data/chroma_db"
@@ -23,15 +30,17 @@ DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 # Global module-level cache for SentenceTransformer embedding functions
 # Prevents reloading PyTorch weights into memory repeatedly across instances/tests
 _EMBEDDING_FUNCTION_CACHE: Dict[str, Any] = {}
+_EMBEDDING_FUNCTION_LOCK = Lock()
 
 
 def get_cached_embedding_function(model_name: str = DEFAULT_EMBEDDING_MODEL) -> Any:
     """Returns a process-wide cached SentenceTransformerEmbeddingFunction instance."""
-    if model_name not in _EMBEDDING_FUNCTION_CACHE:
-        _EMBEDDING_FUNCTION_CACHE[model_name] = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=model_name
-        )
-    return _EMBEDDING_FUNCTION_CACHE[model_name]
+    with _EMBEDDING_FUNCTION_LOCK:
+        if model_name not in _EMBEDDING_FUNCTION_CACHE:
+            _EMBEDDING_FUNCTION_CACHE[model_name] = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=model_name
+            )
+        return _EMBEDDING_FUNCTION_CACHE[model_name]
 
 
 class VectorStoreService:
@@ -39,12 +48,12 @@ class VectorStoreService:
 
     def __init__(
         self,
-        persist_directory: str = DEFAULT_CHROMA_PATH,
-        model_name: str = DEFAULT_EMBEDDING_MODEL,
+        persist_directory: Optional[str] = None,
+        model_name: Optional[str] = None,
     ) -> None:
-        self.persist_directory = persist_directory
-        self.model_name = model_name
-        self.client = chromadb.PersistentClient(path=persist_directory)
+        self.persist_directory = persist_directory or settings.chroma_db_dir
+        self.model_name = model_name or settings.embedding_model
+        self.client = chromadb.PersistentClient(path=self.persist_directory)
         self._embedding_fn = None
         self._candidate_collection = None
         self._job_collection = None
@@ -321,7 +330,8 @@ class VectorStoreService:
                 n_results=n_results,
             )
         except Exception as error:
-            raise RuntimeError("Candidate evidence retrieval is unavailable; retry this evaluation.") from error
+            logging.exception("Candidate evidence retrieval failed for candidate %s", candidate_id)
+            raise EvidenceRetrievalError("Candidate evidence retrieval is unavailable; retry this evaluation.") from error
 
         # 4. Unpack ChromaDB's 2D batch response structure into a clean list of dictionaries
         formatted: List[Dict[str, Any]] = []

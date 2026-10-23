@@ -139,7 +139,9 @@ def record_operation(operation, describe=None):
                                 if evaluated_ids is not None:
                                     rows = [row for row in rows if row["candidate_id"] in evaluated_ids]
                                 failures = sum(row.get("deep_status") == "failed" for row in rows)
-                                timing.update(status=run.payload["status"], completed_count=len(rows) - failures,
+                                deferred = sum(row.get("deep_status") == "deferred" for row in rows)
+                                status = "deferred" if deferred == len(rows) and rows else run.payload["status"]
+                                timing.update(status=status, completed_count=len(rows) - failures - deferred,
                                               failed_count=failures)
                 except Exception:
                     logger.exception("Could not enrich operation timing %s", timing["id"])

@@ -3,11 +3,12 @@ backend/config.py
 Application settings and configuration management using Pydantic Settings.
 """
 
-import secrets
+from pathlib import Path
 
 from typing import Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from backend.services.session_secret import load_or_create_session_secret
 
 
 class Settings(BaseSettings):
@@ -23,13 +24,16 @@ class Settings(BaseSettings):
     screening_reranker_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     screening_reranker_load_timeout_seconds: float = Field(default=180.0, gt=0, le=600)
     screening_embedding_cache_version: str = "1"
+    screening_provider_wait_seconds: float = Field(default=30, ge=0, le=120,
+        description="Maximum total cooldown wait per screening run before deferring unfinished evaluations")
 
     # Authentication & Authorization Settings (E4)
     auth_required: bool = Field(default=True, description="Enforce strict authentication at API boundary")
     auth_admin_password: str = Field(default="AdminSecret2026!", description="Admin password")
     auth_user_password: str = Field(default="Recruiter2026!", description="Recruiter user password")
     auth_demo_mode: bool = Field(default=True, description="Enable scoped demo fallback access")
-    auth_secret_key: str = Field(default_factory=lambda: secrets.token_urlsafe(48), description="Session signing key; configure AUTH_SECRET_KEY for stable sessions across restarts and workers")
+    auth_secret_file: str = Field(default=str(Path(__file__).resolve().parents[1] / "data" / ".auth_session_secret"), description="Persistent local session signing key when AUTH_SECRET_KEY is not configured")
+    auth_secret_key: str = Field(default_factory=lambda data: load_or_create_session_secret(data["auth_secret_file"]), min_length=32, description="Session signing key; use the same AUTH_SECRET_KEY across deployment replicas")
 
     # Active LLM Provider: 'agnes', 'groq', 'openrouter', 'nvidia_nim', 'gemini', 'ollama', or 'lmstudio'
     llm_provider: Literal["agnes", "groq", "openrouter", "nvidia_nim", "gemini", "ollama", "lmstudio"] = Field(
@@ -92,6 +96,8 @@ class Settings(BaseSettings):
         description="Per-request Groq output reservation; keep below the account OTPM allowance")
     groq_parser_max_output_tokens: int = Field(default=8192, ge=1024, le=32768,
         description="Groq output budget for a complete CV profile, separate from short screening decisions")
+    groq_jd_max_output_tokens: int = Field(default=8192, ge=1024, le=32768,
+        description="Groq output budget for a complete job description and atomic requirements")
     parser_provider_wait_seconds: float = Field(default=90, ge=0, le=3600,
         description="Wait for temporary provider cooldowns before preserving an interrupted parsing batch")
 

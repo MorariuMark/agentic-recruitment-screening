@@ -5,7 +5,7 @@ Semantic matching agent for evaluating candidate-JD alignment and gap proposals.
 Retrieves candidate evidence chunks via ChromaDB and performs grounded LLM reasoning.
 """
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import logging
 import re
@@ -13,7 +13,7 @@ import time
 from typing import List, Optional
 from uuid import UUID
 
-from backend.agents.llm_factory import BaseLLMClient, get_llm_client
+from backend.agents.llm_factory import BaseLLMClient, DynamicLLMClient, LLMProvidersCoolingDownError, get_llm_client
 from backend.config import settings
 from backend.schemas.cv import AnonymizedCandidate
 from backend.schemas.job import JobDescription, JobRequirement
@@ -26,7 +26,7 @@ from backend.schemas.match import (
 from backend.schemas.token_usage import ActionAuditInfo
 from backend.services.scoring_engine import ScoringEngine
 from backend.services.skill_equivalence import SkillEquivalenceService
-from backend.services.vector_store import VectorStoreService
+from backend.services.vector_store import EvidenceRetrievalError, VectorStoreService
 from backend.services.evidence import assess_language, documented_language_quote, relevant_source_passages, clean_model_text, source_quote, source_passages
 
 
@@ -37,6 +37,15 @@ class EvaluationProviderError(RuntimeError):
 
 class EvaluationSourceError(ValueError):
     """Original source is unavailable; missing source is not a negative finding."""
+
+
+class EvaluationDeferredError(EvaluationProviderError):
+    """Provider capacity is unavailable; retain completed criteria for retry."""
+    retryable = True
+
+    def __init__(self, requirement, retry_after):
+        self.retry_after = max(1, retry_after)
+        super().__init__(f"AI providers are temporarily unavailable for '{requirement.title}'. Completed criteria are retained; retry unfinished screening later.")
 
 
 HEDGE_PHRASES = [
@@ -124,13 +133,15 @@ MATCHING_SYSTEM_PROMPT = """You are an objective, evidence-driven HR Technical E
 Determine if candidate evidence chunks satisfy the specified Job Requirement.
 
 Evaluation Principles:
-- "met": Positive evidence meeting requirement. Assign score: 1.0 (100%) whenever the requirement is clearly satisfied by the candidate's evidence. Only assign 0.85-0.95 if the requirement is met with a minor caveat. Extract exact verbatim citation quotes.
+- "met": Direct evidence satisfying the entire requirement, including its description and context. Use 0.8-1.0 according to evidence completeness; reserve 1.0 for complete proof. Extract exact verbatim citation quotes.
 - "partial": Related or adjacent evidence (score: 0.4-0.79). Extract exact verbatim citation quotes.
 - "clarification_needed": Interpretive, logistical, or soft-skill requirement (e.g. shifts, travel, relocation, willingness to learn, teamwork) where the CV is silent. DO NOT mark as not_met; set score: 0.5, is_objective: false, and provide a clear Yes/No screening question in clarification_question.
 - "not_met": Objective credential or skill (degree, years of experience, programming language, tool) is genuinely absent (score: 0.0-0.39, citations: []).
 
 Grounding Rule:
-- All citation quotes MUST be exact, verbatim substrings from candidate chunks. Do not paraphrase."""
+- All citation quotes MUST be exact, verbatim substrings from candidate chunks. Do not paraphrase.
+- A skill listing does not prove applied experience, REST APIs, microservices, production deployment, or tenure.
+- Do not infer that a project used a listed tool unless the source explicitly connects them. Related experience is partial; missing context needs clarification."""
 
 
 def _build_strictness_instruction(strictness: int) -> str:
@@ -139,14 +150,14 @@ def _build_strictness_instruction(strictness: int) -> str:
     if s <= 30:
         return (
             f"Evaluation Strictness: {s}/100 (LENIENT / INCLUSIVE). "
-            "Be generous and potential-focused: give full 1.0 (100%) credit whenever the candidate has direct or closely equivalent experience. "
-            "Treat adjacent tools, related coursework, or transferable project experience as strong positive evidence."
+            "Recognize transferable experience as partial evidence, while distinguishing it from direct proof. "
+            "Do not waive required context or invent connections between skills and projects."
         )
     elif s <= 65:
         return (
             f"Evaluation Strictness: {s}/100 (BALANCED / STANDARD). "
-            "Award a full 1.0 (100%) score whenever the candidate satisfies the requirement without gaps. "
-            "Do not artificially cap met requirements at 0.90."
+            "Score the completeness of direct evidence for the entire requirement. "
+            "Use partial credit for skill listings or unverified application context."
         )
     elif s <= 85:
         return (
@@ -174,6 +185,21 @@ class MatchingAgent:
         self.llm_client = llm_client or get_llm_client()
         self.vector_store = vector_store or VectorStoreService()
         self.scoring_engine = scoring_engine or ScoringEngine()
+        self.retrieval_warnings: list[str] = []
+        self.resume_matches: List[RequirementMatch] = []
+        self.completed_matches: List[RequirementMatch] = []
+
+    def _retrieve_chunks(self, candidate_id, query_text, n_results, candidate=None):
+        try:
+            return self.vector_store.query_candidate_chunks(
+                candidate_id=candidate_id, query_text=query_text, n_results=n_results)
+        except EvidenceRetrievalError:
+            if not candidate or not candidate.sanitized_text.strip():
+                raise
+            warning = f"Candidate {candidate_id}: semantic retrieval unavailable; evaluated against original CV passages."
+            if warning not in self.retrieval_warnings:
+                self.retrieval_warnings.append(warning)
+            return []
 
     def evaluate_requirement(
         self,
@@ -204,10 +230,11 @@ class MatchingAgent:
 
         # 1. Retrieve the most relevant candidate chunks from ChromaDB for this requirement
         query_text = f"{requirement.title}: {requirement.description}".strip()
-        retrieved_chunks = self.vector_store.query_candidate_chunks(
+        retrieved_chunks = self._retrieve_chunks(
             candidate_id=candidate_id,
             query_text=query_text,
             n_results=n_chunks,
+            candidate=candidate,
         )
 
         # Ensure language chunks are included if requirement is genuinely about language/communication
@@ -231,10 +258,11 @@ class MatchingAgent:
 
         chunk_types = {c.get("metadata", {}).get("type") for c in retrieved_chunks}
         if is_language_req and "languages" not in chunk_types:
-            lang_chunks = self.vector_store.query_candidate_chunks(
+            lang_chunks = self._retrieve_chunks(
                 candidate_id=candidate_id,
                 query_text="Candidate Languages & Communication English German Romanian linguistic competency",
                 n_results=1,
+                candidate=candidate,
             )
             for lc in lang_chunks:
                 if lc.get("metadata", {}).get("type") == "languages":
@@ -242,10 +270,11 @@ class MatchingAgent:
                     break
 
         if is_cert_req and "certifications" not in chunk_types:
-            cert_chunks = self.vector_store.query_candidate_chunks(
+            cert_chunks = self._retrieve_chunks(
                 candidate_id=candidate_id,
                 query_text="Certifications & Licences Driving Licence",
                 n_results=1,
+                candidate=candidate,
             )
             for cc in cert_chunks:
                 if cc.get("metadata", {}).get("type") == "certifications":
@@ -280,7 +309,7 @@ class MatchingAgent:
             if re.search(r"\btickets?\b|\bticketing\b", f"{requirement.title} {requirement.description}", re.I):
                 recovered = [quote for quote in recovered if relevant_source_passages(
                     quote, f"{requirement.title} {requirement.description}", 1)]
-            evidence_text = "\n\n".join(list(dict.fromkeys([*recovered, *original]))[:n_chunks])
+            evidence_text = "\n\n".join(list(dict.fromkeys([*original, *recovered]))[:n_chunks])
         else:
             evidence_text = "\n\n".join(evidence_lines)
         is_interpretive = is_interpretive_requirement(requirement)
@@ -309,7 +338,7 @@ class MatchingAgent:
             f"Evaluate whether the candidate meets this requirement. Respond ONLY with valid JSON conforming to the RequirementMatch schema.\n"
             f"Set requirement_id to '{requirement.id}'.\n"
             f"Keep reasoning concise (at most three sentences) and cite at most two relevant source passages. Omit optional fields that do not apply.\n"
-            f"IMPORTANT: If the requirement is clearly satisfied, set status to 'met' and score to 1.0 (100%).\n"
+            f"Evaluate the full description. A tool mention alone cannot establish its required application context.\n"
             f"If Type is INTERPRETIVE / LOGISTICAL / SOFT-SKILL and the candidate CV is silent on it, set status to 'clarification_needed', is_objective to false, score to 0.5, and provide an actionable Yes/No question in clarification_question."
         )
 
@@ -501,22 +530,12 @@ class MatchingAgent:
                     else:
                         match_result.gap_analysis += " (Flagged for recruiter interview probe.)"
 
-            # F. Strictness Calibration & Perfect-Match 100% Normalization
-            if match_result.status == MatchStatus.MET:
-                has_explicit_gap = bool(match_result.gap_analysis and match_result.gap_analysis.strip())
-                if strictness_clamped <= 80 and not has_explicit_gap and match_result.score >= 0.80:
-                    match_result.score = 1.0
-                elif strictness_clamped <= 90 and not has_explicit_gap and match_result.score >= 0.88:
-                    match_result.score = 1.0
-            elif match_result.status == MatchStatus.PARTIAL:
+            # F. Calibrate partial evidence without promoting it to complete proof.
+            if match_result.status == MatchStatus.PARTIAL:
                 if strictness_clamped < 50:
                     # Boost partial scores under lenient settings (up to +0.20 at strictness=0)
                     boost = ((50 - strictness_clamped) / 50.0) * 0.20
-                    match_result.score = round(min(0.95, match_result.score + boost), 2)
-                    if strictness_clamped <= 20 and match_result.score >= 0.85 and len(match_result.citations) > 0:
-                        match_result.status = MatchStatus.MET
-                        match_result.score = 1.0
-                        match_result.gap_analysis = None
+                    match_result.score = round(min(0.79, match_result.score + boost), 2)
                 elif strictness_clamped > 70:
                     # Apply stricter penalty under high strictness (up to -0.15 at strictness=100)
                     penalty = ((strictness_clamped - 70) / 30.0) * 0.15
@@ -564,7 +583,12 @@ class MatchingAgent:
         )
 
         # 1. Ensure candidate is indexed in vector store
-        self.vector_store.index_candidate(candidate)
+        try:
+            self.vector_store.index_candidate(candidate)
+        except Exception:
+            logging.exception("Candidate index unavailable for %s; using original CV", candidate.candidate_id)
+            self.retrieval_warnings.append(
+                f"Candidate {candidate.candidate_id}: indexing unavailable; original CV remains available for evaluation.")
         progress_tracker.increment_step(
             task_key="candidate_evaluation",
             phase=f"Evaluating {req_count} job criteria with AI (Strictness: {strictness_clamped}%)...",
@@ -575,7 +599,12 @@ class MatchingAgent:
             # 2. Evaluate all requirements in the JD concurrently
             matches: List[RequirementMatch] = []
             active_requirements = [req for req in job_description.requirements if req.weight > 0]
-            if active_requirements:
+            active_ids = {req.id for req in active_requirements}
+            self.completed_matches = [match.model_copy(deep=True) for match in self.resume_matches if match.requirement_id in active_ids]
+            self.resume_matches = []
+            matched_ids = {match.requirement_id for match in self.completed_matches}
+            remaining_requirements = [req for req in active_requirements if req.id not in matched_ids]
+            if remaining_requirements:
                 completed_counter = [0]
 
                 def _evaluate_single(req: JobRequirement) -> RequirementMatch:
@@ -596,28 +625,39 @@ class MatchingAgent:
                             item_completed=req.title,
                         )
                         return res
+                    except EvidenceRetrievalError:
+                        raise
+                    except LLMProvidersCoolingDownError as error:
+                        raise EvaluationDeferredError(req, error.retry_after) from error
                     except Exception as e:
-                        logging.error(f"Error evaluating requirement {req.id} ({req.title}): {e}")
+                        logging.exception("Error evaluating requirement %s (%s)", req.id, req.title)
                         raise EvaluationProviderError(
                             f"Evaluation provider error on requirement '{req.title}' ({req.id}): {e}"
                         ) from e
 
-                max_workers = min(len(active_requirements), 4)
+                max_workers = min(len(remaining_requirements), 4)
                 provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
-                is_rate_sensitive = "groq" in provider_type
+                snapshot = getattr(self.llm_client, "_snapshot_chain", [])
+                primary_provider = snapshot[0][0] if snapshot else settings.llm_provider
+                is_rate_sensitive = "groq" in provider_type or (isinstance(self.llm_client, DynamicLLMClient) and primary_provider == "groq")
+                if is_rate_sensitive:
+                    max_workers = 1
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    if is_rate_sensitive:
-                        futures = []
-                        for idx, req in enumerate(active_requirements):
-                            if 0 < idx < max_workers:
-                                time.sleep(0.15)  # 150ms gentle stagger to prevent instantaneous TPM rate-limit burst
-                            futures.append(executor.submit(contextvars.copy_context().run, _evaluate_single, req))
-                        matches = [f.result() for f in futures]
-                    else:
-                        futures = [executor.submit(contextvars.copy_context().run, _evaluate_single, req)
-                                   for req in active_requirements]
-                        matches = [future.result() for future in futures]
+                    futures = [executor.submit(contextvars.copy_context().run, _evaluate_single, req)
+                               for req in remaining_requirements]
+                    errors = []
+                    for future in as_completed(futures):
+                        try:
+                            self.completed_matches.append(future.result())
+                        except Exception as error:
+                            errors.append(error)
+                    if errors:
+                        # Drain all workers so successes are preserved regardless
+                        # of which requirement happened to fail first.
+                        raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
+            completed = {match.requirement_id: match for match in self.completed_matches}
+            matches = [completed[req.id] for req in active_requirements]
 
             progress_tracker.update_task(
                 task_key="candidate_evaluation",

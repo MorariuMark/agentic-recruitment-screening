@@ -151,7 +151,8 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
                 <li key={i}>{check}</li>
               ))}
             </ul>
-            {row.error && <p className="r-alert">Deep evaluation failed: {row.error}</p>}
+            {row.error && <p className="r-alert">Deep evaluation {row.deep_status === "deferred" ? "deferred" : "failed"}: {row.error}</p>}
+            {row.deep_status !== "completed" && !!row.deep_requirement_matches?.length && <p className="r-muted">{row.deep_requirement_matches.length} completed requirement checks saved. Retry unfinished screening to resume.</p>}
             {row.deep_evaluation && (
               <>
                 <div className="r-deep-summary-header">

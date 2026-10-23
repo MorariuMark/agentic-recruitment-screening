@@ -8,6 +8,7 @@ from uuid import UUID
 
 from backend.schemas.cv import AnonymizedCandidate
 from backend.services.evidence import source_quote
+from backend.services.pre_ranking import context_terms, requirement_terms, evidence_term_matches, VOCABULARY
 from backend.schemas.job import JobDescription, JobRequirement, RequirementCategory
 from backend.schemas.match import (
     MatchEvaluationResult,
@@ -144,15 +145,19 @@ class ScoringEngine:
                     if cit_score < 0.50 and calibrated_status == MatchStatus.MET:
                         calibrated_status = MatchStatus.PARTIAL
 
-            # Ensure a requirement marked MET without gaps receives full 100% (1.0) credit
-            # unless strictness is set to ultra-strict (>85) with lower confidence.
-            # Citations must not have failed verification.
-            if not human_reviewed and calibrated_status == MatchStatus.MET and not has_unverified_cits:
-                has_explicit_gap = bool(gap_analysis and gap_analysis.strip())
-                if strictness_clamped <= 80 and not has_explicit_gap and calibrated_score >= 0.80:
-                    calibrated_score = 1.0
-                elif strictness_clamped <= 90 and not has_explicit_gap and calibrated_score >= 0.88:
-                    calibrated_score = 1.0
+            # Verbatim accuracy alone does not prove the required application context.
+            if not human_reviewed and req and calibrated_status in (MatchStatus.MET, MatchStatus.PARTIAL):
+                contexts = context_terms(req.title, req.description)
+                tools = [term for term in requirement_terms(req.title, req.description) if term in VOCABULARY]
+                if contexts and tools:
+                    quotes = [cit.quote for cit in verified_cits if cit.verified]
+                    missing = [term for term in contexts if not any(evidence_term_matches(quote, term) for quote in quotes)]
+                    linked = any(all(evidence_term_matches(quote, term) for term in [*tools, *contexts]) for quote in quotes)
+                    if missing or not linked:
+                        calibrated_status = MatchStatus.PARTIAL
+                        calibrated_score = min(calibrated_score, 0.55 if missing else 0.79)
+                        gap_analysis = f"Unverified required context: {', '.join(missing)}." if missing else "Tool usage is not explicitly linked to the required application context in the citations."
+                        clarification_question = f"Can you provide a concrete example demonstrating {req.description}?"
 
             updated_matches.append(
                 RequirementMatch(

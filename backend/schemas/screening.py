@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from backend.schemas.match import MatchEvaluationResult
+from backend.schemas.match import MatchEvaluationResult, RequirementMatch
 
 
 class FastRankRequest(BaseModel):
@@ -57,7 +57,9 @@ class PreScreenRow(BaseModel):
     experience_score: float | None = None
     degree_score: float | None = None
     checks: list[str] = Field(default_factory=list)
-    deep_status: Literal["not_selected", "pending", "completed", "failed"] = "not_selected"
+    deep_status: Literal["not_selected", "pending", "completed", "failed", "deferred"] = "not_selected"
+    deep_requirement_matches: list[RequirementMatch] = Field(default_factory=list)
+    retry_after: float | None = None
     deep_evaluation: MatchEvaluationResult | None = None
     error: str | None = None
     pipeline_version: Literal["v1", "v2"] = "v1"

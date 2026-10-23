@@ -54,6 +54,10 @@ const getApiBase = (): string => {
 
 const API_BASE = getApiBase();
 
+export class AuthenticationError extends Error {
+  name = "AuthenticationError";
+}
+
 class ApiClient {
   private base: string;
 
@@ -167,6 +171,10 @@ class ApiClient {
             }
           } catch {
             // fallback to status text
+          }
+          if (res.status === 401 && !endpoint.includes("/auth/")) {
+            if (typeof window !== "undefined") window.dispatchEvent(new Event("atos-session-expired"));
+            throw new AuthenticationError(errorDetail);
           }
           throw new Error(errorDetail);
         }
