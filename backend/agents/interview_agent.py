@@ -110,7 +110,7 @@ class InterviewAgent:
                 metadata={
                     "candidate_id": str(candidate.candidate_id),
                     "job_id": str(job_description.id),
-                    "target_duration_minutes": target_duration_minutes,
+                    "target_duration_minutes": target_minutes,
                 },
             )
 
@@ -133,3 +133,4 @@ class InterviewAgent:
             plan.interview_focus_summary = plan.executive_summary
 
         return plan
+

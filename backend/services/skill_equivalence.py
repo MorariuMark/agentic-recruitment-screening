@@ -525,13 +525,9 @@ class SkillEquivalenceService:
         req_disciplines = detect_academic_disciplines(req_text)
 
         # Target degree required level
-        target_level = 2  # default Bachelor level
-        target_degree_str = "Bachelor's Degree"
-        for term, level in DEGREE_LEVELS.items():
-            if re.search(r"\b" + re.escape(term) + r"\b", req_text):
-                if level > target_level:
-                    target_level = level
-                    target_degree_str = term.upper()
+        levels = [(term, level) for term, level in DEGREE_LEVELS.items() if re.search(r"\b" + re.escape(term) + r"\b", req_text)]
+        target_level = (min(level for _, level in levels) if re.search(r"\bor\b", req_text) else max(level for _, level in levels)) if levels else 2
+        target_degree_str = next((term.upper() for term, level in levels if level == target_level), "Bachelor's Degree")
 
         if not education_list:
             return None

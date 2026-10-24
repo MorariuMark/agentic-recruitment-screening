@@ -1,4 +1,5 @@
 """One embedding batch and one matrix product; no generative LLM calls."""
+import functools
 import re
 from datetime import date, datetime
 
@@ -11,8 +12,13 @@ from backend.services.skill_equivalence import EQUIVALENCE_CLUSTERS, SkillEquiva
 from backend.services.evidence import assess_language, clean_model_text, language_priority
 
 
+@functools.lru_cache(maxsize=2048)
+def _compile_contains_pattern(term: str) -> re.Pattern:
+    return re.compile(r"(?<![\w+#])" + re.escape(term.lower()) + r"(?![\w+#])")
+
+
 def contains(text: str, term: str) -> bool:
-    return bool(re.search(r"(?<![\w+#])" + re.escape(term.lower()) + r"(?![\w+#])", text.lower()))
+    return bool(_compile_contains_pattern(term).search(text.lower()))
 
 
 VOCABULARY = {term for group in EQUIVALENCE_CLUSTERS for term in group["members"]} | {
@@ -22,12 +28,17 @@ VOCABULARY = {term for group in EQUIVALENCE_CLUSTERS for term in group["members"
 STOP_WORDS = set("experience experienced expertise proficiency proficient knowledge working strong required minimum years year of in with and or the a an ability skills skill development programming professional relevant overall total proven language languages".split())
 
 
-def requirement_terms(title: str, description: str) -> list[str]:
+@functools.lru_cache(maxsize=512)
+def _cached_requirement_terms(title: str, description: str) -> tuple[str, ...]:
     text = f"{title} {description}".lower()
     terms = sorted(term for term in VOCABULARY if contains(text, term))
     # Avoid counting nested names twice (SQL inside SQL Server, for example).
     terms = [term for term in terms if not any(term != other and contains(other, term) for other in terms)]
-    return terms or [t for t in re.findall(r"[\w+#.-]+", title.lower()) if t not in STOP_WORDS and not t.isdigit()]
+    return tuple(terms or [t for t in re.findall(r"[\w+#.-]+", title.lower()) if t not in STOP_WORDS and not t.isdigit()])
+
+
+def requirement_terms(title: str, description: str) -> list[str]:
+    return list(_cached_requirement_terms(title, description))
 
 
 # Application context must survive extraction of tool names from a requirement.
@@ -39,17 +50,27 @@ CONTEXT_PATTERNS = {
 }
 
 
-def context_terms(title: str, description: str) -> list[str]:
+@functools.lru_cache(maxsize=512)
+def _cached_context_terms(title: str, description: str) -> tuple[str, ...]:
     text = f"{title} {description}"
-    return [term for term, pattern in CONTEXT_PATTERNS.items() if re.search(pattern, text, re.I)]
+    return tuple(term for term, pattern in CONTEXT_PATTERNS.items() if re.search(pattern, text, re.I))
+
+
+def context_terms(title: str, description: str) -> list[str]:
+    return list(_cached_context_terms(title, description))
 
 
 def evidence_term_matches(text: str, term: str) -> bool:
     return bool(re.search(CONTEXT_PATTERNS[term], text, re.I)) if term in CONTEXT_PATTERNS else contains(text, term)
 
 
+@functools.lru_cache(maxsize=512)
+def _cached_requirement_evidence_terms(title: str, description: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys([*_cached_requirement_terms(title, description), *_cached_context_terms(title, description)]))
+
+
 def requirement_evidence_terms(title: str, description: str) -> list[str]:
-    return list(dict.fromkeys([*requirement_terms(title, description), *context_terms(title, description)]))
+    return list(_cached_requirement_evidence_terms(title, description))
 
 
 from backend.services.tenure_calculator import TenureCalculator, month_index

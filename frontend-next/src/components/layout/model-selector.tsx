@@ -28,6 +28,7 @@ export function ModelSelector({
   const [onlyFreeModels, setOnlyFreeModels] = useState<boolean>(false);
   const [isSwitchingModel, setIsSwitchingModel] = useState<boolean>(false);
   const [isTogglingFallback, setIsTogglingFallback] = useState<boolean>(false);
+  const [isTogglingParallel, setIsTogglingParallel] = useState<boolean>(false);
 
   const modelDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -86,6 +87,20 @@ export function ModelSelector({
   const hasFallbackEvent = Boolean(llmSettings?.last_fallback_event);
   const fallbackCount = llmSettings?.fallback_chain?.length || 0;
   const fallbackEnabled = llmSettings?.fallback_enabled ?? true;
+  const parallelEnabled = llmSettings?.parallel_screening_enabled ?? false;
+
+  const handleToggleParallel = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setIsTogglingParallel(true);
+      const updated = await api.toggleParallelScreening(!parallelEnabled);
+      setLlmSettings(updated);
+    } catch (err: any) {
+      console.error("Failed to toggle parallel screening:", err);
+    } finally {
+      setIsTogglingParallel(false);
+    }
+  };
 
   const handleToggleFallback = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -310,6 +325,22 @@ export function ModelSelector({
                     <div className="space-y-0.5 min-w-0">
                       <div className="font-semibold text-[11px] text-white flex items-center gap-1.5">
                         <span className="truncate">{m.name}</span>
+                        {(() => {
+                          const statusKey = `${selectedProviderTab}:${m.id}`;
+                          const status = llmSettings?.cooldown_statuses?.[statusKey];
+                          if (status) {
+                            return status.exhausted ? (
+                              <span className="text-[9px] px-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold" title={`Rate limit exhausted: ${status.remaining_seconds}s cooldown`}>
+                                EXHAUSTED
+                              </span>
+                            ) : (
+                              <span className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold" title={`Cooling down: ${status.remaining_seconds}s remaining`}>
+                                COOLDOWN ({Math.round(status.remaining_seconds)}s)
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                         {isLocal ? (
                           <span className="text-[9px] px-1 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">
                             LOCAL
@@ -379,6 +410,41 @@ export function ModelSelector({
                     ({fallbackCount})
                   </span>
                 )}
+              </span>
+            </button>
+
+            {/* Parallel Multi-Provider Toggle */}
+            <button
+              type="button"
+              disabled={isTogglingParallel}
+              onClick={handleToggleParallel}
+              className="flex items-center gap-2 group/parallel text-slate-400 hover:text-slate-200 transition-colors cursor-pointer select-none"
+              title={
+                parallelEnabled
+                  ? "Parallel Multi-Provider Screening active: spreading criteria across all healthy tested providers. Click to disable."
+                  : "Parallel Multi-Provider Screening disabled: single-provider processing. Click to enable."
+              }
+            >
+              <div
+                className={`w-6 h-3.5 flex items-center rounded-full p-0.5 transition-colors ${
+                  parallelEnabled ? "bg-cyan-500/80" : "bg-slate-700"
+                }`}
+              >
+                <div
+                  className={`bg-white w-2.5 h-2.5 rounded-full shadow-sm transform transition-transform duration-200 ${
+                    parallelEnabled ? "translate-x-2.5" : "translate-x-0"
+                  }`}
+                />
+              </div>
+              <span className="flex items-center gap-1 text-[11px]">
+                <span>Parallel:</span>
+                <span
+                  className={`font-semibold ${
+                    parallelEnabled ? "text-cyan-400" : "text-slate-400"
+                  }`}
+                >
+                  {parallelEnabled ? "Active" : "Off"}
+                </span>
               </span>
             </button>
 

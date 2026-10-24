@@ -619,6 +619,13 @@ class ApiClient {
     });
   }
 
+  async toggleParallelScreening(enabled: boolean): Promise<LLMSettings> {
+    return this.request("/api/v1/settings/llm/parallel-toggle", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   async loadOllamaModel(model: string, keep_alive: string = "1h"): Promise<any> {
     return this.request("/api/v1/ollama/load", {
       method: "POST",
@@ -726,10 +733,165 @@ class ApiClient {
     const q = params.toString() ? `?${params.toString()}` : "";
     return this.request(`/api/v1/screening/action-trace${q}`);
   }
+
+  async getLiveLLMLogs(limit: number = 50): Promise<LiveLLMState> {
+    return this.request(`/api/v1/screening/llm/live-logs?limit=${limit}`);
+  }
+
+  async clearLiveLLMLogs(): Promise<{ status: string }> {
+    return this.request("/api/v1/screening/llm/live-logs/clear", { method: "POST" });
+  }
+
+  async getLocalModelsStatus(): Promise<LocalModelFullState> {
+    return this.request("/api/v1/screening/local-models/status");
+  }
+
+  async loadLocalModel(params: LocalModelLoadParams): Promise<any> {
+    return this.request("/api/v1/screening/local-models/load", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  async unloadLocalModel(params: LocalModelUnloadParams): Promise<any> {
+    return this.request("/api/v1/screening/local-models/unload", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  async startLocalServer(port: number = 1234): Promise<any> {
+    return this.request("/api/v1/screening/local-models/start-server", {
+      method: "POST",
+      body: JSON.stringify({ provider: "lmstudio", port }),
+    });
+  }
 }
 
 
 export const api = new ApiClient();
+
+export interface HardwareProfile {
+  tier: "low" | "medium" | "high" | "ultra";
+  tier_label: string;
+  recommended_context_window: number;
+  recommended_max_tokens: number;
+  recommended_gpu_layers: number;
+  recommended_model_size_max_gb: number;
+  safe_models_description: string;
+  warning?: string | null;
+  is_low_end: boolean;
+}
+
+export interface GPUTelemetry {
+  available: boolean;
+  is_dedicated_gpu?: boolean;
+  name: string;
+  total_vram_mb: number;
+  used_vram_mb: number;
+  free_vram_mb: number;
+  utilization_percent: number;
+  used_vram_gb: number;
+  total_vram_gb: number;
+  free_vram_gb: number;
+  profile?: HardwareProfile;
+}
+
+export interface LocalCatalogModel {
+  id: string;
+  name: string;
+  size_gb?: number;
+  is_4gb_friendly?: boolean;
+}
+
+export interface LocalLoadedModel {
+  identifier?: string;
+  model?: string;
+  status?: string;
+  size?: string;
+  size_vram_mb?: number;
+  context_length?: string;
+  expires_at?: string;
+}
+
+export interface LocalEngineStatus {
+  available: boolean;
+  base_url: string;
+  current_model: string;
+  models: LocalCatalogModel[];
+  loaded_models: LocalLoadedModel[];
+  context_window: number;
+  rolling_context: boolean;
+  gpu_layers: number;
+}
+
+export interface LocalModelFullState {
+  gpu: GPUTelemetry;
+  hardware_profile?: HardwareProfile;
+  lmstudio: LocalEngineStatus;
+  ollama: LocalEngineStatus;
+  active_provider: string;
+  context_window: number;
+  rolling_context: boolean;
+  gpu_layers: number;
+}
+
+export interface LocalModelLoadParams {
+  provider: "lmstudio" | "ollama";
+  model: string;
+  context_window?: number;
+  gpu_layers?: number;
+  gpu_offload_mode?: "auto" | "max" | "off";
+  set_as_active?: boolean;
+}
+
+export interface LocalModelUnloadParams {
+  provider: "lmstudio" | "ollama";
+  model?: string;
+}
+
+export interface LiveLLMInFlightEntry {
+  prompt_tokens?: number;
+  id: string;
+  timestamp: string;
+  elapsed_seconds: number;
+  action_type: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  system_prompt?: string | null;
+  metadata?: Record<string, any>;
+  status: string;
+}
+
+export interface LiveLLMRecentEntry {
+  id: string;
+  timestamp: string;
+  action_type: string;
+  provider: string;
+  model: string;
+  status: "success" | "failover" | "error" | "cooling_down";
+  latency_ms: number;
+  tokens_per_second?: number;
+  tokens: {
+    prompt: number;
+    completion: number;
+    total: number;
+    tokens_per_second?: number;
+  };
+  prompt: string;
+  system_prompt?: string | null;
+  raw_response?: string;
+  parsed_json?: any;
+  error?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export interface LiveLLMState {
+  in_flight: LiveLLMInFlightEntry[];
+  recent: LiveLLMRecentEntry[];
+  total_logged: number;
+}
 
 export interface CVDocument {
   id: string; filename: string; candidate_id: string | null; size: number | null;

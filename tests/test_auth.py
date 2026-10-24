@@ -112,3 +112,5 @@ def test_user_can_select_catalog_model_without_admin_access(client, monkeypatch)
     invalid = client.post("/api/v1/screening/models", json={"provider": "groq", "model": "not-in-catalog"})
     assert invalid.status_code == 400
     assert settings.groq_model == selected_model
+
+    client.post("/api/v1/screening/failover", json={"enabled": True})

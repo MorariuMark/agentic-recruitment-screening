@@ -11,6 +11,7 @@ import re
 import time
 import threading
 import copy
+import ast
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, get_args, get_origin
@@ -230,7 +231,50 @@ def clean_and_parse_json(raw_content: str) -> Dict[str, Any]:
     if not text:
         raise ValueError("LLM returned an empty response")
 
-    return json.loads(text)
+    # Fast path: try raw extracted text first
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Normalize typography and curly/smart quotes
+    repaired = text.replace("“", '"').replace("”", '"').replace("„", '"').replace("‟", '"')
+
+    # Clean trailing commas in objects and arrays
+    repaired = re.sub(r",\s*([\]}])", r"\1", repaired)
+
+    # Insert missing commas between consecutive lines with key/value pairs or objects
+    # 1. Between a literal primitive (string, number, true, false, null, ], }) and the next quoted key or object
+    repaired = re.sub(r'("|\d+|true|false|null|\]|\})\s*\n\s*(")', r'\1,\n\2', repaired)
+    # 2. Between consecutive objects or arrays on separate lines
+    repaired = re.sub(r'(\]|\})\s*\n\s*(\{)', r'\1,\n\2', repaired)
+
+    try:
+        return json.loads(repaired)
+    except Exception:
+        pass
+
+    # Balance unclosed brackets / braces if truncated by token limit
+    open_braces = repaired.count("{") - repaired.count("}")
+    open_brackets = repaired.count("[") - repaired.count("]")
+    if open_brackets > 0 or open_braces > 0:
+        candidate = repaired.rstrip().rstrip(",")
+        candidate += ("]" * max(0, open_brackets)) + ("}" * max(0, open_braces))
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # Fallback: try python ast.literal_eval if single quotes were used
+    try:
+        val = ast.literal_eval(text)
+        if isinstance(val, dict):
+            return val
+    except Exception:
+        pass
+
+    # If all repair attempts failed, raise standard json.loads error
+    return json.loads(re.sub(r",\s*([\]}])", r"\1", text))
 
 
 class BaseLLMClient(ABC):
@@ -829,14 +873,14 @@ class GeminiClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            timeout=15.0,
+            timeout=60.0,
             max_retries=0,
         )
         self.secondary_client = (
             OpenAI(
                 base_url=self.base_url,
                 api_key=self.secondary_api_key,
-                timeout=15.0,
+                timeout=60.0,
                 max_retries=0,
             )
             if self.secondary_api_key
@@ -940,6 +984,182 @@ class GeminiClient(BaseLLMClient):
             raise err
 
 
+class CohereClient(BaseLLMClient):
+    """
+    Client for Cohere API (v2) supporting Command R, Command R+, Aya Expanse models,
+    with native JSON schema extraction, usage token tracking, and dual-key failover.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        secondary_api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        compatibility_mode: Optional[str] = None,
+    ) -> None:
+        import httpx
+
+        self.api_key = api_key or getattr(settings, "cohere_api_key", None)
+        if not self.api_key:
+            raise ValueError("COHERE_API_KEY must be provided or set in environment variables.")
+
+        cfg_secondary = getattr(settings, "cohere_secondary_api_key", None)
+        if secondary_api_key and secondary_api_key != self.api_key:
+            self.secondary_api_key = secondary_api_key
+        elif cfg_secondary and cfg_secondary != self.api_key:
+            self.secondary_api_key = cfg_secondary
+        else:
+            self.secondary_api_key = None
+
+        raw_url = (base_url or getattr(settings, "cohere_base_url", "https://api.cohere.com/v2")).rstrip("/")
+        self.base_url = raw_url
+        self.model = model or getattr(settings, "cohere_model", "command-r-08-2024")
+        self.compatibility_mode = compatibility_mode or settings.compatibility_mode
+        self.last_key_used = "primary"
+
+        timeout_sec = getattr(settings, "screening_ai_request_seconds", 60.0)
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Atos-AI/1.0",
+            },
+            timeout=timeout_sec,
+        )
+        self.secondary_client = (
+            httpx.Client(
+                base_url=self.base_url,
+                headers={
+                    "Authorization": f"Bearer {self.secondary_api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Atos-AI/1.0",
+                },
+                timeout=timeout_sec,
+            )
+            if self.secondary_api_key
+            else None
+        )
+
+    def _execute_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Executes chat request with automatic secondary key failover upon 429."""
+        active_client = self.client
+        self.last_key_used = "primary"
+
+        try:
+            resp = active_client.post("/chat", json=payload)
+            if resp.status_code == 429 and self.secondary_client:
+                logger.warning("Cohere primary key hit rate limit (429); failing over to secondary key.")
+                self.last_key_used = "secondary"
+                record_model_failure("cohere", self.model, RuntimeError("429 Rate Limit"), self.api_key)
+                resp = self.secondary_client.post("/chat", json=payload)
+
+            if resp.status_code != 200:
+                resp.raise_for_status()
+
+            return resp.json()
+        except Exception as e:
+            if getattr(e, "response", None) is not None and e.response.status_code == 429:
+                used_key = self.secondary_api_key if self.last_key_used == "secondary" else self.api_key
+                record_model_failure("cohere", self.model, e, used_key)
+            raise
+
+    def generate_text(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.1,
+    ) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
+        t0 = time.perf_counter()
+        data = self._execute_request(payload)
+        lat_ms = (time.perf_counter() - t0) * 1000.0
+
+        content = ""
+        msg = data.get("message", {})
+        for part in msg.get("content", []):
+            if part.get("type") == "text":
+                content += part.get("text", "")
+
+        self.last_raw_response = content
+        self._capture_usage(data, prompt, content, lat_ms)
+        return content
+
+    def generate_structured(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.0,
+    ) -> T:
+        schema_json = json.dumps(response_model.model_json_schema(), separators=(",", ":"))
+        augmented_system = (
+            f"{system_prompt or ''}\n\n"
+            f"You MUST respond ONLY with valid JSON conforming to this JSON Schema:\n{schema_json}"
+        ).strip()
+
+        messages = [
+            {"role": "system", "content": augmented_system},
+            {"role": "user", "content": prompt},
+        ]
+
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+
+        t0 = time.perf_counter()
+        data = self._execute_request(payload)
+        lat_ms = (time.perf_counter() - t0) * 1000.0
+
+        content = ""
+        msg = data.get("message", {})
+        for part in msg.get("content", []):
+            if part.get("type") == "text":
+                content += part.get("text", "")
+
+        self.last_raw_response = content
+        self._capture_usage(data, prompt, content, lat_ms)
+        parsed_dict = clean_and_parse_json(content)
+        return response_model.model_validate(parsed_dict)
+
+    def _capture_usage(self, data: Dict[str, Any], prompt: str, completion: str, lat_ms: float = 0.0) -> None:
+        usage = data.get("usage", {}).get("tokens", {})
+        pt = usage.get("input_tokens") or max(1, len(prompt) // 4)
+        ct = usage.get("output_tokens") or max(1, len(completion) // 4)
+        self.last_usage = {
+            "prompt_tokens": pt,
+            "completion_tokens": ct,
+            "total_tokens": pt + ct,
+        }
+        try:
+            from backend.services.token_tracker import TokenTracker
+            tracker = TokenTracker.get_instance()
+            tracker.record_call(
+                provider="cohere",
+                model=self.model,
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                latency_ms=lat_ms,
+                status="success",
+            )
+        except Exception:
+            pass
+
+
 class OllamaClient(BaseLLMClient):
     """
     Client for local Ollama instance with privacy guarantees, hardware-optimized context windows,
@@ -961,11 +1181,15 @@ class OllamaClient(BaseLLMClient):
 
     def _get_execution_options(self, temperature: float = 0.0) -> Dict[str, Any]:
         """Builds hardware-tuned generation options for the local engine."""
-        num_ctx = getattr(settings, "local_context_window", 4096)
+        num_ctx = getattr(settings, "local_context_window", 16384)
+        num_gpu = getattr(settings, "local_gpu_layers", 99)
+        max_tok = getattr(settings, "local_max_tokens", 3072)
         opts: Dict[str, Any] = {
             "temperature": temperature,
             "num_ctx": num_ctx,
-            "num_predict": 2048,  # Cap output generation to avoid runaway loops
+            "num_predict": max_tok,
+            "num_gpu": num_gpu,
+            "main_gpu": 0,
         }
         return opts
 
@@ -1138,7 +1362,8 @@ class OllamaClient(BaseLLMClient):
 class LMStudioClient(BaseLLMClient):
     """
     Client for local LM Studio instance (or other OpenAI-compatible local engines)
-    running locally on port 1234 with zero data egress and local GPU acceleration.
+    running locally on port 1234 with zero data egress and 100% local GPU acceleration.
+    Features 16,384-token sliding/rolling window protection against VRAM OOM errors.
     """
 
     def __init__(
@@ -1159,9 +1384,38 @@ class LMStudioClient(BaseLLMClient):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key="lm-studio",
-            timeout=60.0,
+            timeout=getattr(settings, "lmstudio_timeout_seconds", 300.0),
             max_retries=0,
         )
+        if self.model in ("default", "", None):
+            try:
+                models_list = self.client.models.list()
+                if models_list and models_list.data:
+                    self.model = models_list.data[0].id
+            except Exception:
+                pass
+
+    def _apply_rolling_context(self, prompt: str) -> str:
+        """
+        Sliding / rolling window protection for continuous generation without out-of-memory (OOM) errors.
+        When rolling context is active, oversized prompts are gracefully condensed to fit within the 16k context window.
+        """
+        if not getattr(settings, "local_rolling_context", True):
+            return prompt
+
+        num_ctx = getattr(settings, "local_context_window", 16384)
+        # Allocate up to ~75% of context window for prompt text (~4 chars/token)
+        max_prompt_chars = int(num_ctx * 0.75 * 4.0)
+
+        if len(prompt) > max_prompt_chars:
+            head_chars = int(max_prompt_chars * 0.25)
+            tail_chars = max_prompt_chars - head_chars
+            prompt = (
+                f"{prompt[:head_chars]}\n\n"
+                f"... [Rolling Context Active: intermediate text condensed to fit {num_ctx} token context and prevent local VRAM OOM] ...\n\n"
+                f"{prompt[-tail_chars:]}"
+            )
+        return prompt
 
     def generate_text(
         self,
@@ -1169,6 +1423,7 @@ class LMStudioClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.1,
     ) -> str:
+        prompt = self._apply_rolling_context(prompt)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -1179,10 +1434,12 @@ class LMStudioClient(BaseLLMClient):
             model=self.model,
             messages=messages,
             temperature=temperature,
+            max_tokens=getattr(settings, "local_max_tokens", 3072),
         )
         duration_s = time.perf_counter() - t0
         content = response.choices[0].message.content or ""
-        self._capture_usage(response, prompt, content)
+        self.last_raw_response = content
+        self._capture_usage(response, prompt, content, duration_s)
         return content
 
     def generate_structured(
@@ -1192,6 +1449,7 @@ class LMStudioClient(BaseLLMClient):
         system_prompt: Optional[str] = None,
         temperature: float = 0.0,
     ) -> T:
+        prompt = self._apply_rolling_context(prompt)
         compact_skeleton = json.dumps(_build_compact_json_skeleton(response_model), indent=2)
         system_content = (
             f"{system_prompt or ''}\n\n"
@@ -1210,33 +1468,41 @@ class LMStudioClient(BaseLLMClient):
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=temperature,
+                max_tokens=getattr(settings, "local_max_tokens", 3072),
             )
         except Exception:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=temperature,
+                max_tokens=getattr(settings, "local_max_tokens", 3072),
             )
 
         duration_s = time.perf_counter() - t0
         raw_content = response.choices[0].message.content or ""
-        self._capture_usage(response, prompt, raw_content)
+        self.last_raw_response = raw_content
+        self._capture_usage(response, prompt, raw_content, duration_s)
         parsed_dict = clean_and_parse_json(raw_content)
         return response_model.model_validate(parsed_dict)
 
-    def _capture_usage(self, response: Any, prompt: str, completion: str) -> None:
+    def _capture_usage(self, response: Any, prompt: str, completion: str, duration_s: float = 0.0) -> None:
         try:
+            usage = getattr(response, "usage", None)
+            pt = getattr(usage, "prompt_tokens", None) or max(1, len(prompt) // 4)
+            ct = getattr(usage, "completion_tokens", None) or max(1, len(completion) // 4)
+            self.last_usage = {
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "total_tokens": pt + ct,
+            }
             from backend.services.token_tracker import TokenTracker
             tracker = TokenTracker.get_instance()
-            usage = getattr(response, "usage", None)
-            pt = getattr(usage, "prompt_tokens", len(prompt) // 4) if usage else len(prompt) // 4
-            ct = getattr(usage, "completion_tokens", len(completion) // 4) if usage else len(completion) // 4
             tracker.record_call(
                 provider="lmstudio",
                 model=self.model,
                 prompt_tokens=pt,
                 completion_tokens=ct,
-                latency_ms=0.0,
+                latency_ms=duration_s * 1000.0,
                 status="success",
             )
         except Exception:
@@ -1285,6 +1551,14 @@ def create_llm_client(
         return GeminiClient(
             api_key=api_key,
             secondary_api_key=getattr(settings, "gemini_secondary_api_key", None),
+            base_url=base_url,
+            model=model,
+            compatibility_mode=compatibility_mode,
+        )
+    elif selected == "cohere":
+        return CohereClient(
+            api_key=api_key,
+            secondary_api_key=getattr(settings, "cohere_secondary_api_key", None),
             base_url=base_url,
             model=model,
             compatibility_mode=compatibility_mode,
@@ -1376,6 +1650,8 @@ def _get_fallback_primary_model(prov: str) -> str:
         return "gemini-flash-latest"
     elif prov == "openrouter":
         return "openrouter/free"
+    elif prov == "cohere":
+        return getattr(settings, "cohere_model", "command-r-08-2024") or "command-r-08-2024"
     elif prov == "ollama":
         return "qwen3.5:2b-q4_K_M"
     elif prov == "lmstudio":
@@ -1466,6 +1742,25 @@ def clear_all_model_cooldowns() -> None:
     _MODEL_COOLDOWNS.clear()
 
 
+def get_active_cooldown_statuses() -> Dict[str, Dict[str, Any]]:
+    """Returns a dict of currently cooling down / exhausted models with remaining cooldown seconds."""
+    now = time.time()
+    result = {}
+    with _CLIENT_STATE_LOCK:
+        for (provider, model, key), expires in list(_MODEL_COOLDOWNS.items()):
+            remaining = expires - now
+            if remaining > 0:
+                target_key = f"{provider}:{model}"
+                if target_key not in result or remaining > result[target_key]["remaining_seconds"]:
+                    result[target_key] = {
+                        "provider": provider,
+                        "model": model,
+                        "remaining_seconds": round(remaining, 1),
+                        "exhausted": remaining > 300.0,
+                    }
+    return result
+
+
 def _cooling_down_error(chain, details="", failures=()):
     now = time.time()
     expiries = []
@@ -1504,6 +1799,28 @@ class DynamicLLMClient(BaseLLMClient):
         """Retain this run's factory targets without changing shared Admin settings."""
         self._snapshot_fallback_enabled = settings.fallback_enabled
         self._snapshot_chain = self.get_fallback_chain()
+
+    def get_healthy_provider_pool(self) -> list:
+        """
+        Returns a list of unique, healthy provider clients currently available for parallel dispatch.
+        Prioritizes distinct providers (e.g. Groq, Cohere, Gemini, NVIDIA NIM) that are not in cooldown.
+        """
+        chain = self.get_fallback_chain()
+        healthy = []
+        seen_providers = set()
+        for prov, mod, client in chain:
+            key = getattr(client, "api_key", None)
+            if not is_model_in_cooldown(prov, mod, key):
+                if prov not in seen_providers:
+                    healthy.append((prov, mod, client))
+                    seen_providers.add(prov)
+        if len(healthy) < 2:
+            for prov, mod, client in chain:
+                key = getattr(client, "api_key", None)
+                if not is_model_in_cooldown(prov, mod, key):
+                    if (prov, mod) not in [(h[0], h[1]) for h in healthy]:
+                        healthy.append((prov, mod, client))
+        return healthy
 
     def _get_or_create_client(
         self,
@@ -1638,16 +1955,18 @@ class DynamicLLMClient(BaseLLMClient):
         intra_fallbacks = {
             "agnes": ["agnes-2.5-flash", "agnes-3.0-flash", "agnes-2.0-flash", "agnes-2.5-pro"],
             "groq": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
+            "cohere": ["command-r-08-2024", "command-r-plus-08-2024", "c4ai-aya-expanse-32b", "command-r7b-12-2024"],
             "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "mistralai/mistral-large-2-instruct"],
-            "gemini": ["gemini-3.8-flash", "gemini-flash-latest", "gemini-flash-lite-latest"],
+            "gemini": ["gemini-3.5-flash-lite", "gemini-2.5-pro"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
+            "lmstudio": [settings.lmstudio_model or "default"],
         }
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
             add_model_candidates(primary_prov, fallback_mod)
 
         # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> NVIDIA NIM -> OpenRouter -> Ollama)
-        provider_priority = ["groq", "gemini", "agnes", "nvidia_nim", "openrouter", "ollama"]
+        provider_priority = ["gemini", "groq", "cohere", "agnes", "lmstudio", "nvidia_nim", "openrouter", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue
@@ -1655,14 +1974,21 @@ class DynamicLLMClient(BaseLLMClient):
             if p == "groq":
                 for m in ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]:
                     add_model_candidates("groq", m)
+            elif p == "cohere":
+                if settings.cohere_api_key or getattr(settings, "cohere_secondary_api_key", None):
+                    add_model_candidates("cohere", settings.cohere_model or "command-r-08-2024")
+                    add_model_candidates("cohere", "command-r-plus-08-2024")
             elif p == "gemini":
                 if settings.gemini_api_key or getattr(settings, "gemini_secondary_api_key", None):
                     add_model_candidates("gemini", settings.gemini_model or "gemini-flash-latest")
-                    add_model_candidates("gemini", "gemini-3.8-flash")
+                    add_model_candidates("gemini", "gemini-3.5-flash-lite")
             elif p == "agnes":
                 if settings.agnes_api_key:
                     add_model_candidates("agnes", settings.agnes_model or "agnes-2.5-flash")
                     add_model_candidates("agnes", "agnes-3.0-flash")
+            elif p == "lmstudio":
+                if _is_local_port_open("127.0.0.1", 1234):
+                    add_model_candidates("lmstudio", settings.lmstudio_model or "default")
             elif p == "openrouter":
                 if settings.openrouter_api_key:
                     add_model_candidates("openrouter", settings.openrouter_model or "openrouter/free")
@@ -1709,6 +2035,15 @@ class DynamicLLMClient(BaseLLMClient):
             if fallback_enabled and is_model_in_cooldown(prov, mod, getattr(client, "api_key", None)):
                 continue
             t0 = time.perf_counter()
+            from backend.services.action_logger import action_logger
+            call_id = action_logger.record_start(
+                action_type=action_context[0],
+                provider=prov,
+                model=mod,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                metadata=action_context[1],
+            )
             try:
                 result = client.generate_text(
                     prompt=prompt,
@@ -1737,9 +2072,9 @@ class DynamicLLMClient(BaseLLMClient):
                     status=call_status,
                 )
 
-                from backend.services.action_logger import action_logger
                 raw_resp = getattr(client, "last_raw_response", "") or result
-                action_logger.record_action(
+                action_logger.record_finish(
+                    call_id=call_id,
                     action_type=action_context[0],
                     provider=prov,
                     model=mod,
@@ -1781,18 +2116,35 @@ class DynamicLLMClient(BaseLLMClient):
             except ProviderCoolingDownError as err:
                 last_error = err
                 attempt_errors.append(err)
-                continue
-            except Exception as err:
-                last_error = err
-                attempt_errors.append(err)
                 from backend.services.action_logger import action_logger
-                action_logger.record_action(
+                action_logger.record_finish(
+                    call_id=call_id,
                     action_type=action_context[0],
                     provider=prov,
                     model=mod,
                     prompt=prompt,
                     system_prompt=system_prompt,
                     raw_response="",
+                    parsed_json=None,
+                    latency_ms=(time.perf_counter() - t0) * 1000.0,
+                    status="cooling_down",
+                    error=str(err),
+                    metadata=action_context[1],
+                )
+                continue
+            except Exception as err:
+                last_error = err
+                attempt_errors.append(err)
+                from backend.services.action_logger import action_logger
+                raw_resp = getattr(client, "last_raw_response", "") or ""
+                action_logger.record_finish(
+                    call_id=call_id,
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response=raw_resp,
                     parsed_json=None,
                     latency_ms=(time.perf_counter() - t0) * 1000.0,
                     status="error",
@@ -1858,6 +2210,15 @@ class DynamicLLMClient(BaseLLMClient):
             if fallback_enabled and is_model_in_cooldown(prov, mod, getattr(client, "api_key", None)):
                 continue
             t0 = time.perf_counter()
+            from backend.services.action_logger import action_logger
+            call_id = action_logger.record_start(
+                action_type=action_context[0],
+                provider=prov,
+                model=mod,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                metadata=action_context[1],
+            )
             try:
                 result = client.generate_structured(
                     prompt=prompt,
@@ -1887,7 +2248,6 @@ class DynamicLLMClient(BaseLLMClient):
                     status=call_status,
                 )
 
-                from backend.services.action_logger import action_logger
                 raw_resp = getattr(client, "last_raw_response", "") or ""
                 parsed_payload = None
                 try:
@@ -1898,7 +2258,8 @@ class DynamicLLMClient(BaseLLMClient):
                 except Exception:
                     parsed_payload = None
 
-                action_logger.record_action(
+                action_logger.record_finish(
+                    call_id=call_id,
                     action_type=action_context[0],
                     provider=prov,
                     model=mod,
@@ -1940,18 +2301,35 @@ class DynamicLLMClient(BaseLLMClient):
             except ProviderCoolingDownError as err:
                 last_error = err
                 attempt_errors.append(err)
-                continue
-            except Exception as err:
-                last_error = err
-                attempt_errors.append(err)
                 from backend.services.action_logger import action_logger
-                action_logger.record_action(
+                action_logger.record_finish(
+                    call_id=call_id,
                     action_type=action_context[0],
                     provider=prov,
                     model=mod,
                     prompt=prompt,
                     system_prompt=system_prompt,
                     raw_response="",
+                    parsed_json=None,
+                    latency_ms=(time.perf_counter() - t0) * 1000.0,
+                    status="cooling_down",
+                    error=str(err),
+                    metadata=action_context[1],
+                )
+                continue
+            except Exception as err:
+                last_error = err
+                attempt_errors.append(err)
+                from backend.services.action_logger import action_logger
+                raw_resp = getattr(client, "last_raw_response", "") or ""
+                action_logger.record_finish(
+                    call_id=call_id,
+                    action_type=action_context[0],
+                    provider=prov,
+                    model=mod,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    raw_response=raw_resp,
                     parsed_json=None,
                     latency_ms=(time.perf_counter() - t0) * 1000.0,
                     status="error",
@@ -2024,3 +2402,9 @@ def get_llm_client(
             compatibility_mode=compatibility_mode,
         )
     return DynamicLLMClient()
+
+
+
+
+
+

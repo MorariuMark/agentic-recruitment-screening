@@ -583,6 +583,7 @@
 .r-pill-rec {padding: 3px 8px; border-radius: 4px; font-size: 11px; text-transform: uppercase; font-weight: 600;}
 .r-rec-strong_match {background: #143525; color: #4ade80;}
 .r-rec-borderline {background: #3a2e12; color: #facc15;}
+.r-rec-needs_review {background: #3a2e12; color: #facc15;}
 .r-rec-reject {background: #421616; color: #f87171;}
 .r-deep-matches-list {display: flex; flex-direction: column;}
 .r-match-item {padding: 12px 16px; border-bottom: 1px solid #232a35; font-size: 12px; display: flex; flex-direction: column; gap: 6px;}
@@ -739,3 +740,104 @@
 .r-statistics-wide details {max-width: 260px; overflow-wrap: anywhere; margin-top: 6px;}
 .r-statistics-grid > div > small:last-child {display: block; line-height: 1.6; margin-top: 6px;}
 @media (max-width: 700px) {.r-statistics-filters {grid-template-columns: 1fr;} .r-statistics-heading {flex-wrap: wrap; gap: 8px;}}
+
+
+/* Enterprise Screening Briefing and Badges */
+.r-recruiter-briefing {
+  background: var(--r-panel);
+  border: 1px solid var(--r-line);
+  border-left: 4px solid var(--r-action);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin: 16px 0 20px;
+}
+.r-briefing-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.r-briefing-title strong {
+  font-size: 13px;
+  color: var(--r-text);
+}
+.r-briefing-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e2e8f0;
+  margin: 0 0 10px;
+}
+.r-eligibility-checklist {
+  border-top: 1px solid var(--r-line);
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.r-eligibility-checklist small {
+  display: block;
+  font-weight: 500;
+  color: var(--r-amber);
+  margin-bottom: 4px;
+}
+.r-eligibility-checklist ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--r-muted);
+}
+.r-eligibility-checklist li {
+  margin: 2px 0;
+}
+.r-score-cell, .r-eval-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.r-score-sub {
+  font-size: 11px;
+  color: var(--r-accent);
+  font-weight: 500;
+}
+.r-score-sub-partial {
+  font-size: 11px;
+  color: var(--r-amber);
+  font-weight: 500;
+}
+.r-elig-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.r-elig-badge.warning {
+  color: var(--r-amber);
+}
+.r-elig-badge.success {
+  color: var(--r-green);
+}
+
+/* Active Candidate Evaluation Indicator */
+.r-evaluating-row {
+  background: rgba(59, 130, 246, 0.12) !important;
+  box-shadow: inset 3px 0 0 #3b82f6, 0 0 12px rgba(59, 130, 246, 0.2);
+  transition: background 0.3s ease;
+}
+
+@keyframes pulse-evaluating-border {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.4); }
+  50% { border-color: rgba(59, 130, 246, 0.9); }
+}
+
+.r-active-eval-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+  font-weight: 500;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  animation: pulse-evaluating-border 2s ease-in-out infinite;
+}
+

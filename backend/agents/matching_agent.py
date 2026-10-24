@@ -135,8 +135,8 @@ Determine if candidate evidence chunks satisfy the specified Job Requirement.
 Evaluation Principles:
 - "met": Direct evidence satisfying the entire requirement, including its description and context. Use 0.8-1.0 according to evidence completeness; reserve 1.0 for complete proof. Extract exact verbatim citation quotes.
 - "partial": Related or adjacent evidence (score: 0.4-0.79). Extract exact verbatim citation quotes.
-- "clarification_needed": Interpretive, logistical, or soft-skill requirement (e.g. shifts, travel, relocation, willingness to learn, teamwork) where the CV is silent. DO NOT mark as not_met; set score: 0.5, is_objective: false, and provide a clear Yes/No screening question in clarification_question.
-- "not_met": Objective credential or skill (degree, years of experience, programming language, tool) is genuinely absent (score: 0.0-0.39, citations: []).
+- "clarification_needed": Interpretive, logistical, or soft-skill requirement (e.g. shifts, travel, relocation, willingness to learn, teamwork) where the CV is silent. DO NOT mark as not_met; set score: 0.5, is_objective: false, and provide a clear Yes/No screening question in clarification_question. RESERVED STRICTLY FOR SUBJECTIVE/INTERPRETIVE MATTERS. NEVER use for objective skills, tools, or requirements.
+- "not_met": Objective credential or skill (degree, years of experience, programming language, tool, architecture) is genuinely absent or not found in the CV (score: 0.0-0.39, citations: [], clarification_question: null). Never mark an objective skill as clarification_needed.
 
 Grounding Rule:
 - All citation quotes MUST be exact, verbatim substrings from candidate chunks. Do not paraphrase.
@@ -208,6 +208,7 @@ class MatchingAgent:
         n_chunks: int = 3,
         candidate: Optional[AnonymizedCandidate] = None,
         strictness: int = 50,
+        override_client: Optional[BaseLLMClient] = None,
     ) -> RequirementMatch:
         """
         Retrieves top relevant candidate chunks for a single requirement and prompts LLM for grounded match.
@@ -314,11 +315,34 @@ class MatchingAgent:
             evidence_text = "\n\n".join(evidence_lines)
         is_interpretive = is_interpretive_requirement(requirement)
         if not evidence_text:
-            return RequirementMatch(requirement_id=requirement.id, title=requirement.title,
-                jd_citation=requirement.description, status=MatchStatus.CLARIFICATION_NEEDED,
-                score=0.5, reasoning="No sufficient relevant source evidence was retrieved; this is unknown, not a negative finding.",
-                is_objective=not is_interpretive, citations=[],
-                clarification_question=generate_clarification_question(requirement) if is_interpretive else f"Can you provide evidence for {requirement.title}?")
+            if is_interpretive:
+                return RequirementMatch(
+                    requirement_id=requirement.id,
+                    title=requirement.title,
+                    jd_summary=requirement.title,
+                    jd_citation=requirement.description,
+                    status=MatchStatus.CLARIFICATION_NEEDED,
+                    score=0.5,
+                    reasoning="The candidate profile contains no explicit mention of this interpretive or logistical requirement; flagged for applicant/recruiter clarification.",
+                    is_objective=False,
+                    citations=[],
+                    clarification_question=generate_clarification_question(requirement),
+                    gap_analysis=f"Interpretive / logistical detail requiring confirmation: {generate_clarification_question(requirement)}",
+                )
+            else:
+                return RequirementMatch(
+                    requirement_id=requirement.id,
+                    title=requirement.title,
+                    jd_summary=requirement.title,
+                    jd_citation=requirement.description,
+                    status=MatchStatus.NOT_MET,
+                    score=0.0,
+                    reasoning=f"No documented evidence of '{requirement.title}' was found in the candidate profile.",
+                    is_objective=True,
+                    citations=[],
+                    clarification_question=None,
+                    gap_analysis=f"Missing required qualification or skill: {requirement.title}.",
+                )
 
         # 3. Formulate the evaluation prompt
         type_hint = "INTERPRETIVE / LOGISTICAL / SOFT-SKILL" if is_interpretive else "OBJECTIVE QUALIFICATION"
@@ -339,12 +363,14 @@ class MatchingAgent:
             f"Set requirement_id to '{requirement.id}'.\n"
             f"Keep reasoning concise (at most three sentences) and cite at most two relevant source passages. Omit optional fields that do not apply.\n"
             f"Evaluate the full description. A tool mention alone cannot establish its required application context.\n"
-            f"If Type is INTERPRETIVE / LOGISTICAL / SOFT-SKILL and the candidate CV is silent on it, set status to 'clarification_needed', is_objective to false, score to 0.5, and provide an actionable Yes/No question in clarification_question."
+            f"If Type is INTERPRETIVE / LOGISTICAL / SOFT-SKILL and the candidate CV is silent on it, set status to 'clarification_needed', is_objective to false, score to 0.5, and provide an actionable Yes/No question in clarification_question.\n"
+            f"If Type is OBJECTIVE QUALIFICATION, never use 'clarification_needed' (clarification is reserved strictly for subjective/interpretive matters). If the requirement or skill is absent or not proven in the evidence, set status to 'not_met', is_objective to true, score to 0.0, citations to [], and clarification_question to null."
         )
 
         # 4. Invoke LLM structured generation
-        if hasattr(self.llm_client, "set_action_context"):
-            self.llm_client.set_action_context(
+        effective_client = override_client or self.llm_client
+        if hasattr(effective_client, "set_action_context"):
+            effective_client.set_action_context(
                 "candidate_evaluation",
                 metadata={
                     **getattr(self, "execution_context", {}),
@@ -356,12 +382,25 @@ class MatchingAgent:
                 },
             )
 
-        match_result = self.llm_client.generate_structured(
-            prompt=prompt,
-            response_model=RequirementMatch,
-            system_prompt=MATCHING_SYSTEM_PROMPT,
-            temperature=0.0,
-        )
+        try:
+            match_result = effective_client.generate_structured(
+                prompt=prompt,
+                response_model=RequirementMatch,
+                system_prompt=MATCHING_SYSTEM_PROMPT,
+                temperature=0.0,
+            )
+        except Exception as client_err:
+            # If override_client failed in parallel mode, immediately failover to primary client/chain
+            if override_client and override_client is not self.llm_client:
+                logging.warning(f"Parallel client failed for {requirement.title}; failing over to primary dynamic chain: {client_err}")
+                match_result = self.llm_client.generate_structured(
+                    prompt=prompt,
+                    response_model=RequirementMatch,
+                    system_prompt=MATCHING_SYSTEM_PROMPT,
+                    temperature=0.0,
+                )
+            else:
+                raise
         match_result.requirement_id = requirement.id
         match_result.title = requirement.title
         match_result.jd_summary = requirement.title
@@ -386,6 +425,19 @@ class MatchingAgent:
                 match_result.clarification_question = generate_clarification_question(requirement)
         else:
             match_result.is_objective = True
+            # Deterministic Guardrail: Clarification needed is strictly reserved for subjective / interpretive matters.
+            # Objective skills or requirements must NEVER appear as clarification_needed.
+            if match_result.status == MatchStatus.CLARIFICATION_NEEDED:
+                if match_result.citations and any(getattr(c, "quote", None) for c in match_result.citations):
+                    match_result.status = MatchStatus.PARTIAL
+                    match_result.score = min(max(match_result.score, 0.4), 0.75)
+                else:
+                    match_result.status = MatchStatus.NOT_MET
+                    match_result.score = 0.0
+                    match_result.citations = []
+                match_result.clarification_question = None
+            elif match_result.status == MatchStatus.NOT_MET:
+                match_result.clarification_question = None
 
             # 6. Edge-Case Guardrails for Objective Requirements:
 
@@ -607,7 +659,13 @@ class MatchingAgent:
             if remaining_requirements:
                 completed_counter = [0]
 
-                def _evaluate_single(req: JobRequirement) -> RequirementMatch:
+                # Parallel multi-provider distribution or single-provider execution
+                is_parallel = getattr(settings, "parallel_screening_enabled", False)
+                provider_pool = []
+                if is_parallel and hasattr(self.llm_client, "get_healthy_provider_pool"):
+                    provider_pool = self.llm_client.get_healthy_provider_pool()
+
+                def _evaluate_single(req: JobRequirement, assigned_client: Optional[BaseLLMClient] = None) -> RequirementMatch:
                     try:
                         if hasattr(self.llm_client, "set_action_context"):
                             self.llm_client.set_action_context("candidate_evaluation")
@@ -617,6 +675,7 @@ class MatchingAgent:
                             n_chunks=n_chunks_per_req,
                             candidate=candidate,
                             strictness=strictness_clamped,
+                            override_client=assigned_client,
                         )
                         completed_counter[0] += 1
                         progress_tracker.increment_step(
@@ -635,27 +694,46 @@ class MatchingAgent:
                             f"Evaluation provider error on requirement '{req.title}' ({req.id}): {e}"
                         ) from e
 
-                max_workers = min(len(remaining_requirements), 4)
-                provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
-                snapshot = getattr(self.llm_client, "_snapshot_chain", [])
-                primary_provider = snapshot[0][0] if snapshot else settings.llm_provider
-                is_rate_sensitive = "groq" in provider_type or (isinstance(self.llm_client, DynamicLLMClient) and primary_provider == "groq")
-                if is_rate_sensitive:
-                    max_workers = 1
+                if is_parallel and len(provider_pool) > 1:
+                    max_workers = min(len(remaining_requirements), len(provider_pool) * 2, 8)
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [
+                            executor.submit(
+                                contextvars.copy_context().run,
+                                _evaluate_single,
+                                req,
+                                provider_pool[i % len(provider_pool)][2]
+                            )
+                            for i, req in enumerate(remaining_requirements)
+                        ]
+                        errors = []
+                        for future in as_completed(futures):
+                            try:
+                                self.completed_matches.append(future.result())
+                            except Exception as error:
+                                errors.append(error)
+                        if errors:
+                            raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
+                else:
+                    max_workers = min(len(remaining_requirements), 4)
+                    provider_type = getattr(self.llm_client, "__class__", "").__name__.lower()
+                    snapshot = getattr(self.llm_client, "_snapshot_chain", [])
+                    primary_provider = snapshot[0][0] if snapshot else settings.llm_provider
+                    is_rate_sensitive = "groq" in provider_type or (isinstance(self.llm_client, DynamicLLMClient) and primary_provider == "groq")
+                    if is_rate_sensitive:
+                        max_workers = 1
 
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = [executor.submit(contextvars.copy_context().run, _evaluate_single, req)
-                               for req in remaining_requirements]
-                    errors = []
-                    for future in as_completed(futures):
-                        try:
-                            self.completed_matches.append(future.result())
-                        except Exception as error:
-                            errors.append(error)
-                    if errors:
-                        # Drain all workers so successes are preserved regardless
-                        # of which requirement happened to fail first.
-                        raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [executor.submit(contextvars.copy_context().run, _evaluate_single, req)
+                                   for req in remaining_requirements]
+                        errors = []
+                        for future in as_completed(futures):
+                            try:
+                                self.completed_matches.append(future.result())
+                            except Exception as error:
+                                errors.append(error)
+                        if errors:
+                            raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
             completed = {match.requirement_id: match for match in self.completed_matches}
             matches = [completed[req.id] for req in active_requirements]
 

@@ -353,6 +353,8 @@ class LLMSettingsResponse(BaseModel):
     compatibility_mode: str = Field(description="Structured JSON compatibility mode ('auto', 'json_object', 'schema_prompt')")
     providers_catalog: Dict[str, Any] = Field(description="Complete provider and model definitions with rate limits")
     api_keys_configured: Dict[str, bool] = Field(description="Status of configured API keys per provider")
+    parallel_screening_enabled: bool = Field(default=False, description="Whether parallel multi-provider screening is enabled")
+    cooldown_statuses: Dict[str, Any] = Field(default_factory=dict, description="Active provider/model cooldown and exhaustion statuses")
     fallback_enabled: bool = Field(default=True, description="Whether multi-tier automatic failover is active")
     fallback_chain: List[str] = Field(default_factory=list, description="Sequence of fallback (provider:model) candidates")
     custom_fallback_chain: Optional[List[Dict[str, Any]]] = Field(default=None, description="User-customized fallback sequence")
@@ -381,6 +383,10 @@ class LLMUpdateRequest(BaseModel):
 
 class FallbackToggleRequest(BaseModel):
     enabled: bool = Field(description="Enable or disable multi-tier fallback failover")
+
+
+class ParallelToggleRequest(BaseModel):
+    enabled: bool = Field(description="Enable or disable parallel multi-provider requirement screening")
 
 
 class LLMTestRequest(BaseModel):
@@ -2067,6 +2073,7 @@ async def get_llm_settings() -> LLMSettingsResponse:
         pid: pinfo.model_dump() for pid, pinfo in CATALOG_PROVIDERS.items()
     }
     from backend.agents.llm_factory import (
+    get_active_cooldown_statuses,
         DynamicLLMClient,
         get_last_fallback_event,
         get_custom_fallback_chain,
@@ -2130,6 +2137,8 @@ async def get_llm_settings() -> LLMSettingsResponse:
             "ollama": True,
             "lmstudio": True,
         },
+        parallel_screening_enabled=getattr(settings, "parallel_screening_enabled", False),
+        cooldown_statuses=get_active_cooldown_statuses(),
         fallback_enabled=getattr(settings, "fallback_enabled", True),
         fallback_chain=chain_labels,
         custom_fallback_chain=enriched_custom,
@@ -2214,6 +2223,18 @@ async def update_llm_settings(payload: LLMUpdateRequest) -> LLMSettingsResponse:
     from backend.agents.llm_factory import clear_last_fallback_event
     clear_last_fallback_event()
 
+    return await get_llm_settings()
+
+
+@router.post(
+    "/settings/llm/parallel-toggle",
+    dependencies=[Depends(require_role("admin"))],
+    response_model=LLMSettingsResponse,
+    summary="Toggle parallel multi-provider requirement screening on or off",
+)
+async def toggle_parallel(payload: ParallelToggleRequest) -> LLMSettingsResponse:
+    """Toggles parallel multi-provider requirement screening."""
+    settings.parallel_screening_enabled = payload.enabled
     return await get_llm_settings()
 
 

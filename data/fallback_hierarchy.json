@@ -8,8 +8,12 @@
     "model": "openai/gpt-oss-20b"
   },
   {
+    "provider": "cohere",
+    "model": "command-r-08-2024"
+  },
+  {
     "provider": "gemini",
-    "model": "gemini-3.8-flash"
+    "model": "gemini-3.5-flash-lite"
   },
   {
     "provider": "nvidia_nim",
@@ -24,3 +28,4 @@
     "model": "openrouter/free"
   }
 ]
+

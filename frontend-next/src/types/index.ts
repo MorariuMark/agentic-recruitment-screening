@@ -31,6 +31,18 @@ export interface WorkspaceStatistics {
 }
 
 export interface PreScreenRow {
+  retrieval_score?: number | null;
+  assessment_method?: "literal" | "semantic";
+  initial_evidence_score?: number | null;
+  core_score?: number;
+  role_anchor_score?: number;
+  technical_score?: number | null;
+  eligibility_status?: "eligible" | "clarification_needed" | "ineligible";
+  eligibility_gaps?: string[];
+  action_recommendation?: string | null;
+  job_grounding_coverage?: number;
+  tied_with_previous?: boolean;
+  knockout_failed?: boolean;
   language_priority?: number;
   pipeline_version?: "v1" | "v2";
   requirement_assessments?: RequirementAssessment[];
@@ -56,12 +68,16 @@ export interface PreScreenRow {
   error?: string | null;
 }
 export interface RequirementAssessment {
+  concept_results?: Array<{alternatives: string[]; score: number; role_anchor: boolean; evidence_ids: string[]}>;
+  criterion_source_verified?: boolean | null;
   requirement_id: string; title: string; category: string; weight: number;
-  status: "supported" | "partial" | "contradicted" | "unknown"; score: number; reasoning: string;
+  status: "supported" | "partial" | "contradicted" | "unknown" | "not_evidenced"; score: number; reasoning: string;
   evidence: Array<{id: string; section: string; text: string; strength: "demonstrated" | "listed"}>;
   documented_years?: number | null; rerank_score?: number | null;
 }
 export interface ScreeningRun {
+  active_candidate_id?: string;
+  criteria_preparation_pending?: boolean;
   ranking_policy_version?: string;
   evidence_policy_version?: string;
   dataset?: "recruiting" | "benchmark";
@@ -70,7 +86,7 @@ export interface ScreeningRun {
   ended_at?: number;
   attempt?: number;
   profile_hashes?: Record<string,string>;
-  diagnostics?: {version?: string; warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
+  diagnostics?: {version?: string; warnings?: string[]; timings_ms?: Record<string,number>; cache_hits?: number; cache_misses?: number; evaluations_reused?: number; reranker_model?: string; reranker_fallback?: boolean; reranked_candidates?: number};
   duplicates?: Array<{candidate_id: string; kept_candidate_id: string; reason: "same_name" | "identical_evaluation" | "same_document_or_contact"}>;
   started_at?: number;
   id: string;
@@ -95,6 +111,11 @@ export interface JobRequirement {
   description: string;
   minimum_years_experience?: number | null;
   eligibility_evidence?: string | null;
+  source_quote?: string | null;
+  source_verified?: boolean | null;
+  is_knockout?: boolean;
+  concept_operator?: "all" | "any";
+  evidence_plan?: {kind: string; basis_hash?: string | null; groups: Array<{alternatives: string[]; source_quote: string; role_anchor: boolean}>} | null;
 }
 
 export interface JobDescription {
@@ -270,7 +291,7 @@ export interface CandidateSummary {
   latest_evaluation?: {
     overall_score: number;
     must_have_score: number;
-    recommendation: "strong_match" | "borderline" | "reject";
+    recommendation: Recommendation;
     must_have_gaps_count: number;
     citation_verification_score: number;
     hitl_validated: boolean;
@@ -306,17 +327,22 @@ export interface VerbatimCitation {
   quote: string;
   source_section?: string | null;
   verified: boolean;
+  relevant?: boolean | null;
 }
 
-export type MatchStatus = "met" | "partial" | "clarification_needed" | "not_met";
+export type MatchStatus = "met" | "partial" | "clarification_needed" | "not_met" | "not_evidenced";
 
 export interface RequirementMatch {
+  assessment_method?: "literal" | "semantic" | "specialized";
+  criterion_source_verified?: boolean | null;
+  criterion_warning?: string | null;
+  clarification_target?: "candidate" | "recruiter" | null;
   category?: RequirementCategory | null;
   requirement_id: string;
   title?: string | null;
   jd_summary?: string | null;
   jd_citation?: string | null;
-  status: "met" | "partial" | "clarification_needed" | "not_met";
+  status: "met" | "partial" | "clarification_needed" | "not_met" | "not_evidenced";
   score: number;
   confidence: number;
   reasoning: string;
@@ -329,17 +355,29 @@ export interface RequirementMatch {
 }
 
 export interface MatchEvaluationResult {
+  core_score?: number;
+  role_anchor_score?: number;
+  technical_score?: number | null;
+  eligibility_status?: "eligible" | "clarification_needed" | "ineligible";
+  eligibility_gaps?: string[];
+  action_recommendation?: string | null;
+  score_upper_bound?: number;
+  job_grounding_coverage?: number;
+  decision_reasons?: string[];
   id: string;
   candidate_id: string;
   job_id: string;
   overall_score: number;
   must_have_score: number;
   nice_to_have_score: number;
-  recommendation: "strong_match" | "borderline" | "reject";
+  recommendation: Recommendation;
   requirement_matches: RequirementMatch[];
   must_have_gaps_count: number;
   clarification_count?: number;
   citation_verification_score: number;
+  citation_relevance_score?: number;
+  evidence_coverage?: number;
+  policy_version?: string;
   hitl_validated: boolean;
   recruiter_notes?: string | null;
   strictness?: number;
@@ -478,6 +516,8 @@ export interface LLMSettings {
   compatibility_mode: string;
   providers_catalog: Record<string, ProviderCatalogInfo>;
   api_keys_configured: Record<string, boolean>;
+  parallel_screening_enabled?: boolean;
+  cooldown_statuses?: Record<string, { provider: string; model: string; remaining_seconds: number; exhausted: boolean }>;
   fallback_enabled: boolean;
   fallback_chain: string[];
   custom_fallback_chain?: FallbackHierarchyItem[] | null;
@@ -545,7 +585,7 @@ export interface LocalModelScanResult {
 }
 
 export interface RequirementComparisonCell {
-  status: "met" | "partial" | "clarification_needed" | "not_met";
+  status: "met" | "partial" | "clarification_needed" | "not_met" | "not_evidenced";
   score: number;
   reasoning: string;
   citation_quote?: string | null;

@@ -109,3 +109,17 @@ def isolate_test_database():
             Path(TEST_DB_FILE).unlink()
         except Exception:
             pass
+
+@pytest.fixture(autouse=True)
+def reset_global_llm_state():
+    from backend.config import settings
+    from backend.agents.llm_factory import _MODEL_COOLDOWNS
+    orig_fallback = getattr(settings, "fallback_enabled", True)
+    orig_provider = getattr(settings, "llm_provider", "groq")
+    orig_groq = getattr(settings, "groq_model", "openai/gpt-oss-20b")
+    _MODEL_COOLDOWNS.clear()
+    yield
+    settings.fallback_enabled = orig_fallback
+    settings.llm_provider = orig_provider
+    settings.groq_model = orig_groq
+    _MODEL_COOLDOWNS.clear()

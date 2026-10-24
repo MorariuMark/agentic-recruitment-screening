@@ -236,7 +236,7 @@ async def hybrid_rank(payload, candidates, job, embedding_fn):
             loop = asyncio.get_running_loop()
             reranker = await asyncio.wait_for(loop.run_in_executor(_RERANKER_EXECUTOR, get_reranker), timeout=settings.screening_reranker_load_timeout_seconds)
             # Use a copy so a failed prediction cannot leave partially modified rows.
-            rerank_pool = max(payload["top_k"], payload.get("rerank_pool_size", 100))
+            rerank_pool = min(len(rows), max(payload["top_k"], payload.get("rerank_pool_size", 100)))
             rows_copy = copy.deepcopy(rows)
             rows = await asyncio.wait_for(loop.run_in_executor(_RERANKER_EXECUTOR, lambda: engine.rerank(rows_copy, job, reranker, rerank_pool)), timeout=settings.screening_reranker_timeout_seconds)
             engine.diagnostics["reranker_model"] = reranker.model_name
@@ -319,7 +319,13 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
         selected_ids = {str(row.candidate_id) for row in selected}
         deep_started = time.perf_counter()
         provider_wait_remaining = settings.screening_provider_wait_seconds
-        for row in [row for row in payload["rows"] if row["candidate_id"] in selected_ids]:
+        eval_rows = [row for row in payload["rows"] if row["candidate_id"] in selected_ids]
+        for eval_idx, row in enumerate(eval_rows):
+            cand_profile = profiles.get(row["candidate_id"])
+            cand_name = getattr(cand_profile, "masked_name", None) or row.get("candidate_name") or f"Candidate {row['candidate_id'][:8]}"
+            payload["active_candidate_id"] = row["candidate_id"]
+            payload["phase"] = f"Evaluating {cand_name} ({eval_idx + 1}/{len(eval_rows)})"
+            await save_run(payload)
             while True:
                 agent.resume_matches = [RequirementMatch.model_validate(match) for match in row.get("deep_requirement_matches", [])]
                 agent.completed_matches = []
@@ -355,6 +361,7 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             except Exception:
                 payload.setdefault("diagnostics", {}).setdefault("warnings", []).append("Action log persistence failed; trace may be incomplete.")
             await save_run(payload)
+        payload["active_candidate_id"] = None
         payload.setdefault("diagnostics", {}).setdefault("timings_ms", {})["deep_evaluation"] = round((time.perf_counter() - deep_started) * 1000, 2)
         payload["status"] = "partial" if any(r["deep_status"] in {"failed", "deferred"} for r in payload["rows"]) else "completed"
         representatives = {item["candidate_id"]: item["kept_candidate_id"] for item in payload.get("duplicates", [])}
@@ -626,6 +633,104 @@ async def upload_cohort(background_tasks: BackgroundTasks, files: list[UploadFil
     await DatabaseRepository.initialize_batch_files(batch_id, [name for name, _ in payloads])
     schedule_job(background_tasks, f"batch:{batch_id}", existing._batch_processor.execute_parse_batch, batch_id, payloads)
     return {"batch_id": str(batch_id), "total_files": len(payloads), "status": "PROCESSING"}
+
+
+@router.get("/screening/llm/live-logs")
+async def get_live_llm_logs(limit: int = Query(default=50, ge=1, le=200)):
+    """
+    Returns real-time LLM telemetry:
+    - in_flight: list of active requests currently being generated on GPU/cloud with live elapsed timers
+    - recent: completed actions with full prompts, raw model responses, parsed JSON, and errors
+    """
+    from backend.services.action_logger import action_logger
+    return action_logger.get_live_state(limit=limit)
+
+
+@router.post("/screening/llm/live-logs/clear")
+async def clear_live_llm_logs():
+    """Flushes in-memory LLM live action buffer and in-flight tracking."""
+    from backend.services.action_logger import action_logger
+    action_logger.clear()
+    return {"status": "ok"}
+
+
+class LocalModelLoadRequest(BaseModel):
+    provider: str = Field(default="lmstudio", description="Local provider ('lmstudio' or 'ollama')")
+    model: str = Field(description="Model identifier to load into GPU VRAM")
+    context_window: int | None = Field(default=None, description="Context window size in tokens, or None to auto-tune based on detected VRAM")
+    gpu_layers: int = Field(default=99, description="GPU layer offload count (99 for max)")
+    gpu_offload_mode: str = Field(default="auto", description="GPU offload mode ('auto' for safe layer split on 4GB laptops, or 'max')")
+    set_as_active: bool = Field(default=True, description="Hot-swap runtime LLM provider to this model")
+
+
+class LocalModelUnloadRequest(BaseModel):
+    provider: str = Field(default="lmstudio", description="Local provider ('lmstudio' or 'ollama')")
+    model: str | None = Field(default=None, description="Model identifier to unload, or None for all")
+
+
+class LocalServerStartRequest(BaseModel):
+    provider: str = Field(default="lmstudio")
+    port: int = Field(default=1234)
+
+
+@router.get("/screening/local-models/status")
+async def get_local_models_status():
+    """
+    Returns consolidated status of local LLM runtimes and NVIDIA GPU:
+    - GPU hardware: RTX 4060 Ti, VRAM used/total, GPU utilization
+    - LM Studio: HTTP availability, loaded models, catalog on disk, active model
+    - Ollama: HTTP availability, VRAM loaded models, active model
+    - High Context & Rolling Window configurations
+    """
+    from backend.services.local_model_service import local_model_service
+    return local_model_service.get_full_state()
+
+
+@router.post("/screening/local-models/load")
+async def load_local_model(req: LocalModelLoadRequest):
+    """
+    Loads a local model into GPU VRAM with 100% GPU layer offload and 16,384 context length.
+    Guarantees rolling context window to prevent out-of-memory errors during screening.
+    """
+    from backend.services.local_model_service import local_model_service
+    result = local_model_service.load_model(
+        provider=req.provider,
+        model=req.model,
+        context_window=req.context_window,
+        gpu_layers=req.gpu_layers,
+        gpu_offload_mode=req.gpu_offload_mode,
+        set_as_active=req.set_as_active,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Model loading failed"))
+    return result
+
+
+@router.post("/screening/local-models/unload")
+async def unload_local_model(req: LocalModelUnloadRequest):
+    """
+    Unloads local model(s) from VRAM immediately to free up GPU memory.
+    """
+    from backend.services.local_model_service import local_model_service
+    result = local_model_service.unload_model(
+        provider=req.provider,
+        model=req.model,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Model unloading failed"))
+    return result
+
+
+@router.post("/screening/local-models/start-server")
+async def start_local_server(req: LocalServerStartRequest):
+    """
+    Starts local LM Studio server on specified port (default 1234).
+    """
+    from backend.services.local_model_service import local_model_service
+    result = local_model_service.start_lmstudio_server(port=req.port)
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Failed starting server"))
+    return result
 
 
 @router.get("/screening/action-trace")

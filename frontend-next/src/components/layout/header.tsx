@@ -8,6 +8,8 @@ import {
   ExternalLink,
   PanelLeftClose,
   PanelLeftOpen,
+  Terminal,
+  Cpu,
   Zap,
 } from "lucide-react";
 
@@ -17,6 +19,8 @@ interface HeaderProps {
   onSelectJob?: (jobId: string | null) => void;
   onOpenUploadModal?: () => void;
   onNavigateToSettings?: () => void;
+  onOpenDebugModal?: () => void;
+  onOpenLocalModelModal?: () => void;
   isSidebarOpen?: boolean;
   onToggleSidebar?: () => void;
 }
@@ -27,10 +31,13 @@ export function Header({
   onSelectJob,
   onOpenUploadModal,
   onNavigateToSettings,
+  onOpenDebugModal,
+  onOpenLocalModelModal,
   isSidebarOpen = true,
   onToggleSidebar,
 }: HeaderProps) {
   const [backendStatus, setBackendStatus] = useState<"online" | "offline" | "checking">("checking");
+  const [inFlightCount, setInFlightCount] = useState<number>(0);
 
   const refreshStatus = async () => {
     try {
@@ -43,6 +50,15 @@ export function Header({
     }
   };
 
+  const checkInFlight = async () => {
+    try {
+      const state = await api.getLiveLLMLogs(1);
+      setInFlightCount(state?.in_flight?.length || 0);
+    } catch {
+      // ignore background poll errors
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     const failsafe = setTimeout(() => {
@@ -52,12 +68,16 @@ export function Header({
     }, 2500);
 
     refreshStatus();
-    const interval = setInterval(refreshStatus, 10000);
+    checkInFlight();
+
+    const healthInterval = setInterval(refreshStatus, 10000);
+    const flightInterval = setInterval(checkInFlight, 2500);
 
     return () => {
       isMounted = false;
       clearTimeout(failsafe);
-      clearInterval(interval);
+      clearInterval(healthInterval);
+      clearInterval(flightInterval);
     };
   }, []);
 
@@ -81,8 +101,37 @@ export function Header({
         )}
       </div>
 
-      {/* Right: Phoenix Traces & Backend Health */}
+      {/* Right: LLM Live Debug, Telemetry & Backend Health */}
       <div className="flex items-center gap-3">
+        {/* Local GPU Engine Controls */}
+        {onOpenLocalModelModal && (
+          <button
+            onClick={onOpenLocalModelModal}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-purple-500/40 text-xs text-slate-300 hover:text-purple-300 transition-colors cursor-pointer group"
+            title="Open Local GPU & Model Controls (RTX 4060 Ti, Load / Unload Models, 16k Rolling Context)"
+          >
+            <Cpu className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
+            <span className="font-mono text-[11px]">Local GPU</span>
+          </button>
+        )}
+
+        {/* Live LLM Debug button */}
+        {onOpenDebugModal && (
+          <button
+            onClick={onOpenDebugModal}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              inFlightCount > 0
+                ? "bg-amber-500/15 border border-amber-500/40 text-amber-300 shadow-sm shadow-amber-500/20 animate-pulse"
+                : "bg-slate-900 border border-slate-800 hover:border-blue-500/40 text-slate-300 hover:text-blue-300"
+            }`}
+            title="Open Live LLM Engine Inspector & Debug Window (live prompts and raw outputs)"
+          >
+            <Terminal className={`w-3.5 h-3.5 ${inFlightCount > 0 ? "text-amber-400" : "text-blue-400"}`} />
+            <span className="font-mono text-[11px]">
+              {inFlightCount > 0 ? `GPU Active (${inFlightCount})` : "Live LLM Debug"}
+            </span>
+          </button>
+        )}
 
         {/* Token Usage Analytics link */}
         {onNavigateToSettings && (
@@ -95,6 +144,7 @@ export function Header({
             <span className="font-mono text-[11px]">Tokens &amp; Telemetry</span>
           </button>
         )}
+
         {/* Arize Phoenix Observability link */}
         <a
           href="http://localhost:6006"

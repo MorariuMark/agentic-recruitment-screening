@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { Header } from "./header";
 import { Sidebar, NavTab } from "./sidebar";
+import { LiveLLMDebugModal } from "./live-llm-debug-modal";
+import { LocalModelControl } from "@/components/recruiter/local-model-control";
 import { JobDescription } from "@/types";
 import { api } from "@/lib/api";
 
@@ -31,6 +33,8 @@ export function Shell({ children }: ShellProps) {
   const [comparisonCandidateIds, setComparisonCandidateIdsState] = useState<string[]>([]);
   const [candidateCount, setCandidateCount] = useState<number>(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isDebugModalOpen, setIsDebugModalOpen] = useState<boolean>(false);
+  const [isLocalModelModalOpen, setIsLocalModelModalOpen] = useState<boolean>(false);
 
   const toggleSidebar = () => {
     setIsSidebarOpen((prev) => {
@@ -180,6 +184,18 @@ export function Shell({ children }: ShellProps) {
     refreshCandidates();
   }, []);
 
+  // Keyboard shortcut Ctrl+Shift+D to toggle debug modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "D" || e.key === "d")) {
+        e.preventDefault();
+        setIsDebugModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
       {/* Sidebar Navigation */}
@@ -200,6 +216,8 @@ export function Shell({ children }: ShellProps) {
           onSelectJob={setSelectedJobId}
           onOpenUploadModal={() => setActiveTab("pipeline")}
           onNavigateToSettings={() => setActiveTab("settings")}
+          onOpenDebugModal={() => setIsDebugModalOpen(true)}
+          onOpenLocalModelModal={() => setIsLocalModelModalOpen(true)}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={toggleSidebar}
         />
@@ -221,6 +239,20 @@ export function Shell({ children }: ShellProps) {
           })}
         </main>
       </div>
+
+      {/* Live LLM Debug Window Modal */}
+      <LiveLLMDebugModal
+        open={isDebugModalOpen}
+        onClose={() => setIsDebugModalOpen(false)}
+        onOpenLocalControls={() => setIsLocalModelModalOpen(true)}
+      />
+
+      {/* Local AI & GPU Engine Manager Modal */}
+      <LocalModelControl
+        open={isLocalModelModalOpen}
+        onClose={() => setIsLocalModelModalOpen(false)}
+        onOpenDebugModal={() => setIsDebugModalOpen(true)}
+      />
     </div>
   );
 }

@@ -2,14 +2,16 @@
 import re
 import unicodedata
 import json
+from functools import lru_cache
+from collections import defaultdict
 
 from backend.services.skill_equivalence import CEFR_LEVELS
 
 TOKEN = re.compile(r"\w+[+#]*", re.UNICODE)
 TIER_LABEL = re.compile(r"\s*(?:\((?:REJECT|BORDERLINE|STRONG)\s+Tier\)|\[tier[_ -]?\d+\])", re.I)
 LANGUAGES = {
-    "german": ["german", "deutsch"], "english": ["english", "englisch"],
-    "french": ["french", "français", "francais"], "romanian": ["romanian", "română"],
+    "german": ["german", "deutsch", "germana", "germană"], "english": ["english", "englisch", "engleza", "engleză"],
+    "french": ["french", "français", "francais", "franceza", "franceză"], "romanian": ["romanian", "română", "romana"],
     "spanish": ["spanish", "español"], "italian": ["italian", "italiano"],
     "dutch": ["dutch", "nederlands"],
 }
@@ -24,15 +26,24 @@ def is_benchmark_profile(profile: dict) -> bool:
     return profile.get("dataset") == "benchmark" or bool(TIER_LABEL.search(json.dumps(profile, ensure_ascii=False)))
 
 
+@lru_cache(maxsize=128)
+def _source_tokens(source):
+    spans = list(TOKEN.finditer(source or ""))
+    actual = [unicodedata.normalize("NFKC", m.group()).lower() for m in spans]
+    positions = defaultdict(list)
+    for index, token in enumerate(actual):
+        positions[token].append(index)
+    return spans, actual, positions
+
+
 def source_quote(source: str, quote: str) -> str | None:
     """Return the original span for contiguous equal tokens; never trust parsed text."""
-    source_tokens = list(TOKEN.finditer(source or ""))
     normalize = lambda word: unicodedata.normalize("NFKC", word).lower()
     wanted = [normalize(m.group()) for m in TOKEN.finditer(quote or "")]
     if not wanted:
         return None
-    actual = [normalize(m.group()) for m in source_tokens]
-    for index in range(len(actual) - len(wanted) + 1):
+    source_tokens, actual, positions = _source_tokens(source or "")
+    for index in positions.get(wanted[0], []):
         if actual[index:index + len(wanted)] == wanted:
             return source[source_tokens[index].start():source_tokens[index + len(wanted) - 1].end()]
     return None

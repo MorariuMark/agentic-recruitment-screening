@@ -1,5 +1,5 @@
 """Requirement-level evidence retrieval and scoring. No generative model calls."""
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 import json
 import math
@@ -23,8 +23,13 @@ def tokens(text):
     return [ALIASES.get(t, t) for t in re.findall(r"[\w+#.]+", text.casefold()) if t not in STOP_WORDS]
 
 
-def term_matches(text, term):
-    return evidence_term_matches(text, term) or ALIASES.get(term, term) in set(tokens(text))
+def term_matches(text, term, token_set=None):
+    if evidence_term_matches(text, term):
+        return True
+    aliased = ALIASES.get(term, term)
+    if token_set is not None:
+        return aliased in token_set
+    return aliased in set(tokens(text))
 
 
 def language_assessment(candidate, requirement):
@@ -33,17 +38,18 @@ def language_assessment(candidate, requirement):
 
 def evidence_units(candidate: AnonymizedCandidate) -> list[EvidencePassage]:
     """Bound inference input while retaining the full source in the candidate record."""
-    units = []
+    from collections import defaultdict, deque
+    buckets = defaultdict(list)
     def add(section, text, strength="demonstrated"):
         text = clean_model_text(" ".join(text.split()))
         # Reserve space for qualifications/languages even when one role is very long.
         for offset in list(range(0, len(text), 900))[:4]:
             excerpt = text[offset:offset + 1000]
-            if not excerpt or len(units) >= 40:
+            if not excerpt:
                 return
             key = hashlib.sha256(f"{section}:{offset}:{excerpt}".encode()).hexdigest()[:20]
-            if not any(unit.id == key for unit in units):
-                units.append(EvidencePassage(id=key, section=section, text=excerpt, strength=strength))
+            family = section.split("[")[0].split(".")[0]
+            buckets[family].append(EvidencePassage(id=key, section=section, text=excerpt, strength=strength))
     for i, education in enumerate(candidate.anonymized_education):
         add(f"education[{i}]", f"{education.degree_title} {education.field_of_study or ''}")
     for i, language in enumerate(candidate.anonymized_languages):
@@ -51,8 +57,11 @@ def evidence_units(candidate: AnonymizedCandidate) -> list[EvidencePassage]:
     for i, certification in enumerate(candidate.anonymized_certifications):
         add(f"certifications[{i}]", certification)
     add("skills", " ".join(candidate.anonymized_skills), "listed")
+    add("titles", " | ".join(role.job_title for role in candidate.anonymized_work_experiences), "listed")
     for i, role in enumerate(candidate.anonymized_work_experiences):
-        add(f"experience[{i}]", " ".join([role.job_title, *role.work_description]))
+        add(f"experience[{i}]", " ".join(role.work_description))
+        if not role.work_description:
+            add(f"experience[{i}]", role.job_title, "listed")
         add(f"experience[{i}].skills", " ".join(role.skills_used), "listed")
     for i, project in enumerate(candidate.anonymized_projects):
         add(f"projects[{i}]", " ".join([project.project_name, *project.description]))
@@ -64,6 +73,22 @@ def evidence_units(candidate: AnonymizedCandidate) -> list[EvidencePassage]:
         add(f"publications[{i}]", publication.title)
     for i, patent in enumerate(candidate.anonymized_patents):
         add(f"patents[{i}]", patent.title)
+    if candidate.logistics:
+        add("logistics", " ".join(f"{key}: {value}" for key, value in candidate.logistics.model_dump().items() if value), "listed")
+    # Take one passage per family per round. Within a family prefer a first
+    # passage from each record before taking long continuations of one record.
+    queues = []
+    for values in buckets.values():
+        records = defaultdict(list)
+        for unit in values:
+            records[unit.section].append(unit)
+        queues.append(deque(unit for depth in range(4) for record in records.values() for unit in record[depth:depth + 1]))
+    units = []
+    while queues and len(units) < 40:
+        for queue in queues:
+            if queue and len(units) < 40:
+                units.append(queue.popleft())
+        queues = [queue for queue in queues if queue]
     return units
 
 
@@ -141,18 +166,30 @@ class HybridRankingEngine:
         queries = np.divide(queries, norm, out=np.zeros_like(queries), where=norm > 0)
         similarities = np.clip(matrix @ queries.T, -1, 1)
         documents = [Counter(tokens(unit.text)) for unit in corpus]
+        corpus_token_sets = [set(doc.keys()) for doc in documents]
         lengths = np.array([sum(document.values()) for document in documents])
         average_length = float(np.mean(lengths)) if len(lengths) else 1
-        frequencies = Counter(term for document in documents for term in document)
+
+        postings = defaultdict(list)
+        for doc_id, doc in enumerate(documents):
+            for term, count in doc.items():
+                postings[term].append((doc_id, count))
+
         lexical = []
         for query in query_texts:
             scores = np.zeros(len(corpus))
             for term in set(tokens(query)):
-                frequency = np.array([document.get(term, 0) for document in documents])
-                idf = math.log(1 + (len(corpus) - frequencies[term] + .5) / (frequencies[term] + .5))
-                scores += idf * frequency * 2.2 / (frequency + 1.2 * (.25 + .75 * lengths / max(average_length, 1)))
+                entries = postings.get(term)
+                if not entries:
+                    continue
+                doc_ids = np.array([e[0] for e in entries], dtype=int)
+                counts = np.array([e[1] for e in entries], dtype=float)
+                idf = math.log(1 + (len(corpus) - len(entries) + .5) / (len(entries) + .5))
+                lens = lengths[doc_ids]
+                scores[doc_ids] += idf * counts * 2.2 / (counts + 1.2 * (.25 + .75 * lens / max(average_length, 1)))
             lexical.append(scores)
         self.diagnostics["timings_ms"]["evidence_and_retrieval"] = round((time.perf_counter() - started) * 1000, 2)
+        req_terms_list = [requirement_evidence_terms(r.title, r.description) for r in requirements]
         rows = []
         for candidate, units in prepared:
             indices = owner_indices.get(str(candidate.candidate_id), [])
@@ -164,10 +201,10 @@ class HybridRankingEngine:
                 for ranking in [dense_order, lexical_order]:
                     for position, i in enumerate(ranking, 1):
                         fusion[i] += 1 / (60 + position)
-                terms = requirement_evidence_terms(requirement.title, requirement.description)
+                terms = req_terms_list[q]
                 # Preserve explicit proof even when dense retrieval prefers generic passages.
                 best = sorted(indices, key=lambda i: (
-                    -sum(term_matches(corpus[i].text, term) for term in terms),
+                    -sum(term_matches(corpus[i].text, term, corpus_token_sets[i]) for term in terms),
                     corpus[i].strength != "demonstrated", -fusion[i], corpus[i].id))[:evidence_limit]
                 similarity = max([float(similarities[i, q]) for i in best], default=0)
                 assessments.append(self.assess(candidate, requirement, [corpus[i] for i in best], similarity,

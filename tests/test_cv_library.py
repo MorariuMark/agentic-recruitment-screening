@@ -24,14 +24,17 @@ def test_import_has_no_parser_or_screening_and_removes_exact_duplicates(monkeypa
     monkeypatch.setattr(routes._parser_agent, "parse_and_anonymize", parser)
     content = f"CV {uuid4()}".encode()
     client = TestClient(app)
+    uid = uuid4().hex[:8]
+    first_name = f"first_{uid}.txt"
+    renamed_name = f"renamed_{uid}.txt"
     result = client.post("/api/v1/cv-library/import", files=[
-        ("files", ("first.txt", content)), ("files", ("renamed.txt", content)),
-        ("files", ("first.txt", content + b" changed"))])
+        ("files", (first_name, content)), ("files", (renamed_name, content)),
+        ("files", (first_name, content + b" changed"))])
     assert result.status_code == 200, result.text
     assert result.json() == {"imported": 2, "duplicates_removed": 1}
     assert not parser.called
     listed = client.get("/api/v1/cv-library").json()
-    matching = [cv for cv in listed if cv["filename"] == "first.txt"]
+    matching = [cv for cv in listed if cv["filename"] == first_name]
     assert len(matching) == 2
     assert all(cv["candidate_id"] is None for cv in matching)
     assert all("content" not in cv for cv in listed)
