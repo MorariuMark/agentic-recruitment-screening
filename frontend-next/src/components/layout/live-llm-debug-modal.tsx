@@ -158,7 +158,7 @@ export function LiveLLMDebugModal({ open, onClose, onOpenLocalControls }: LiveLL
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-slate-100">Live LLM Engine Inspector</h2>
+                <h2 className="text-base font-semibold text-slate-100">In-App LLM Console & Engine Inspector</h2>
                 {data.in_flight.length > 0 ? (
                   <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono font-medium animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-amber-400"></span>
@@ -171,7 +171,7 @@ export function LiveLLMDebugModal({ open, onClose, onOpenLocalControls }: LiveLL
                 )}
               </div>
               <p className="text-xs text-slate-400">
-                Inspect raw prompt inputs, GPU completions, and live inference durations
+                Real-time monitoring of LLM providers, active models, input prompts, output completions, token costs, and failover errors
               </p>
             </div>
           </div>

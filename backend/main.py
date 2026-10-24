@@ -156,6 +156,28 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
+# Global Resilient Exception Handlers
+# ---------------------------------------------------------------------------
+from fastapi.responses import JSONResponse
+from backend.agents.matching_agent import EvaluationProviderError
+
+@app.exception_handler(EvaluationProviderError)
+async def evaluation_provider_exception_handler(request: Request, exc: EvaluationProviderError):
+    logger.warning("Evaluation provider error intercepted gracefully on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": f"AI provider temporarily unavailable: {str(exc)}", "recoverable": True},
+    )
+
+@app.exception_handler(Exception)
+async def global_unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception intercepted gracefully on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}", "recoverable": True},
+    )
+
+# ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(api_router)

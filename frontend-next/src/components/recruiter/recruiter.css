@@ -841,3 +841,88 @@
   animation: pulse-evaluating-border 2s ease-in-out infinite;
 }
 
+
+/* In-App LLM Console Button & User Workspace Parallel Controls */
+.r-console-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.r-console-button:hover {
+  background: rgba(14, 165, 233, 0.24);
+  border-color: #38bdf8;
+  color: #f0f9ff;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+.r-console-button.active-flight {
+  border-color: rgba(245, 158, 11, 0.6);
+  background: rgba(245, 158, 11, 0.18);
+  color: #fef08a;
+  animation: pulse-evaluating-border 1.5s ease-in-out infinite;
+}
+.r-console-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 12px;
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  font-family: monospace;
+  font-weight: 600;
+}
+.r-console-button.active-flight .r-console-pill {
+  background: rgba(245, 158, 11, 0.3);
+  border-color: rgba(245, 158, 11, 0.6);
+  color: #fef3c7;
+}
+.r-parallel-switch {
+  margin-top: 8px !important;
+  border-top: 1px dashed var(--r-line) !important;
+  padding-top: 8px !important;
+}
+.r-switch-track.cyan.on {
+  background: #0891b2 !important;
+}
+.r-engine-help {
+  display: block;
+  font-size: 10px;
+  color: var(--r-muted);
+  line-height: 1.3;
+  margin-top: 4px;
+}
+.r-engine-cooldown-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.r-engine-exhausted-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  font-size: 10px;
+  line-height: 1.2;
+}

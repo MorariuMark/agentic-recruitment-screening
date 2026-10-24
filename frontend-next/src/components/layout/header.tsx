@@ -101,13 +101,13 @@ export function Header({
         )}
       </div>
 
-      {/* Right: LLM Live Debug, Telemetry & Backend Health */}
-      <div className="flex items-center gap-3">
+      {/* Right: LLM Live Debug Console, Telemetry & Backend Health */}
+      <div className="flex items-center gap-2.5">
         {/* Local GPU Engine Controls */}
         {onOpenLocalModelModal && (
           <button
             onClick={onOpenLocalModelModal}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-purple-500/40 text-xs text-slate-300 hover:text-purple-300 transition-colors cursor-pointer group"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-purple-500/40 text-xs text-slate-300 hover:text-purple-300 transition-colors cursor-pointer group"
             title="Open Local GPU & Model Controls (RTX 4060 Ti, Load / Unload Models, 16k Rolling Context)"
           >
             <Cpu className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
@@ -115,21 +115,32 @@ export function Header({
           </button>
         )}
 
-        {/* Live LLM Debug button */}
+        {/* Dedicated In-App LLM Console Button */}
         {onOpenDebugModal && (
           <button
             onClick={onOpenDebugModal}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer shadow-sm select-none ${
               inFlightCount > 0
-                ? "bg-amber-500/15 border border-amber-500/40 text-amber-300 shadow-sm shadow-amber-500/20 animate-pulse"
-                : "bg-slate-900 border border-slate-800 hover:border-blue-500/40 text-slate-300 hover:text-blue-300"
+                ? "bg-amber-500/15 border border-amber-500/40 text-amber-200 shadow-amber-500/20 hover:bg-amber-500/25 animate-pulse"
+                : "bg-slate-900/90 border border-slate-700/80 hover:border-cyan-500/50 hover:bg-slate-850 text-slate-200 hover:text-white"
             }`}
-            title="Open Live LLM Engine Inspector & Debug Window (live prompts and raw outputs)"
+            title="Open In-App LLM Console: inspect models, providers, prompts, outputs, latency, tokens, and errors in real-time."
           >
-            <Terminal className={`w-3.5 h-3.5 ${inFlightCount > 0 ? "text-amber-400" : "text-blue-400"}`} />
-            <span className="font-mono text-[11px]">
-              {inFlightCount > 0 ? `GPU Active (${inFlightCount})` : "Live LLM Debug"}
-            </span>
+            <div className="p-0.5 rounded bg-cyan-500/10 text-cyan-400">
+              <Terminal className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex items-center gap-1.5 font-mono text-[11px]">
+              <span className="font-semibold text-slate-100">LLM Console</span>
+              {inFlightCount > 0 ? (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/40 font-bold">
+                  {inFlightCount} In-Flight
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] border border-emerald-500/20">
+                  Live
+                </span>
+              )}
+            </div>
           </button>
         )}
 
@@ -137,7 +148,7 @@ export function Header({
         {onNavigateToSettings && (
           <button
             onClick={onNavigateToSettings}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-amber-500/40 text-xs text-slate-300 hover:text-amber-300 transition-colors cursor-pointer group"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-amber-500/40 text-xs text-slate-300 hover:text-amber-300 transition-colors cursor-pointer group"
             title="Open Token Usage & Model Analytics Dashboard"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform fill-amber-400/20" />
@@ -150,7 +161,7 @@ export function Header({
           href="http://localhost:6006"
           target="_blank"
           rel="noopener noreferrer"
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-xs text-slate-400 hover:text-slate-200 transition-colors"
           title="Open Arize Phoenix OpenTelemetry tracing dashboard"
         >
           <Activity className="w-3.5 h-3.5 text-purple-400" />
@@ -159,7 +170,7 @@ export function Header({
         </a>
 
         {/* Backend health pulse */}
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs">
           <span className="relative flex h-2 w-2">
             {backendStatus === "online" ? (
               <>

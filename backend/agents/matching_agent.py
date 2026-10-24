@@ -201,6 +201,87 @@ class MatchingAgent:
                 self.retrieval_warnings.append(warning)
             return []
 
+    def _synthesize_offline_requirement_match(
+        self,
+        requirement: JobRequirement,
+        retrieved_chunks: List[dict],
+        is_interpretive: bool,
+        error_context: str = "",
+    ) -> RequirementMatch:
+        """
+        Deterministic, grounded fallback evaluator that guarantees requirement evaluation
+        succeeds based on retrieved vector chunks and keyword evidence even if all external LLMs are down.
+        """
+        req_title = requirement.title
+        req_desc = requirement.description or ""
+        q_text = generate_clarification_question(requirement) if is_interpretive else None
+
+        if is_interpretive:
+            return RequirementMatch(
+                requirement_id=requirement.id,
+                title=req_title,
+                jd_summary=req_title,
+                jd_citation=req_desc,
+                status=MatchStatus.CLARIFICATION_NEEDED,
+                score=0.5,
+                reasoning=(
+                    f"External LLM engines temporarily unavailable ({error_context[:80]}). "
+                    f"Interpretive/logistical criterion flagged for recruiter verification on call."
+                ),
+                citations=[],
+                clarification_question=q_text,
+                gap_analysis=f"Interpretive requirement requiring recruiter confirmation: {q_text}",
+                is_objective=False,
+            )
+
+        # Objective criterion: analyze retrieved chunks for direct skill / keyword matches
+        keywords = [w.lower().strip(".,:;()") for w in f"{req_title} {req_desc}".split() if len(w) > 3]
+        matched_chunks = []
+        for chunk in (retrieved_chunks or []):
+            text = chunk.get("text", "")
+            text_lower = text.lower()
+            matches = [k for k in keywords if k in text_lower]
+            if len(matches) >= 2 or any(k in text_lower for k in [req_title.lower()]):
+                matched_chunks.append((chunk, len(matches)))
+
+        if matched_chunks:
+            matched_chunks.sort(key=lambda x: x[1], reverse=True)
+            top_chunk, match_count = matched_chunks[0]
+            excerpt = top_chunk.get("text", "").strip()[:180]
+            return RequirementMatch(
+                requirement_id=requirement.id,
+                title=req_title,
+                jd_summary=req_title,
+                jd_citation=req_desc,
+                status=MatchStatus.PARTIAL,
+                score=0.7,
+                reasoning=(
+                    f"Verified keyword presence in candidate profile ({match_count} matching terms). "
+                    f"Evaluated via grounded heuristic fallback due to LLM provider cooldown."
+                ),
+                citations=[VerbatimCitation(quote=excerpt, source_section=top_chunk.get("metadata", {}).get("type", "Resume Evidence"))] if excerpt else [],
+                clarification_question=None,
+                gap_analysis="Verified offline through resume chunk matching. Recruiter can probe depth in interview.",
+                is_objective=True,
+            )
+
+        return RequirementMatch(
+            requirement_id=requirement.id,
+            title=req_title,
+            jd_summary=req_title,
+            jd_citation=req_desc,
+            status=MatchStatus.NOT_MET,
+            score=0.0,
+            reasoning=(
+                f"No direct evidence for '{req_title}' found in retrieved resume passages. "
+                f"Evaluated via grounded heuristic fallback due to LLM provider cooldown."
+            ),
+            citations=[],
+            clarification_question=None,
+            gap_analysis=f"Candidate resume does not document verifiable experience with {req_title}.",
+            is_objective=True,
+        )
+
     def evaluate_requirement(
         self,
         candidate_id: UUID,

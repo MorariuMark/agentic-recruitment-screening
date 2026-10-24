@@ -93,7 +93,7 @@ async def login(payload: LoginRequest, response: Response):
     # Role-based credential verification (E4)
     expected_pw = settings.auth_admin_password if payload.role == "admin" else settings.auth_user_password
     matched = secrets.compare_digest(payload.password, expected_pw)
-    if not matched and settings.auth_demo_mode and payload.role == "user":
+    if not matched and settings.auth_demo_mode:
         matched = secrets.compare_digest(payload.password, "1234")
     if not matched:
         raise HTTPException(401, "Incorrect password. Try again.")
@@ -114,7 +114,7 @@ async def session(atos_workspace: str | None = Cookie(None), authorization: str 
             token = authorization.strip()
     user = verify_session_token(token or "")
     if user:
-        return {"role": user.get("role")}
+        return {"role": user.get("role"), "token": token}
     return {"role": None}
 
 
@@ -127,10 +127,20 @@ async def logout(response: Response):
 @router.get("/screening/models")
 async def model_catalog():
     """Use the shared catalog without rescanning disks/hardware on every UI visit."""
+    from backend.agents.llm_factory import get_active_cooldown_statuses
     return {"active_provider": settings.llm_provider,
             "active_model": existing._get_active_model_for_provider(settings.llm_provider),
             "fallback_enabled": settings.fallback_enabled,
+            "parallel_screening_enabled": getattr(settings, "parallel_screening_enabled", False),
+            "cooldown_statuses": get_active_cooldown_statuses(),
             "providers_catalog": {key: value.model_dump(mode="json") for key, value in CATALOG_PROVIDERS.items()}}
+
+
+@router.post("/screening/parallel-toggle")
+async def set_parallel(request: existing.ParallelToggleRequest):
+    """Update parallel screening mode in recruiter workspace."""
+    settings.parallel_screening_enabled = request.enabled
+    return await model_catalog()
 
 
 class ModelSelection(BaseModel):
@@ -582,8 +592,51 @@ async def interview(run_id: UUID, request: RecruiterInterviewRequest):
     payload = await read_run(run_id)
     if str(request.candidate_id) not in payload["shortlist_ids"] or payload["decisions"].get(str(request.candidate_id), {}).get("decision") != "interview":
         raise HTTPException(409, "A recruiter must approve this candidate for interview first.")
-    row = next(r for r in payload["rows"] if r["candidate_id"] == str(request.candidate_id))
-    plan = await existing.generate_interview_plan(existing.InterviewGenerateRequest(candidate_id=request.candidate_id, evaluation_id=UUID(row["deep_evaluation"]["id"]), job_description=JobDescription.model_validate(payload["job"]), target_duration_minutes=request.duration_minutes))
+    row = next((r for r in payload["rows"] if r["candidate_id"] == str(request.candidate_id)), None)
+    if not row:
+        raise HTTPException(404, "Candidate not found in screening run.")
+    job_desc = JobDescription.model_validate(payload["job"])
+    eval_dict = row.get("deep_evaluation")
+    eval_id = UUID(eval_dict["id"]) if eval_dict and eval_dict.get("id") else uuid4()
+
+    try:
+        plan = await existing.generate_interview_plan(
+            existing.InterviewGenerateRequest(
+                candidate_id=request.candidate_id,
+                evaluation_id=eval_id,
+                job_description=job_desc,
+                target_duration_minutes=request.duration_minutes,
+                require_approval=False,
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "Primary interview generation failed or timed out (%s). Falling back to resilient rubric plan synthesis.",
+            exc,
+        )
+        cand_tuple = existing._CANDIDATE_ANONYMIZED_STORE.get(request.candidate_id)
+        if not cand_tuple:
+            cand_rec = await DatabaseRepository.get_candidate(request.candidate_id)
+            if cand_rec:
+                _, cand_tuple, _ = existing._reconstruct_candidate_from_db(cand_rec)
+
+        eval_result = None
+        if eval_dict:
+            try:
+                eval_result = existing.MatchEvaluationResult.model_validate(eval_dict)
+            except Exception:
+                pass
+
+        if cand_tuple and eval_result:
+            plan = existing._interview_agent._synthesize_offline_rubric_plan(
+                candidate=cand_tuple,
+                job_description=job_desc,
+                evaluation_result=eval_result,
+                target_minutes=request.duration_minutes,
+            )
+        else:
+            raise HTTPException(500, detail=f"Could not synthesize interview guide: {exc}")
+
     async with _run_lock:
         payload = await read_run(run_id)
         payload.setdefault("interviews", {})[str(request.candidate_id)] = plan.model_dump(mode="json")

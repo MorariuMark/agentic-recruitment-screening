@@ -58,6 +58,13 @@ export class AuthenticationError extends Error {
   name = "AuthenticationError";
 }
 
+let _savedAuthToken: string | null = null;
+if (typeof window !== "undefined") {
+  try {
+    _savedAuthToken = sessionStorage.getItem("atos_token");
+  } catch {}
+}
+
 class ApiClient {
   private base: string;
 
@@ -86,7 +93,7 @@ class ApiClient {
       primaryUrl = endpoint;
       fallbackUrl = endpoint;
     }
-    if (preferDirectBackend && typeof window === "undefined" && !this.base) {
+    if (preferDirectBackend && !sameOrigin) {
       primaryUrl = `http://127.0.0.1:8000${endpoint}`;
       fallbackUrl = endpoint;
     }
@@ -144,7 +151,15 @@ class ApiClient {
           credentials: "include",
           ...fetchOptions,
           signal: controller.signal,
-          headers: (() => {const requestHeaders = new Headers(headers); if (tabId) requestHeaders.set("X-Workspace-ID", tabId); if (tracked) requestHeaders.set("X-Process-ID", processId); return requestHeaders;})(),
+          headers: (() => {
+            const requestHeaders = new Headers(headers);
+            if (tabId) requestHeaders.set("X-Workspace-ID", tabId);
+            if (tracked) requestHeaders.set("X-Process-ID", processId);
+            if (_savedAuthToken && !requestHeaders.has("Authorization")) {
+              requestHeaders.set("Authorization", `Bearer ${_savedAuthToken}`);
+            }
+            return requestHeaders;
+          })(),
         });
 
         if (!res.ok) {
@@ -219,7 +234,7 @@ class ApiClient {
           primaryErr.message.includes("ECONNRESET") ||
           primaryErr.message.includes("Failed to proxy"));
 
-      if ((isNetworkError || isProxyOrGatewayError) && primaryUrl !== fallbackUrl && typeof window !== "undefined" && (fetchOptions.method || "GET") === "GET") {
+      if ((isNetworkError || isProxyOrGatewayError) && primaryUrl !== fallbackUrl && typeof window !== "undefined") {
         console.warn(`[ApiClient] Request to ${primaryUrl} encountered proxy/network failure (${primaryErr.message}); seamlessly retrying via fallback ${fallbackUrl}...`);
         return await executeFetch(fallbackUrl);
       }
@@ -249,8 +264,13 @@ class ApiClient {
   }
 
   // Health
-  async login(role: "admin" | "user", password: string): Promise<{role: "admin" | "user"}> {
-    return this.request("/api/v1/auth/login", {method: "POST", body: JSON.stringify({role, password}), sameOrigin: true});
+  async login(role: "admin" | "user", password: string): Promise<{role: "admin" | "user"; token?: string}> {
+    const res = await this.request<{role: "admin" | "user"; token?: string}>("/api/v1/auth/login", {method: "POST", body: JSON.stringify({role, password}), sameOrigin: true});
+    if (res?.token) {
+      _savedAuthToken = res.token;
+      try { sessionStorage.setItem("atos_token", res.token); } catch {}
+    }
+    return res;
   }
   async parseRecruiterJob(text: string): Promise<{job_description: JobDescription}> {
     return this.request("/api/v1/screening/jobs/parse", {method: "POST", body: JSON.stringify({text}), timeoutMs: 180000});
@@ -268,17 +288,31 @@ class ApiClient {
     return this.request(`/api/v1/screening/statistics/actions?${params}`);
   }
 
-  async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+  async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
     return this.request("/api/v1/screening/models");
   }
-  async selectRecruiterModel(provider: string, model: string): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+  async selectRecruiterModel(provider: string, model: string): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
     return this.request("/api/v1/screening/models", {method: "POST", body: JSON.stringify({provider, model})});
   }
-  async toggleRecruiterFailover(enabled: boolean): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled">> {
+  async toggleRecruiterFailover(enabled: boolean): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
     return this.request("/api/v1/screening/failover", {method: "POST", body: JSON.stringify({enabled})});
   }
-  async session(): Promise<{role: "admin" | "user" | null}> { return this.request("/api/v1/auth/session", {sameOrigin: true}); }
-  async logout(): Promise<void> { await this.request("/api/v1/auth/logout", {method: "POST", sameOrigin: true}); }
+  async toggleRecruiterParallel(enabled: boolean): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
+    return this.request("/api/v1/screening/parallel-toggle", {method: "POST", body: JSON.stringify({enabled})});
+  }
+  async session(): Promise<{role: "admin" | "user" | null; token?: string}> {
+    const res = await this.request<{role: "admin" | "user" | null; token?: string}>("/api/v1/auth/session", {sameOrigin: true});
+    if (res?.token) {
+      _savedAuthToken = res.token;
+      try { sessionStorage.setItem("atos_token", res.token); } catch {}
+    }
+    return res;
+  }
+  async logout(): Promise<void> {
+    _savedAuthToken = null;
+    try { sessionStorage.removeItem("atos_token"); } catch {}
+    await this.request("/api/v1/auth/logout", {method: "POST", sameOrigin: true});
+  }
   async uploadCohort(files: File[]): Promise<{batch_id: string}> {
     const body = new FormData(); files.forEach(file => body.append("files", file));
     return this.request("/api/v1/screening/cohort/upload", {method: "POST", body, timeoutMs: 600000});
@@ -304,7 +338,12 @@ class ApiClient {
     return this.request(`/api/v1/screening/runs/${id}/decisions/${candidateId}`, {method: "POST", body: JSON.stringify({decision, notes})});
   }
   async recruiterInterview(id: string, candidateId: string, duration: number): Promise<InterviewPlan> {
-    return this.request(`/api/v1/screening/runs/${id}/interview`, {method: "POST", body: JSON.stringify({candidate_id: candidateId, duration_minutes: duration}), timeoutMs: 600000});
+    return this.request(`/api/v1/screening/runs/${id}/interview`, {
+      method: "POST",
+      body: JSON.stringify({candidate_id: candidateId, duration_minutes: duration}),
+      timeoutMs: 600000,
+      preferDirectBackend: true,
+    });
   }
 
   async getHealth(): Promise<{ status: string; active_llm_provider: string; active_model: string }> {

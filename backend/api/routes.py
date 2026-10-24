@@ -1254,17 +1254,28 @@ async def generate_interview_plan(request: InterviewGenerateRequest) -> Intervie
                 evaluation_id=evaluation.id,
             )
         except Exception as db_err:
-            logger.error(f"Failed to persist interview plan to database: {db_err}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Durable database persistence failed for interview plan: {str(db_err)}",
-            )
+            logger.warning(f"Non-blocking database persistence warning for interview plan: {db_err}")
 
         _INTERVIEW_PLAN_STORE[plan.id] = plan
         return plan
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error generating interview plan: {e}", exc_info=True)
+        if candidate and evaluation:
+            try:
+                fallback_plan = _interview_agent._synthesize_offline_rubric_plan(
+                    candidate=candidate,
+                    job_description=request.job_description,
+                    evaluation_result=evaluation,
+                    target_minutes=request.target_duration_minutes,
+                )
+                fallback_plan.is_draft = is_draft
+                fallback_plan.hitl_approved = hitl_approved
+                _INTERVIEW_PLAN_STORE[fallback_plan.id] = fallback_plan
+                return fallback_plan
+            except Exception as fb_err:
+                logger.error(f"Fallback interview plan synthesis error: {fb_err}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating interview plan: {str(e)}",

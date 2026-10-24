@@ -1018,7 +1018,7 @@ class CohereClient(BaseLLMClient):
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
         self.last_key_used = "primary"
 
-        timeout_sec = getattr(settings, "screening_ai_request_seconds", 60.0)
+        timeout_sec = min(float(getattr(settings, "screening_ai_request_seconds", 25.0)), 25.0)
         self.client = httpx.Client(
             base_url=self.base_url,
             headers={
