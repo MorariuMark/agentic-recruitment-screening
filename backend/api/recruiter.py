@@ -82,6 +82,13 @@ async def action_statistics(days: int = Query(default=0, ge=0, le=3650),
                                       batch_id=batch_id, run_id=run_id, limit=limit, offset=offset)
 
 
+@router.get("/screening/statistics/cohorts")
+async def cohort_statistics(job_id: UUID | None = None, days: int = Query(default=0, ge=0, le=3650),
+                            limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0)):
+    from backend.services.cohort_statistics import screening_statistics
+    return await screening_statistics(job_id=job_id, days=days, limit=limit, offset=offset)
+
+
 class LoginRequest(BaseModel):
     role: Literal["admin", "user"]
     password: str
@@ -287,6 +294,7 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                     rows = await hybrid_rank(payload, candidates, job, embedding_fn)
                 else:
                     rows = await asyncio.to_thread(PreRankingEngine(embedding_fn).rank, candidates, job)
+            payload["pre_screening_ms"] = round((time.perf_counter() - started) * 1000, 2)
             source_ready = {str(candidate.candidate_id) for candidate in candidates if candidate.sanitized_text.strip()}
             selected = [row for row in rows if row.language_priority == 0 and str(row.candidate_id) in source_ready][:payload["top_k"]] if payload["deep_enabled"] else []
             deferred = sum(row.language_priority > 0 for row in rows)
@@ -373,6 +381,7 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             await save_run(payload)
         payload["active_candidate_id"] = None
         payload.setdefault("diagnostics", {}).setdefault("timings_ms", {})["deep_evaluation"] = round((time.perf_counter() - deep_started) * 1000, 2)
+        payload["deep_evaluation_ms"] = payload.get("deep_evaluation_ms", 0) + payload["diagnostics"]["timings_ms"]["deep_evaluation"]
         payload["status"] = "partial" if any(r["deep_status"] in {"failed", "deferred"} for r in payload["rows"]) else "completed"
         representatives = {item["candidate_id"]: item["kept_candidate_id"] for item in payload.get("duplicates", [])}
         for item in payload.get("duplicates", []):

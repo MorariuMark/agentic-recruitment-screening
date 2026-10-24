@@ -6,6 +6,7 @@ import { trackProcess } from "./processes";
 
 import {
   WorkspaceStatistics,
+  CohortStatistics,
   OperationStatistics,
   ScreeningRun,
   BatchJobStatus,
@@ -286,6 +287,12 @@ class ApiClient {
     const params = new URLSearchParams({limit: "25"});
     Object.entries(options).forEach(([key, value]) => {if (value !== undefined && value !== "") params.set(key, String(value));});
     return this.request(`/api/v1/screening/statistics/actions?${params}`);
+  }
+
+  async cohortStatistics(jobId: string, days: number, offset: number): Promise<CohortStatistics> {
+    const params = new URLSearchParams({days: String(days), offset: String(offset)});
+    if (jobId) params.set("job_id", jobId);
+    return this.request(`/api/v1/screening/statistics/cohorts?${params}`);
   }
 
   async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {

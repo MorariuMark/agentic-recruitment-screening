@@ -880,3 +880,11 @@ export interface ActionTraceResponse {
   actions: ActionTraceLogEntry[];
   screening_run?: any;
 }
+
+export interface CohortStatistics {
+  history: Array<{run_id: string; job_id: string; job_title: string; status: string; started_at: number | null;
+    candidate_count: number; evaluated_count: number; pre_screening_ms: number | null;
+    deep_evaluation_ms: number | null; total_ms: number | null;
+    tokens: {input: number; output: number; total: number} | null; model_calls: number}>;
+  total: number; has_more: boolean;
+}

@@ -44,6 +44,8 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
   const [batchId, setBatchId] = useState("");
   const [runId, setRunId] = useState("");
   const [offset, setOffset] = useState(0);
+  const [cohortOffset, setCohortOffset] = useState(0);
+  const cohorts = useQuery({queryKey: ["cohort-statistics", jobId, days, cohortOffset], queryFn: () => api.cohortStatistics(jobId, days, cohortOffset), refetchInterval: 5000});
   const [now, setNow] = useState(Date.now);
   const stats = useQuery({queryKey: ["recruiter-statistics"], queryFn: () => api.recruiterStatistics(), refetchInterval: 10000});
   const jobs = useQuery({queryKey: ["recruiter-jobs"], queryFn: () => api.getJobs(1000)});
@@ -57,7 +59,7 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
   const summary = actions.data?.summary || [];
   const history = actions.data?.history || [];
   const data = stats.data;
-  const refresh = () => {void actions.refetch(); void stats.refetch();};
+  const refresh = () => {void actions.refetch(); void stats.refetch(); void cohorts.refetch();};
   const clearScope = () => {setBatchId(""); setRunId(""); setOperation(""); setOffset(0);};
   const focus = (row: OperationTiming) => {
     setOffset(0);
@@ -74,9 +76,9 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
       <section aria-labelledby="performance-title">
         <div className="r-statistics-heading"><h3 id="performance-title">Action performance</h3><small>Saved across sessions · refreshes every 5 seconds</small></div>
         <div className="r-statistics-filters">
-          <label className="r-field">Time period<select value={days} onChange={e => {setDays(Number(e.target.value)); setOffset(0);}}><option value={0}>All time</option><option value={1}>Last 24 hours</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label>
+          <label className="r-field">Time period<select value={days} onChange={e => {setDays(Number(e.target.value)); setCohortOffset(0); setOffset(0);}}><option value={0}>All time</option><option value={1}>Last 24 hours</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label>
           <label className="r-field">Action<select value={operation} onChange={e => {setOperation(e.target.value); setOffset(0);}}><option value="">All actions</option>{Object.entries(names).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-          <label className="r-field">Job<select value={jobId} onChange={e => {setJobId(e.target.value); setBatchId(""); setRunId(""); setOffset(0);}}><option value="">All jobs</option>{jobs.data?.map(job => <option key={job.id} value={job.id}>{job.title}</option>)}</select></label>
+          <label className="r-field">Job<select value={jobId} onChange={e => {setJobId(e.target.value); setCohortOffset(0); setBatchId(""); setRunId(""); setOffset(0);}}><option value="">All jobs</option>{jobs.data?.map(job => <option key={job.id} value={job.id}>{job.title}</option>)}</select></label>
         </div>
         {(batchId || runId) && <p className="r-statistics-scope">{batchId ? `Batch ${batchId}` : `Screening run ${runId}`}<button className="r-button subtle" onClick={clearScope}>Clear batch/run filter</button></p>}
         {actions.isPending && <p role="status">Loading saved timings...</p>}
@@ -87,6 +89,21 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
         })}</div>
         <p className="r-statistics-footnote">Averages and throughput use successful, uncached actions. Failed, cancelled and reused CVs stay in history. Batch and screening durations are actual elapsed time, including queue waits; per-CV duration begins when a worker starts processing. Parent and child times overlap and must not be added together.</p>
         {!!summary.length && <div className="r-statistics-history r-statistics-wide"><table><caption className="r-sr-only">Action duration and reliability KPIs</caption><thead><tr><th>Action</th><th>Attempts</th><th>Success</th><th>Average</th><th>Total elapsed</th><th>Items completed</th><th>Fastest / slowest</th><th>Items / minute</th><th>Errors / cancelled</th></tr></thead><tbody>{summary.map(item => <tr key={item.operation}><td>{item.label}<small>{item.running} running · {item.cached} reused · {item.deferred} deferred · {item.interrupted} interrupted</small></td><td>{number(item.count)}</td><td>{item.success_rate == null ? "—" : `${number(item.success_rate)}%`}</td><td>{duration(item.average_ms)}</td><td>{duration(item.total_ms)}</td><td>{number(item.items)}</td><td>{duration(item.min_ms)} / {duration(item.max_ms)}</td><td>{item.items_per_minute == null ? "—" : number(item.items_per_minute)}</td><td>{item.failed + item.partial} / {item.cancelled}</td></tr>)}</tbody></table></div>}
+      </section>
+
+      <section aria-labelledby="cohort-statistics-title">
+        <div className="r-statistics-heading"><h3 id="cohort-statistics-title">Cohort screening statistics</h3><small>Filtered by job and time period above � includes retries</small></div>
+        <p className="r-statistics-footnote">Each row tracks one job screening. Total elapsed includes pre-screening, deep evaluation and queue waits across attempts. Deep evaluation covers the selected candidates; compare evaluated and cohort counts. Tokens include recorded model calls across retries. Unavailable historical measurements are shown explicitly.</p>
+        {cohorts.isPending && <p role="status">Loading cohort statistics...</p>}
+        {cohorts.error && <p role="alert" className="r-alert">{message(cohorts.error)} <button onClick={() => void cohorts.refetch()}>Retry</button></p>}
+        {cohorts.data && !cohorts.data.history.length && <p className="r-inline-empty">No screening runs match this job and time period.</p>}
+        {!!cohorts.data?.history.length && <div className="r-statistics-history r-statistics-wide"><table><caption className="r-sr-only">Screening time and token usage per cohort</caption><thead><tr><th>Job / screening run</th><th>Status</th><th>Candidates</th><th>Pre-screening</th><th>Deep evaluation</th><th>Total elapsed</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th></tr></thead><tbody>{cohorts.data.history.map(row => <tr key={row.run_id}>
+          <td>{row.job_title}<small>{row.run_id}</small><small>{row.started_at ? new Date(row.started_at).toLocaleString() : "Start unavailable"}</small><button className="r-button subtle" onClick={() => {setRunId(row.run_id); setBatchId(""); setOperation(""); setOffset(0);}}>View run actions</button></td>
+          <td>{row.status}</td><td>{number(row.candidate_count)} screened<small>{number(row.evaluated_count)} deep evaluated</small></td>
+          <td>{duration(row.pre_screening_ms)}</td><td>{duration(row.deep_evaluation_ms)}</td><td>{duration(row.total_ms)}</td>
+          <td>{row.tokens ? number(row.tokens.input) : "Not recorded"}</td><td>{row.tokens ? number(row.tokens.output) : "Not recorded"}</td><td>{row.tokens ? number(row.tokens.total) : "Not recorded"}<small>{row.model_calls} recorded calls</small></td>
+        </tr>)}</tbody></table></div>}
+        <div className="r-table-footer"><span>{number(cohorts.data?.total || 0)} screening runs</span><div><button className="r-button subtle" disabled={!cohortOffset || cohorts.isFetching} onClick={() => setCohortOffset(value => Math.max(0, value - 25))}>Previous</button><button className="r-button subtle" disabled={!cohorts.data?.has_more || cohorts.isFetching} onClick={() => setCohortOffset(value => value + 25)}>Next</button></div></div>
       </section>
 
       <section aria-labelledby="action-history-title">
