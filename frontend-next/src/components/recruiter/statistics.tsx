@@ -92,7 +92,7 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
       </section>
 
       <section aria-labelledby="cohort-statistics-title">
-        <div className="r-statistics-heading"><h3 id="cohort-statistics-title">Cohort screening statistics</h3><small>Filtered by job and time period above · includes retries</small></div>
+        <div className="r-statistics-heading"><h3 id="cohort-statistics-title">Cohort screening statistics</h3><small>Filtered by job and time period above Â· includes retries</small></div>
         <p className="r-statistics-footnote">Each row tracks one job screening. Total elapsed includes pre-screening, deep evaluation and queue waits across attempts. Deep evaluation covers the selected candidates; compare evaluated and cohort counts. Tokens include recorded model calls across retries. Unavailable historical measurements are shown explicitly.</p>
         {cohorts.isPending && <p role="status">Loading cohort statistics...</p>}
         {cohorts.error && <p role="alert" className="r-alert">{message(cohorts.error)} <button onClick={() => void cohorts.refetch()}>Retry</button></p>}

@@ -11,13 +11,16 @@ import { LiveLLMDebugModal } from "@/components/layout/live-llm-debug-modal";
 
 import { beginWorkspaceReset, finishWorkspaceReset, clearWorkspaceSession, freshWorkspaceAfter } from "@/lib/workspace-session";
 
-import { setParsingBatch } from "@/lib/parsing-batch";
+import { setParsingBatch, useParsingBatch } from "@/lib/parsing-batch";
 
 import { clearTrackedProcesses } from "@/lib/processes";
 
 import { api } from "@/lib/api";
 
 import { CandidateSummary, ScreeningRun } from "@/types";
+
+import { workflowProgress, workflowStages } from "@/lib/guided-workflow";
+import { WorkflowProgress } from "./workflow-progress";
 
 import { StatisticsDialog } from "./statistics";
 
@@ -238,6 +241,17 @@ export function RecruiterWorkspace({onLogout}: {onLogout: () => Promise<void>}) 
 function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: () => Promise<void>; onReset: () => Promise<void>; freshAfter: number}) {
 
   const resetTimers = useResetTimers();
+  const workspaceBusy = useWorkspaceActivity();
+  const parsing = useParsingBatch();
+  const [guided, setGuided] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
+  const advanceLock = useRef(false);
+  const jobsPanel = useRef<HTMLDivElement>(null);
+  const [workflowError, setWorkflowError] = useState("");
+  useEffect(() => {
+    try {setGuided(localStorage.getItem("atos_guided_workflow") === "true");} catch { /* Optional preference. */ }
+  }, []);
+
 
   const [resetting, setResetting] = useState(false);
 
@@ -412,6 +426,47 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
   const approved = run?.shortlist_ids.filter(id => run.decisions[id]?.decision === "interview").length || 0;
 
+  const selectedRole = jobs.data?.find(job => job.id === jobId);
+  const progress = workflowProgress(candidates.data?.length || 0,
+    !!selectedRole?.requirements.some(requirement => requirement.weight > 0), run);
+  const stageIndex = workflowStages.findIndex(item => item.id === step);
+  const workflowBusy = workspaceBusy || advancing || jobs.isPending || candidates.isPending || runQuery.isFetching ||
+    (!!parsing.batchId && (parsing.batch.isPending || ["PROCESSING", "QUEUED"].includes(parsing.batch.data?.status || "")));
+  const advance = async () => {
+    if (advanceLock.current || workflowBusy || !progress.complete[stageIndex] || stageIndex >= workflowStages.length - 1) return;
+    advanceLock.current = true;
+    setAdvancing(true); setWorkflowError("");
+    const originJob = jobId;
+    const originRun = activeRunId;
+    try {
+      if (step === "jobs") {
+        const form = Array.from(jobsPanel.current?.querySelectorAll<HTMLFormElement>("form") || []).find(item => item.getClientRects().length > 0);
+        const submitter = form?.querySelector<HTMLButtonElement>('button[data-intent="continue"]');
+        if (form && submitter) {form.requestSubmit(submitter); return;}
+      }
+      if (step === "verification" && run && !run.shortlist_ids.length) {
+        const updated = await api.shortlist(run.id, Math.min(10, progress.evaluatedCount));
+        updateRun(updated, originRun);
+        if (activeJobRef.current !== originJob || activeRunRef.current !== originRun) return;
+      }
+      navigate(workflowStages[stageIndex + 1].id);
+    } catch (error) {setWorkflowError(message(error));}
+    finally {advanceLock.current = false; setAdvancing(false);}
+  };
+  const toggleGuided = () => {
+    const next = !guided;
+    setGuided(next); setWorkflowError("");
+    const firstIncomplete = progress.complete.findIndex(done => !done);
+    if (next && firstIncomplete >= 0 && firstIncomplete < stageIndex) navigate(workflowStages[firstIncomplete].id);
+    try {localStorage.setItem("atos_guided_workflow", String(next));} catch { /* Optional preference. */ }
+  };
+
+  const workflowProps = {
+    stage: step, complete: progress.complete, hints: progress.hints, busy: workflowBusy, error: workflowError,
+    shortlistNeeded: step === "verification" && !run?.shortlist_ids.length,
+    onNavigate: (next: Step) => {setWorkflowError(""); navigate(next);}, onNext: () => void advance(),
+  };
+
   const error = jobs.error || candidates.error || runQuery.error;
 
   return <div className={`recruiter r-workspace ${collapsed ? "sidebar-collapsed" : ""}`} data-theme="dark">
@@ -435,7 +490,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
       <div className="r-nav-label">Your hiring workflow</div>
 
-      <nav aria-label="Recruiter workflow">{steps.map((item, index) => <button key={item.id} className={`r-nav-item ${step === item.id ? "active" : ""}`} aria-label={item.label} title={item.label} aria-current={step === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><item.icon size={19}/><span>{item.label}</span><small>{item.id === "library" ? "" : index}</small></button>)}</nav>
+      <nav aria-label="Recruiter workflow">{steps.map((item, index) => <button key={item.id} className={`r-nav-item ${step === item.id ? "active" : ""}`} aria-label={item.label} title={item.label} aria-current={step === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><item.icon size={19}/><span>{item.label}</span><small>{guided ? index + 1 : item.id === "library" ? "" : index}</small></button>)}</nav>
 
       
 
@@ -457,11 +512,13 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
     </aside>
 
-    <div className="r-main-wrap"><header className="r-topbar"><div>
+    <div className="r-main-wrap"><div className="r-header-container"><header className={`r-topbar ${guided ? "r-topbar-guided" : ""}`}><div>
 
       <button className="r-mobile-menu" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={20}/></button>
 
-      <span>Workspace</span><ChevronRight size={14}/><strong>{currentStep.label}</strong></div><div className="r-topbar-actions">
+      <span>Workspace</span><ChevronRight size={14}/><strong>{currentStep.label}</strong></div>
+      {guided && <WorkflowProgress {...workflowProps} part="stages"/>}
+      <div className="r-topbar-actions">
         {/* In-App LLM Console Button in Top Right */}
         <button
           type="button"
@@ -477,9 +534,12 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
           ) : (
             <span className="r-console-pill">Live</span>
           )}
-        </button><button type="button" className="r-reset-timers" onClick={resetTimers} title="Clear completed process durations" aria-label="Reset timers"><RotateCcw size={13}/><span>Reset timers</span></button><button type="button" className="r-logs-button" aria-haspopup="dialog" onClick={() => setLogsOpen(true)} title="View full action trace, LLM outputs, raw JD and candidate CVs" aria-label="Action logs"><ScrollText size={13}/><span>Logs</span></button><button type="button" className="r-statistics-button" aria-haspopup="dialog" onClick={() => setStatisticsOpen(true)}><ChartNoAxesColumn size={16}/>Statistics</button></div></header>
+        </button><button type="button" className="r-reset-timers" onClick={resetTimers} title="Clear completed process durations" aria-label="Reset timers"><RotateCcw size={13}/><span>Reset timers</span></button><button type="button" className="r-logs-button" aria-haspopup="dialog" onClick={() => setLogsOpen(true)} title="View full action trace, LLM outputs, raw JD and candidate CVs" aria-label="Action logs"><ScrollText size={13}/><span>Logs</span></button><button type="button" className="r-statistics-button" aria-haspopup="dialog" onClick={() => setStatisticsOpen(true)}><ChartNoAxesColumn size={16}/>Statistics</button></div></header></div>
 
-      <main id="recruiter-main" className="r-main"><div className="r-page-heading"><div><h1>{currentStep.label}</h1><p>{currentStep.description}</p></div><span className="r-step-count">{step === "library" ? "File management" : `Step ${steps.filter(s => s.id !== "library").findIndex(s => s.id === step) + 1} of 4`}</span></div>
+      <main id="recruiter-main" className={`r-main ${guided ? "r-guided-main" : ""}`}>
+        <div className="r-workflow-mode"><label><input type="checkbox" checked={guided} onChange={toggleGuided}/>Guided progression</label><small>{guided ? "Complete each stage, then continue with Next." : "Turn on step-by-step hiring."}</small></div>
+        {guided && <WorkflowProgress {...workflowProps} part="footer"/>}
+        <div className="r-page-heading"><div><h1>{currentStep.label}</h1><p>{currentStep.description}</p></div><span className="r-step-count">{guided ? `Step ${stageIndex + 1} of ${workflowStages.length}` : step === "library" ? "File management" : `Step ${steps.filter(s => s.id !== "library").findIndex(s => s.id === step) + 1} of 4`}</span></div>
 
         {step !== "jobs" && step !== "library" && <div className="r-job-context">
 
@@ -525,7 +585,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
           <div hidden={step !== "library"}><CVLibrary/></div>
 
-          <div hidden={step !== "jobs"}><Jobs jobs={jobs.data || []} selectedId={jobId} editorIds={openedJobs} onSelect={selectJob} onSaved={async id => {await jobs.refetch(); selectJob(id);}} onContinue={() => navigate("verification")}/></div>
+          <div ref={jobsPanel} hidden={step !== "jobs"}><Jobs jobs={jobs.data || []} selectedId={jobId} editorIds={openedJobs} onSelect={selectJob} onSaved={async id => {await jobs.refetch(); selectJob(id);}} onContinue={() => navigate("verification")}/></div>
 
           {openedJobs.map(id => <CandidateWorkspace key={id} jobId={id} activeRunId={id === jobId ? activeRunId : ""} freshAfter={freshAfter} visible={id === jobId && step !== "jobs" && step !== "library"} step={step} candidates={candidates.data || []} onRun={updateRun} onRefresh={() => candidates.refetch()} onNavigate={next => {if (activeJobRef.current === id) navigate(next);}} onRunHistoryUpdate={() => runHistoryQuery.refetch()}/>)}
 
