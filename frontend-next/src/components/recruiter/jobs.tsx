@@ -13,7 +13,7 @@ interface Props {
   selectedId: string;
   editorIds: string[];
   onSelect: (id: string) => void;
-  onSaved: (id: string) => Promise<void>;
+  onSaved: (jobOrId: JobDescription | string) => Promise<void>;
   onContinue: () => void;
 }
 
@@ -67,7 +67,7 @@ export function Jobs({jobs, selectedId, editorIds, onSelect, onSaved, onContinue
         <div className="r-job-list-footer">{filtered.length} {filtered.length === 1 ? "role" : "roles"}{filtered.length > 3 && <span>Scroll to browse</span>}</div>
       </section>
       <div>
-        {draftKey && <div hidden={!creating}><JobEditor key={draftKey} onCancel={() => {setCreating(false); setDraftKey(null);}} onSave={async id => {await onSaved(id); setCreating(false); setDraftKey(null);}} onContinue={onContinue}/></div>}
+        {draftKey && <div hidden={!creating}><JobEditor key={draftKey} onCancel={() => {setCreating(false); setDraftKey(null);}} onSave={async saved => {await onSaved(saved); setCreating(false); setDraftKey(null);}} onContinue={onContinue}/></div>}
         {editorIds.map(id => {const editorJob = jobs.find(item => item.id === id); return editorJob ? <div key={id} hidden={creating || id !== selectedId}><JobEditor job={editorJob} onSave={onSaved} onContinue={onContinue}/></div> : null;})}
         {!creating && !job && <div className="r-panel"><Empty title={jobs.length ? "Choose a role to begin" : "A clear role is a better starting point"}>{jobs.length ? "Select a saved role or add a new job description to begin screening." : "Add your first job description to begin screening."}</Empty></div>}
       </div>
@@ -75,7 +75,7 @@ export function Jobs({jobs, selectedId, editorIds, onSelect, onSaved, onContinue
   </>;
 }
 
-function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; onSave: (id: string) => Promise<void>; onContinue: () => void; onCancel?: () => void}) {
+function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; onSave: (jobOrId: JobDescription | string) => Promise<void>; onContinue: () => void; onCancel?: () => void}) {
   const [draft, setDraft] = useState<JobDescription>(job || {id: crypto.randomUUID(), title: "", department: "", location: "", requirements: [], raw_text: ""});
   const [url, setUrl] = useState("");
   const [busy, setBusy, startedAt, lastActivity] = useTimedActivity<string>("");
@@ -105,7 +105,7 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
     setBusy("save");
     try {
       const persisted = await api.createJob({...draft, title: draft.title.trim()});
-      await onSave(persisted.id); setSaved(true); setDirty(false);
+      await onSave(persisted); setSaved(true); setDirty(false);
       if (continueToCvs) onContinue();
     }
     catch(e) {setError(message(e));} finally {setBusy("");}

@@ -143,6 +143,14 @@ async def model_catalog():
             "providers_catalog": {key: value.model_dump(mode="json") for key, value in CATALOG_PROVIDERS.items()}}
 
 
+@router.post("/screening/models/refresh-local")
+async def refresh_local_models():
+    """Refresh local discovery without importing models or changing the active engine."""
+    from backend.services.local_model_scanner import get_local_model_scanner
+    result = await asyncio.to_thread(get_local_model_scanner().refresh_local_engines)
+    return {**await model_catalog(), "local_discovery": result}
+
+
 @router.post("/screening/parallel-toggle")
 async def set_parallel(request: existing.ParallelToggleRequest):
     """Update parallel screening mode in recruiter workspace."""
@@ -177,12 +185,51 @@ async def select_model(request: ModelSelection):
     return await model_catalog()
 
 
+def sort_screening_rows(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return rows
+
+    def sort_key(row: dict):
+        deep_status = row.get("deep_status")
+        deep_eval = row.get("deep_evaluation") or {}
+        overall_score = deep_eval.get("overall_score")
+        if deep_status == "completed" and overall_score is not None:
+            return (
+                0,
+                -round(float(overall_score), 4),
+                -round(float(row.get("pre_screen_score") or 0), 4),
+                row.get("initial_rank") or row.get("rank") or 999999,
+            )
+        elif deep_status in {"deferred", "failed"}:
+            return (
+                1,
+                0,
+                -round(float(row.get("pre_screen_score") or 0), 4),
+                row.get("initial_rank") or row.get("rank") or 999999,
+            )
+        else:
+            return (
+                2,
+                0,
+                -round(float(row.get("pre_screen_score") or 0), 4),
+                row.get("initial_rank") or row.get("rank") or 999999,
+            )
+
+    sorted_rows = sorted(rows, key=sort_key)
+    for rank, row in enumerate(sorted_rows, 1):
+        row["rank"] = rank
+    return sorted_rows
+
+
 async def read_run(run_id: UUID | str) -> dict:
     async with async_session_scope() as db:
         record = await db.get(ScreeningRunModel, str(run_id))
         if not record:
             raise HTTPException(404, "Screening run not found.")
-        return copy.deepcopy(record.payload)
+        payload = copy.deepcopy(record.payload)
+        if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+            payload["rows"] = sort_screening_rows(payload["rows"])
+        return payload
 
 
 async def save_run(payload: dict):
@@ -380,6 +427,8 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                 payload.setdefault("diagnostics", {}).setdefault("warnings", []).append("Action log persistence failed; trace may be incomplete.")
             await save_run(payload)
         payload["active_candidate_id"] = None
+        if not payload.get("evaluation_candidate_ids"):
+            payload["rows"] = sort_screening_rows(payload.get("rows", []))
         payload.setdefault("diagnostics", {}).setdefault("timings_ms", {})["deep_evaluation"] = round((time.perf_counter() - deep_started) * 1000, 2)
         payload["deep_evaluation_ms"] = payload.get("deep_evaluation_ms", 0) + payload["diagnostics"]["timings_ms"]["deep_evaluation"]
         payload["status"] = "partial" if any(r["deep_status"] in {"failed", "deferred"} for r in payload["rows"]) else "completed"
@@ -521,7 +570,12 @@ async def get_run(run_id: UUID, job_id: UUID | None = None):
 async def latest_run(job_id: UUID):
     async with async_session_scope() as db:
         record = await db.scalar(select(ScreeningRunModel).where(ScreeningRunModel.job_id == str(job_id)).order_by(ScreeningRunModel.created_at.desc(), ScreeningRunModel.id.desc()).limit(1))
-        return record.payload if record else None
+        if not record:
+            return None
+        payload = copy.deepcopy(record.payload)
+        if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+            payload["rows"] = sort_screening_rows(payload["rows"])
+        return payload
 
 
 @router.get("/screening/jobs/{job_id}/runs")

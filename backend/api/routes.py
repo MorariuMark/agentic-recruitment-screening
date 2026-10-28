@@ -13,6 +13,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -58,6 +59,15 @@ from backend.services.scoring_engine import ScoringEngine
 from backend.services.vector_store import VectorStoreService
 
 logger = logging.getLogger("recruitment_screening.api")
+
+_catalog_refresh_task: Optional[asyncio.Task] = None
+
+
+def _refresh_catalog_in_background() -> None:
+    global _catalog_refresh_task
+    if _catalog_refresh_task is None or _catalog_refresh_task.done():
+        from backend.schemas.models_catalog import sync_all_local_models
+        _catalog_refresh_task = asyncio.create_task(asyncio.to_thread(sync_all_local_models))
 
 router = APIRouter(route_class=CancellableRoute, prefix="/api/v1", tags=["Recruitment Screening"], dependencies=[Depends(get_current_user)])
 
@@ -1473,13 +1483,10 @@ async def get_candidate(candidate_id: UUID) -> CandidateDetailResponse:
     )
 
 
-@router.delete(
-    "/candidates/{candidate_id}",
-    dependencies=[Depends(require_role("admin"))],
-    status_code=status.HTTP_200_OK,
-    summary="Delete a candidate and all associated data",
-)
-async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
+async def delete_candidate_profile(
+    candidate_id: UUID,
+    session: Optional[AsyncSession] = None,
+) -> Dict[str, Any]:
     """
     Deletes candidate profile, relational evaluations/interview plans,
     and removes vector chunks from ChromaDB and memory caches.
@@ -1487,7 +1494,7 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
     cid_str = str(candidate_id)
     # Delete vectors before committing relational erasure, so a vector failure remains retryable.
     await asyncio.to_thread(_vector_store.delete_candidate, candidate_id)
-    deleted = await DatabaseRepository.delete_candidate(candidate_id)
+    deleted = await DatabaseRepository.delete_candidate(candidate_id, session=session)
     in_memory = (
         candidate_id in _CANDIDATE_RAW_STORE
         or candidate_id in _CANDIDATE_ANONYMIZED_STORE
@@ -1520,6 +1527,17 @@ async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
         "candidate_id": cid_str,
         "message": f"Candidate {cid_str} successfully deleted.",
     }
+
+
+@router.delete(
+    "/candidates/{candidate_id}",
+    dependencies=[Depends(require_role("admin"))],
+    status_code=status.HTTP_200_OK,
+    summary="Delete a candidate and all associated data",
+)
+async def delete_candidate(candidate_id: UUID) -> Dict[str, Any]:
+    """FastAPI endpoint handler for candidate deletion."""
+    return await delete_candidate_profile(candidate_id)
 
 
 @router.get(
@@ -1834,15 +1852,18 @@ async def recommend_jobs_for_candidate(
                     raw_ov = 50.0
 
                 # Deterministic Calibration: align preview tier with ScoringEngine
-                if mh_gaps >= 2 or (mh_gaps >= 1 and raw_ov < 50.0):
+                if raw_ov < 50.0 or mh_gaps >= 2:
                     rec_tier = Recommendation.REJECT
-                    ov_score = round(min(raw_ov, 45.0), 1)
-                elif mh_gaps == 1 or raw_ov < 70.0:
-                    rec_tier = Recommendation.BORDERLINE
-                    ov_score = round(min(raw_ov, 65.0), 1)
-                else:
+                    ov_score = round(min(raw_ov, 49.0), 1)
+                elif raw_ov >= 75.0 and mh_gaps <= 1:
                     rec_tier = Recommendation.STRONG_MATCH
                     ov_score = round(raw_ov, 1)
+                elif raw_ov >= 70.0 and mh_gaps == 0:
+                    rec_tier = Recommendation.STRONG_MATCH
+                    ov_score = round(raw_ov, 1)
+                else:
+                    rec_tier = Recommendation.BORDERLINE
+                    ov_score = round(min(raw_ov, 74.0), 1)
 
                 matching_skills = [
                     s for s in candidate_skills
@@ -1971,10 +1992,16 @@ async def recommend_jobs_for_candidate(
     response_model=List[JobDescription],
     summary="List all stored job requisitions in database",
 )
-async def list_jobs(limit: int = 50) -> List[JobDescription]:
+async def list_jobs(limit: int = 200) -> List[JobDescription]:
     """Returns all job requisitions stored in the database."""
     job_records = await DatabaseRepository.list_jobs(limit=limit)
-    return [_reconstruct_job_from_db(j) for j in job_records]
+    results = []
+    for j in job_records:
+        try:
+            results.append(_reconstruct_job_from_db(j))
+        except Exception as e:
+            logger.warning("Skipping unparseable job requisition %s: %s", getattr(j, "id", "?"), e)
+    return results
 
 
 @router.post(
@@ -2091,7 +2118,8 @@ async def get_llm_settings() -> LLMSettingsResponse:
     )
 
     dyn = DynamicLLMClient()
-    chain_labels = [f"{p}:{m}" for p, m, _ in dyn.get_fallback_chain()]
+    chain = await asyncio.to_thread(dyn.get_fallback_chain)
+    chain_labels = [f"{p}:{m}" for p, m, _ in chain]
     raw_custom = get_custom_fallback_chain()
 
     enriched_custom = None
@@ -2115,15 +2143,8 @@ async def get_llm_settings() -> LLMSettingsResponse:
                 "rate_limits": model_info.rate_limits if model_info else None,
             })
 
-    # Sync and detect local models automatically without blocking event loop
-    try:
-        from backend.schemas.models_catalog import sync_all_local_models
-        await asyncio.to_thread(sync_all_local_models)
-        catalog_dict["ollama"] = CATALOG_PROVIDERS["ollama"].model_dump()
-        if "lmstudio" in CATALOG_PROVIDERS:
-            catalog_dict["lmstudio"] = CATALOG_PROVIDERS["lmstudio"].model_dump()
-    except Exception:
-        pass
+    # Return the current catalog immediately; a single refresh updates later polls.
+    _refresh_catalog_in_background()
 
     hw_profile = None
     try:

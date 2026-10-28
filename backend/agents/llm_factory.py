@@ -105,15 +105,20 @@ def _retry_after_seconds(error: Exception) -> Optional[float]:
     structured_delay = retry_info(getattr(error, "body", None))
     if structured_delay is not None:
         return structured_delay
-    duration = re.search(r"retry in\s+(?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s", str(error), re.I)
-    if duration:
-        return min(int(duration.group(1) or 0) * 3600 + int(duration.group(2) or 0) * 60 + float(duration.group(3)), 86400)
-    match = re.search(r"(?:try again in|retry after)\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?|m)?", str(error), re.I)
-    if match:
-        seconds = float(match.group(1))
-        unit = (match.group(2) or "s").lower()
-        seconds *= .001 if unit == "ms" else 60 if unit in ("m", "minute", "minutes") else 1
-        return min(seconds, 86400)
+    err_str = str(error)
+    m_ms = re.search(r"(?:retry in|try again in|retry after)\s+(\d+(?:\.\d+)?)\s*ms\b", err_str, re.I)
+    if m_ms:
+        return float(m_ms.group(1)) * 0.001
+
+    pattern = r"(?:retry in|try again in|retry after)\s+(?:(\d+(?:\.\d+)?)\s*(?:h|hours?)\s*)?(?:(\d+(?:\.\d+)?)\s*(?:m|min|minutes?)\s*)?(?:(\d+(?:\.\d+)?)\s*(?:s|sec|seconds?)?)?"
+    m = re.search(pattern, err_str, re.I)
+    if m and any(m.groups()):
+        h = float(m.group(1) or 0) * 3600
+        mins = float(m.group(2) or 0) * 60
+        s = float(m.group(3) or 0)
+        total = h + mins + s
+        if total > 0:
+            return min(total, 86400)
     return None
 
 
@@ -557,50 +562,45 @@ class OpenRouterClient(BaseLLMClient):
 
 
 class GroqClient(BaseLLMClient):
-    """Client for Groq Cloud API with ultra-fast inference and multi-key (primary, secondary, tertiary) failover."""
+    """Client for Groq Cloud API with ultra-fast inference and multi-key failover across all configured keys."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         secondary_api_key: Optional[str] = None,
         tertiary_api_key: Optional[str] = None,
+        quaternary_api_key: Optional[str] = None,
+        quinary_api_key: Optional[str] = None,
+        api_keys: Optional[List[str]] = None,
         model: Optional[str] = None,
         compatibility_mode: Optional[str] = None,
     ) -> None:
         from groq import Groq
 
-        self.api_key = api_key or settings.groq_api_key
-        if not self.api_key:
+        keys: List[str] = []
+        if api_keys:
+            keys.extend([k for k in api_keys if k and k not in keys])
+        for k in [api_key, secondary_api_key, tertiary_api_key, quaternary_api_key, quinary_api_key]:
+            if k and k not in keys:
+                keys.append(k)
+        if not keys:
+            keys = settings.get_provider_keys("groq")
+        if not keys:
             raise ValueError("GROQ_API_KEY must be provided or set in environment variables.")
 
-        cfg_secondary = getattr(settings, "groq_secondary_api_key", None)
-        if secondary_api_key and secondary_api_key != self.api_key:
-            self.secondary_api_key = secondary_api_key
-        elif cfg_secondary and cfg_secondary != self.api_key:
-            self.secondary_api_key = cfg_secondary
-        else:
-            self.secondary_api_key = None
-
-        cfg_tertiary = getattr(settings, "groq_tertiary_api_key", None)
-        valid_tertiary = tertiary_api_key or cfg_tertiary
-        if valid_tertiary and valid_tertiary not in (self.api_key, self.secondary_api_key):
-            self.tertiary_api_key = valid_tertiary
-        else:
-            self.tertiary_api_key = None
+        self.api_keys = keys
+        self.api_key = keys[0]
+        self.secondary_api_key = keys[1] if len(keys) > 1 else None
+        self.tertiary_api_key = keys[2] if len(keys) > 2 else None
+        self.quaternary_api_key = keys[3] if len(keys) > 3 else None
+        self.quinary_api_key = keys[4] if len(keys) > 4 else None
 
         self.model = model or settings.groq_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
-        self.client = Groq(api_key=self.api_key, timeout=20.0, max_retries=0)
-        self.secondary_client = (
-            Groq(api_key=self.secondary_api_key, timeout=20.0, max_retries=0)
-            if self.secondary_api_key
-            else None
-        )
-        self.tertiary_client = (
-            Groq(api_key=self.tertiary_api_key, timeout=20.0, max_retries=0)
-            if self.tertiary_api_key
-            else None
-        )
+        self.clients = [Groq(api_key=k, timeout=20.0, max_retries=0) for k in self.api_keys]
+        self.client = self.clients[0]
+        self.secondary_client = self.clients[1] if len(self.clients) > 1 else None
+        self.tertiary_client = self.clients[2] if len(self.clients) > 2 else None
         self.last_key_used: str = "primary"
 
     def _get_candidate_models(self) -> List[str]:
@@ -617,47 +617,43 @@ class GroqClient(BaseLLMClient):
             for x in ["429", "rate_limit", "rate limit", "ratelimit", "tpm", "rpm", "rpd", "tpd", "quota", "resource_exhausted"]
         )
 
+    def _get_active_clients_and_keys(self) -> List[tuple[str, Any]]:
+        client_candidates = [
+            (getattr(self, "api_key", self.api_keys[0] if getattr(self, "api_keys", None) else "default"), getattr(self, "client", None)),
+            (getattr(self, "secondary_api_key", self.api_keys[1] if len(getattr(self, "api_keys", [])) > 1 else None), getattr(self, "secondary_client", None)),
+            (getattr(self, "tertiary_api_key", self.api_keys[2] if len(getattr(self, "api_keys", [])) > 2 else None), getattr(self, "tertiary_client", None)),
+            (getattr(self, "quaternary_api_key", self.api_keys[3] if len(getattr(self, "api_keys", [])) > 3 else None), getattr(self, "quaternary_client", None)),
+            (getattr(self, "quinary_api_key", self.api_keys[4] if len(getattr(self, "api_keys", [])) > 4 else None), getattr(self, "quinary_client", None)),
+        ]
+        active = [(k, c) for k, c in client_candidates if c is not None and k is not None]
+        if not active and hasattr(self, "clients") and hasattr(self, "api_keys"):
+            active = list(zip(self.api_keys, self.clients))
+        return active
+
     def _execute_chat_completion(self, kwargs: Dict[str, Any]) -> Any:
-        try:
-            res = _paced_groq_call(self.client, kwargs, self.api_key)
-            self.last_key_used = "primary"
-            return res
-        except Exception as primary_err:
-            if self.secondary_client is not None:
+        errors = []
+        active_pairs = self._get_active_clients_and_keys()
+        for idx, (k, cli) in enumerate(active_pairs):
+            if is_model_in_cooldown("groq", self.model, k):
+                continue
+            try:
+                res = _paced_groq_call(cli, kwargs, k)
+                key_names = ["primary", "secondary", "tertiary", "quaternary", "quinary"]
+                self.last_key_used = key_names[idx] if idx < len(key_names) else f"key_{idx + 1}"
+                return res
+            except Exception as err:
+                errors.append(err)
+                record_model_failure("groq", self.model, err, k)
                 logger.warning(
-                    "Groq primary key failed for model [%s]: %s. Failing over to secondary Groq API key...",
+                    "Groq key %d failed for model [%s]: %s. Immediately failing over to next Groq key with 0 cooldown...",
+                    idx + 1,
                     self.model,
-                    primary_err,
+                    err,
                 )
-                try:
-                    res = _paced_groq_call(self.secondary_client, kwargs, self.secondary_api_key)
-                    self.last_key_used = "secondary"
-                    return res
-                except Exception as secondary_err:
-                    if self.tertiary_client is not None:
-                        logger.warning(
-                            "Groq secondary key also failed for model [%s]: %s. Failing over to tertiary Groq API key...",
-                            self.model,
-                            secondary_err,
-                        )
-                        try:
-                            res = _paced_groq_call(self.tertiary_client, kwargs, self.tertiary_api_key)
-                            self.last_key_used = "tertiary"
-                            return res
-                        except Exception as tertiary_err:
-                            logger.error(
-                                "Groq tertiary key also failed for model [%s]: %s",
-                                self.model,
-                                tertiary_err,
-                            )
-                            raise tertiary_err from secondary_err
-                    logger.error(
-                        "Groq secondary key also failed for model [%s]: %s",
-                        self.model,
-                        secondary_err,
-                    )
-                    raise secondary_err from primary_err
-            raise primary_err
+                continue
+        if errors:
+            raise errors[-1]
+        raise RuntimeError("All Groq API keys are currently cooling down.")
 
     def generate_text(
         self,
@@ -842,51 +838,65 @@ class NvidiaNimClient(BaseLLMClient):
 
 
 class GeminiClient(BaseLLMClient):
-    """Client for Google Gemini (AI Studio) via official OpenAI-compatible endpoint with dual-key failover."""
+    """Client for Google Gemini (AI Studio) via official OpenAI-compatible endpoint with multi-key failover."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         secondary_api_key: Optional[str] = None,
+        tertiary_api_key: Optional[str] = None,
+        quaternary_api_key: Optional[str] = None,
+        quinary_api_key: Optional[str] = None,
+        api_keys: Optional[List[str]] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         compatibility_mode: Optional[str] = None,
     ) -> None:
         from openai import OpenAI
 
-        self.api_key = api_key or settings.gemini_api_key
-        if not self.api_key:
+        keys: List[str] = []
+        if api_keys:
+            keys.extend([k for k in api_keys if k and k not in keys])
+        for k in [api_key, secondary_api_key, tertiary_api_key, quaternary_api_key, quinary_api_key]:
+            if k and k not in keys:
+                keys.append(k)
+        if not keys:
+            keys = settings.get_provider_keys("gemini")
+        if not keys:
             raise ValueError("GEMINI_API_KEY must be provided or set in environment variables.")
 
-        cfg_secondary = getattr(settings, "gemini_secondary_api_key", None)
-        if secondary_api_key and secondary_api_key != self.api_key:
-            self.secondary_api_key = secondary_api_key
-        elif cfg_secondary and cfg_secondary != self.api_key:
-            self.secondary_api_key = cfg_secondary
-        else:
-            self.secondary_api_key = None
+        self.api_keys = keys
+        self.api_key = keys[0]
+        self.secondary_api_key = keys[1] if len(keys) > 1 else None
+        self.tertiary_api_key = keys[2] if len(keys) > 2 else None
+        self.quaternary_api_key = keys[3] if len(keys) > 3 else None
+        self.quinary_api_key = keys[4] if len(keys) > 4 else None
 
         self.base_url = base_url or settings.gemini_base_url
         self.model = model or settings.gemini_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
 
-        self.client = OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=60.0,
-            max_retries=0,
-        )
-        self.secondary_client = (
-            OpenAI(
-                base_url=self.base_url,
-                api_key=self.secondary_api_key,
-                timeout=60.0,
-                max_retries=0,
-            )
-            if self.secondary_api_key
-            else None
-        )
+        self.clients = [
+            OpenAI(base_url=self.base_url, api_key=k, timeout=60.0, max_retries=0)
+            for k in self.api_keys
+        ]
+        self.client = self.clients[0]
+        self.secondary_client = self.clients[1] if len(self.clients) > 1 else None
+        self.tertiary_client = self.clients[2] if len(self.clients) > 2 else None
         self.last_key_used: str = "primary"
+
+    def _get_active_clients_and_keys(self) -> List[tuple[str, Any]]:
+        client_candidates = [
+            (getattr(self, "api_key", self.api_keys[0] if getattr(self, "api_keys", None) else "default"), getattr(self, "client", None)),
+            (getattr(self, "secondary_api_key", self.api_keys[1] if len(getattr(self, "api_keys", [])) > 1 else None), getattr(self, "secondary_client", None)),
+            (getattr(self, "tertiary_api_key", self.api_keys[2] if len(getattr(self, "api_keys", [])) > 2 else None), getattr(self, "tertiary_client", None)),
+            (getattr(self, "quaternary_api_key", self.api_keys[3] if len(getattr(self, "api_keys", [])) > 3 else None), getattr(self, "quaternary_client", None)),
+            (getattr(self, "quinary_api_key", self.api_keys[4] if len(getattr(self, "api_keys", [])) > 4 else None), getattr(self, "quinary_client", None)),
+        ]
+        active = [(k, c) for k, c in client_candidates if c is not None and k is not None]
+        if not active and hasattr(self, "clients") and hasattr(self, "api_keys"):
+            active = list(zip(self.api_keys, self.clients))
+        return active
 
     def _is_rate_limit_error(self, err: Exception) -> bool:
         err_msg = str(err).lower()
@@ -896,29 +906,29 @@ class GeminiClient(BaseLLMClient):
         )
 
     def _execute_chat_completion(self, kwargs: Dict[str, Any]) -> Any:
-        try:
-            res = self.client.chat.completions.create(**kwargs)
-            self.last_key_used = "primary"
-            return res
-        except Exception as primary_err:
-            if self.secondary_client is not None:
+        errors = []
+        active_pairs = self._get_active_clients_and_keys()
+        for idx, (k, cli) in enumerate(active_pairs):
+            if is_model_in_cooldown("gemini", self.model, k):
+                continue
+            try:
+                res = cli.chat.completions.create(**kwargs)
+                key_names = ["primary", "secondary", "tertiary", "quaternary", "quinary"]
+                self.last_key_used = key_names[idx] if idx < len(key_names) else f"key_{idx + 1}"
+                return res
+            except Exception as err:
+                errors.append(err)
+                record_model_failure("gemini", self.model, err, k)
                 logger.warning(
-                    "Gemini primary key failed for model [%s]: %s. Failing over to secondary Gemini API key...",
+                    "Gemini key %d failed for model [%s]: %s. Immediately failing over to next Gemini key with 0 cooldown...",
+                    idx + 1,
                     self.model,
-                    primary_err,
+                    err,
                 )
-                try:
-                    res = self.secondary_client.chat.completions.create(**kwargs)
-                    self.last_key_used = "secondary"
-                    return res
-                except Exception as secondary_err:
-                    logger.error(
-                        "Gemini secondary key also failed for model [%s]: %s",
-                        self.model,
-                        secondary_err,
-                    )
-                    raise secondary_err from primary_err
-            raise primary_err
+                continue
+        if errors:
+            raise errors[-1]
+        raise RuntimeError("All Gemini API keys are currently cooling down.")
 
     def generate_text(
         self,
@@ -1177,12 +1187,12 @@ class OllamaClient(BaseLLMClient):
         self.base_url = base_url or settings.ollama_base_url
         self.model = model or settings.ollama_model
         self.compatibility_mode = compatibility_mode or settings.compatibility_mode
-        self.client = ollama.Client(host=self.base_url)
+        self.client = ollama.Client(host=self.base_url, timeout=getattr(settings, "ollama_timeout_seconds", 300.0))
 
     def _get_execution_options(self, temperature: float = 0.0) -> Dict[str, Any]:
         """Builds hardware-tuned generation options for the local engine."""
         num_ctx = getattr(settings, "local_context_window", 16384)
-        num_gpu = getattr(settings, "local_gpu_layers", 99)
+        num_gpu = 999
         max_tok = getattr(settings, "local_max_tokens", 3072)
         opts: Dict[str, Any] = {
             "temperature": temperature,
@@ -1301,14 +1311,12 @@ class OllamaClient(BaseLLMClient):
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
         messages.append({"role": "user", "content": prompt})
-        if not getattr(settings, "local_thinking_enabled", False):
-            messages.append({"role": "assistant", "content": "</think>"})
-
         t0 = time.perf_counter()
         response = self.client.chat(
             model=self.model,
             messages=messages,
             stream=False,
+            think=getattr(settings, "local_thinking_enabled", False),
             options=self._get_execution_options(temperature=temperature),
         )
         duration_s = time.perf_counter() - t0
@@ -1340,15 +1348,13 @@ class OllamaClient(BaseLLMClient):
             {"role": "system", "content": augmented_system},
             {"role": "user", "content": prompt},
         ]
-        if not getattr(settings, "local_thinking_enabled", False):
-            messages.append({"role": "assistant", "content": "</think>"})
-
         t0 = time.perf_counter()
         response = self.client.chat(
             model=self.model,
             messages=messages,
             format="json",
             stream=False,
+            think=getattr(settings, "local_thinking_enabled", False),
             options=self._get_execution_options(temperature=temperature),
         )
         duration_s = time.perf_counter() - t0
@@ -1470,7 +1476,10 @@ class LMStudioClient(BaseLLMClient):
                 temperature=temperature,
                 max_tokens=getattr(settings, "local_max_tokens", 3072),
             )
-        except Exception:
+        except Exception as error:
+            # Only retry without JSON mode when the server rejects that request format.
+            if getattr(error, "status_code", None) not in (400, 422):
+                raise
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -1647,7 +1656,7 @@ def _get_fallback_primary_model(prov: str) -> str:
     elif prov == "nvidia_nim":
         return "meta/llama-3.2-11b-vision-instruct"
     elif prov == "gemini":
-        return "gemini-flash-latest"
+        return "gemini-3.5-flash"
     elif prov == "openrouter":
         return "openrouter/free"
     elif prov == "cohere":
@@ -1683,6 +1692,7 @@ def _is_local_port_open(host: str, port: int, timeout: float = 0.15) -> bool:
 
 
 _MODEL_COOLDOWNS: Dict[Tuple[str, str, Optional[str]], float] = {}
+_LOCAL_PROVIDERS = frozenset({"ollama", "lmstudio"})
 
 
 def record_model_failure(provider: str, model: str, error: Exception, key: Optional[str] = None) -> None:
@@ -1690,11 +1700,11 @@ def record_model_failure(provider: str, model: str, error: Exception, key: Optio
     Marks a provider/model target (optionally key-specific) in temporary cooldown to prevent
     cascading repeated retries across concurrent threads or batch evaluation items.
     """
-    if isinstance(error, ProviderCoolingDownError) or _is_document_output_error(error):
+    if provider.lower() in _LOCAL_PROVIDERS or isinstance(error, ProviderCoolingDownError) or _is_document_output_error(error):
         return
     err_str = str(error).lower()
     # Permanent or long-lasting failures: 404 Not Found, 410 Gone, 402 Insufficient credits
-    if any(code in err_str for code in ["404", "not_found", "not found", "410", "gone", "402", "credit"]):
+    if any(code in err_str for code in ["404", "not_found", "not found", "410", "gone", "insufficient credits", "insufficient_quota"]):
         cooldown = 1800.0  # 30 minutes
     # Rate limit or quota exhaustion
     elif getattr(error, "status_code", None) == 429 or any(code in err_str for code in ["429", "rate_limit", "rate limit", "quota", "resource_exhausted"]):
@@ -1702,7 +1712,7 @@ def record_model_failure(provider: str, model: str, error: Exception, key: Optio
         if retry_after is not None:
             cooldown = max(1.0, retry_after + .25)
         else:
-            cooldown = 900.0 if any(w in err_str for w in ["per day", "daily", "day limit", "quota per day", "hours"]) else 45.0
+            cooldown = 300.0 if any(w in err_str for w in ["daily quota exceeded", "quota per day exceeded"]) else 30.0
     else:
         cooldown = 30.0        # 30 seconds for general errors / timeouts
 
@@ -1722,6 +1732,8 @@ def record_model_failure(provider: str, model: str, error: Exception, key: Optio
 
 def is_model_in_cooldown(provider: str, model: str, key: Optional[str] = None) -> bool:
     """Returns True if the provider/model (or key-specific target) is currently under failure cooldown."""
+    if provider.lower() in _LOCAL_PROVIDERS:
+        return False
     now = time.time()
     if key is not None:
         key_expires = _MODEL_COOLDOWNS.get((provider.lower(), model, key), 0.0)
@@ -1747,17 +1759,55 @@ def get_active_cooldown_statuses() -> Dict[str, Dict[str, Any]]:
     now = time.time()
     result = {}
     with _CLIENT_STATE_LOCK:
+        # Group active cooldowns by (provider, model)
+        grouped: Dict[Tuple[str, str], Dict[Optional[str], float]] = {}
         for (provider, model, key), expires in list(_MODEL_COOLDOWNS.items()):
+            if provider.lower() in _LOCAL_PROVIDERS:
+                continue
             remaining = expires - now
             if remaining > 0:
+                grouped.setdefault((provider.lower(), model), {})[key] = remaining
+
+        for (provider, model), key_cooldowns in grouped.items():
+            if None in key_cooldowns:
+                remaining = key_cooldowns[None]
                 target_key = f"{provider}:{model}"
-                if target_key not in result or remaining > result[target_key]["remaining_seconds"]:
+                result[target_key] = {
+                    "provider": provider,
+                    "model": model,
+                    "remaining_seconds": round(remaining, 1),
+                    "exhausted": remaining > 300.0,
+                }
+                continue
+
+            # Check configured keys for this provider
+            keys = []
+            for k_attr in [f"{provider}_api_key", f"{provider}_secondary_api_key", f"{provider}_tertiary_api_key"]:
+                k_val = getattr(settings, k_attr, None)
+                if k_val and k_val not in keys:
+                    keys.append(k_val)
+
+            if keys:
+                # Only flag model if ALL configured keys are currently in cooldown
+                all_cooling = all(k in key_cooldowns for k in keys)
+                if all_cooling:
+                    remaining = min(key_cooldowns[k] for k in keys)
+                    target_key = f"{provider}:{model}"
                     result[target_key] = {
                         "provider": provider,
                         "model": model,
                         "remaining_seconds": round(remaining, 1),
                         "exhausted": remaining > 300.0,
                     }
+            else:
+                remaining = max(key_cooldowns.values())
+                target_key = f"{provider}:{model}"
+                result[target_key] = {
+                    "provider": provider,
+                    "model": model,
+                    "remaining_seconds": round(remaining, 1),
+                    "exhausted": remaining > 300.0,
+                }
     return result
 
 
@@ -1795,6 +1845,23 @@ class DynamicLLMClient(BaseLLMClient):
     def __init__(self) -> None:
         self._client_cache: Dict[Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]], BaseLLMClient] = {}
 
+    @staticmethod
+    def _generate_with_local_retry(provider, fallback_enabled, generate, **kwargs):
+        """Retry the same local target when failover is disabled, with a bounded wait."""
+        attempts = 3 if provider.lower() in _LOCAL_PROVIDERS and not fallback_enabled else 1
+        for attempt in range(attempts):
+            try:
+                result = generate(**kwargs)
+                if isinstance(result, str) and not result.strip():
+                    raise ValueError("LLM returned an empty response")
+                return result
+            except Exception as error:
+                if attempt + 1 == attempts:
+                    raise
+                delay = attempt + 1
+                logger.warning("Local model request failed (%s); retrying in %ss (%s/%s).", error, delay, attempt + 1, attempts - 1)
+                time.sleep(delay)
+
     def freeze_configuration(self) -> None:
         """Retain this run's factory targets without changing shared Admin settings."""
         self._snapshot_fallback_enabled = settings.fallback_enabled
@@ -1803,23 +1870,18 @@ class DynamicLLMClient(BaseLLMClient):
     def get_healthy_provider_pool(self) -> list:
         """
         Returns a list of unique, healthy provider clients currently available for parallel dispatch.
-        Prioritizes distinct providers (e.g. Groq, Cohere, Gemini, NVIDIA NIM) that are not in cooldown.
+        Spreads concurrently across all healthy distinct API keys to multiply rate limit quotas.
         """
         chain = self.get_fallback_chain()
         healthy = []
-        seen_providers = set()
+        seen_targets = set()
         for prov, mod, client in chain:
             key = getattr(client, "api_key", None)
             if not is_model_in_cooldown(prov, mod, key):
-                if prov not in seen_providers:
+                target_ident = (prov, mod, key)
+                if target_ident not in seen_targets:
                     healthy.append((prov, mod, client))
-                    seen_providers.add(prov)
-        if len(healthy) < 2:
-            for prov, mod, client in chain:
-                key = getattr(client, "api_key", None)
-                if not is_model_in_cooldown(prov, mod, key):
-                    if (prov, mod) not in [(h[0], h[1]) for h in healthy]:
-                        healthy.append((prov, mod, client))
+                    seen_targets.add(target_ident)
         return healthy
 
     def _get_or_create_client(
@@ -1844,6 +1906,8 @@ class DynamicLLMClient(BaseLLMClient):
                 # The dynamic chain owns key rotation; a per-key client must not
                 # internally retry the same secondary keys again.
                 if isinstance(client, (GroqClient, GeminiClient)) and api_key:
+                    client.api_keys = [api_key]
+                    client.clients = [client.clients[0]] if getattr(client, "clients", None) else []
                     client.secondary_client = None
                     if hasattr(client, "tertiary_client"):
                         client.tertiary_client = None
@@ -1865,17 +1929,7 @@ class DynamicLLMClient(BaseLLMClient):
         seen_targets = set()
 
         def get_provider_keys(prov: str) -> List[str]:
-            keys = []
-            pk = getattr(settings, f"{prov}_api_key", None)
-            if pk:
-                keys.append(pk)
-            sk = getattr(settings, f"{prov}_secondary_api_key", None)
-            if sk and sk not in keys:
-                keys.append(sk)
-            tk = getattr(settings, f"{prov}_tertiary_api_key", None)
-            if tk and tk not in keys:
-                keys.append(tk)
-            return keys
+            return settings.get_provider_keys(prov)
 
         def add_candidate(
             prov: str,
@@ -1957,7 +2011,7 @@ class DynamicLLMClient(BaseLLMClient):
             "groq": ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
             "cohere": ["command-r-08-2024", "command-r-plus-08-2024", "c4ai-aya-expanse-32b", "command-r7b-12-2024"],
             "nvidia_nim": ["meta/llama-3.2-11b-vision-instruct", "mistralai/mistral-large-2-instruct"],
-            "gemini": ["gemini-3.5-flash-lite", "gemini-2.5-pro"],
+            "gemini": ["gemini-3.5-flash", "gemini-2.5-pro"],
             "openrouter": ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.3-70b-instruct:free"],
             "ollama": [settings.ollama_model, "qwen3.5:2b-q4_K_M", "smollm2:latest", "qwen3:4b"],
             "lmstudio": [settings.lmstudio_model or "default"],
@@ -1965,8 +2019,8 @@ class DynamicLLMClient(BaseLLMClient):
         for fallback_mod in intra_fallbacks.get(primary_prov, []):
             add_model_candidates(primary_prov, fallback_mod)
 
-        # 3. Cross-provider fallbacks (ordered by speed and reliability: Groq -> Gemini -> Agnes -> NVIDIA NIM -> OpenRouter -> Ollama)
-        provider_priority = ["gemini", "groq", "cohere", "agnes", "lmstudio", "nvidia_nim", "openrouter", "ollama"]
+        # 3. Cross-provider fallbacks: prioritize Groq -> Google Gemini -> Agnes -> NVIDIA NIM -> Cohere -> OpenRouter
+        provider_priority = ["groq", "gemini", "agnes", "nvidia_nim", "cohere", "openrouter", "lmstudio", "ollama"]
         for p in provider_priority:
             if p == primary_prov:
                 continue
@@ -1974,27 +2028,21 @@ class DynamicLLMClient(BaseLLMClient):
             if p == "groq":
                 for m in ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]:
                     add_model_candidates("groq", m)
-            elif p == "cohere":
-                if settings.cohere_api_key or getattr(settings, "cohere_secondary_api_key", None):
-                    add_model_candidates("cohere", settings.cohere_model or "command-r-08-2024")
-                    add_model_candidates("cohere", "command-r-plus-08-2024")
             elif p == "gemini":
-                if settings.gemini_api_key or getattr(settings, "gemini_secondary_api_key", None):
-                    add_model_candidates("gemini", settings.gemini_model or "gemini-flash-latest")
-                    add_model_candidates("gemini", "gemini-3.5-flash-lite")
+                if settings.gemini_api_key or settings.get_provider_keys("gemini"):
+                    add_model_candidates("gemini", settings.gemini_model or "gemini-3.5-flash")
+                    add_model_candidates("gemini", "gemini-3.8-flash")
             elif p == "agnes":
                 if settings.agnes_api_key:
                     add_model_candidates("agnes", settings.agnes_model or "agnes-2.5-flash")
                     add_model_candidates("agnes", "agnes-3.0-flash")
-            elif p == "lmstudio":
-                if _is_local_port_open("127.0.0.1", 1234):
-                    add_model_candidates("lmstudio", settings.lmstudio_model or "default")
-            elif p == "openrouter":
-                if settings.openrouter_api_key:
-                    add_model_candidates("openrouter", settings.openrouter_model or "openrouter/free")
             elif p == "nvidia_nim":
                 if settings.nvidia_nim_api_key:
                     add_model_candidates("nvidia_nim", settings.nvidia_nim_model or "meta/llama-3.2-11b-vision-instruct")
+            elif p == "cohere":
+                if settings.cohere_api_key or getattr(settings, "cohere_secondary_api_key", None):
+                    add_model_candidates("cohere", settings.cohere_model or "command-r-08-2024")
+                    add_model_candidates("cohere", "command-r-plus-08-2024")
             elif p == "ollama":
                 # Quick probe to see if local Ollama is responding
                 if _is_local_port_open("127.0.0.1", 11434):
@@ -2019,7 +2067,30 @@ class DynamicLLMClient(BaseLLMClient):
         global _LAST_FALLBACK_EVENT
         action_context = (getattr(self._thread_state(), "action", "general"), copy.deepcopy(getattr(self._thread_state(), "metadata", {})))
         fallback_enabled = getattr(self, "_snapshot_fallback_enabled", getattr(settings, "fallback_enabled", True))
-        chain = self.get_fallback_chain()
+        from backend.services.action_logger import action_logger
+        preparation_started = time.perf_counter()
+        preparation_id = action_logger.record_start(
+            action_type="provider_preparation", provider=settings.llm_provider,
+            model="Preparing provider chain", prompt="", metadata=action_context[1],
+        )
+        try:
+            chain = self.get_fallback_chain()
+        except Exception as exc:
+            action_logger.record_finish(
+                call_id=preparation_id, action_type="provider_preparation",
+                provider=settings.llm_provider, model="Preparing provider chain", prompt="",
+                latency_ms=(time.perf_counter() - preparation_started) * 1000,
+                status="error", error=str(exc), metadata=action_context[1],
+            )
+            raise
+        action_logger.record_finish(
+            call_id=preparation_id, action_type="provider_preparation",
+            provider=settings.llm_provider, model="Preparing provider chain", prompt="",
+            latency_ms=(time.perf_counter() - preparation_started) * 1000,
+            status="success" if chain else "error",
+            error=None if chain else "No configured or reachable providers available",
+            metadata=action_context[1],
+        )
         if not chain:
             raise RuntimeError("No configured or reachable LLM providers available in fallback chain.")
 
@@ -2045,7 +2116,7 @@ class DynamicLLMClient(BaseLLMClient):
                 metadata=action_context[1],
             )
             try:
-                result = client.generate_text(
+                result = self._generate_with_local_retry(prov, fallback_enabled, client.generate_text,
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
@@ -2160,7 +2231,7 @@ class DynamicLLMClient(BaseLLMClient):
                         mod,
                         err,
                     )
-                    cooling = _cooling_down_error(chain, failures=[err])
+                    cooling = None if prov.lower() in _LOCAL_PROVIDERS else _cooling_down_error(chain, failures=[err])
                     if cooling:
                         raise cooling from err
                     raise RuntimeError(
@@ -2220,7 +2291,7 @@ class DynamicLLMClient(BaseLLMClient):
                 metadata=action_context[1],
             )
             try:
-                result = client.generate_structured(
+                result = self._generate_with_local_retry(prov, fallback_enabled, client.generate_structured,
                     prompt=prompt,
                     response_model=response_model,
                     system_prompt=system_prompt,
@@ -2347,7 +2418,7 @@ class DynamicLLMClient(BaseLLMClient):
                         mod,
                         err,
                     )
-                    cooling = _cooling_down_error(chain, failures=[err])
+                    cooling = None if prov.lower() in _LOCAL_PROVIDERS else _cooling_down_error(chain, failures=[err])
                     if cooling:
                         raise cooling from err
                     raise RuntimeError(

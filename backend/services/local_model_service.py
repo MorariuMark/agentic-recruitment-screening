@@ -147,7 +147,7 @@ class LocalModelService:
                 "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu",
                 "--format=csv,noheader,nounits",
             ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=2.5, check=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=2.5, check=True)
             line = res.stdout.strip().split("\n")[0]
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 5:
@@ -180,7 +180,7 @@ class LocalModelService:
         if os.name == "nt":
             try:
                 ps_cmd = 'Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json'
-                res = subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], capture_output=True, text=True, timeout=2.5)
+                res = subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], capture_output=True, text=True, errors="replace", timeout=2.5)
                 if res.returncode == 0 and res.stdout.strip():
                     data = json.loads(res.stdout)
                     if isinstance(data, list):
@@ -482,11 +482,6 @@ class LocalModelService:
             try:
                 self.start_lmstudio_server()
 
-                # Determine GPU offload parameter:
-                # On 4GB laptops or when 'auto' is selected, LM Studio optimizes layer offload to prevent CUDA OOM.
-                # If 'max' is selected, it passes --gpu max.
-                gpu_flag = "max" if gpu_offload_mode == "max" and not profile.get("is_low_end") else "auto"
-
                 cmd = [
                     lms_cli,
                     "load",
@@ -496,20 +491,16 @@ class LocalModelService:
                     "--ttl",
                     "86400",
                     "-y",
+                    "--gpu",
+                    "max",
                 ]
-                if gpu_flag == "max":
-                    cmd.extend(["--gpu", "max"])
 
                 res = subprocess.run(cmd, capture_output=True, timeout=180.0)
                 out = res.stdout.decode("utf-8", errors="replace")
                 err = res.stderr.decode("utf-8", errors="replace")
 
-                # If --gpu max failed due to VRAM limits on lower-end laptop, retry with auto offload
-                if res.returncode != 0 and gpu_flag == "max":
-                    logger.warning("LM Studio --gpu max failed on low VRAM; retrying with safe auto offload: %s", out or err)
-                    cmd_safe = [lms_cli, "load", model, "-c", str(target_context), "--ttl", "86400", "-y"]
-                    res = subprocess.run(cmd_safe, capture_output=True, timeout=180.0)
-                    out = res.stdout.decode("utf-8", errors="replace")
+                if res.returncode != 0:
+                    return {"success": False, "error": f"LM Studio GPU load failed: {(err or out).strip()}"}
 
                 # Update application runtime settings
                 settings.lmstudio_model = model
@@ -537,7 +528,7 @@ class LocalModelService:
             base_url = getattr(settings, "ollama_base_url", "http://localhost:11434").rstrip("/")
             try:
                 # On lower-end hardware (4GB), allow Ollama to auto-partition layers if 99 overflows
-                num_gpu_val = gpu_layers if (gpu_layers is not None and not profile.get("is_low_end")) else 99
+                num_gpu_val = 999
                 payload = {
                     "model": model,
                     "keep_alive": "24h",

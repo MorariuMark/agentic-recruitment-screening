@@ -4,9 +4,9 @@ Data contracts for semantic matching, citations, and evaluation results.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID, uuid4
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from backend.schemas.job import JobDescription, RequirementCategory
 
 
@@ -49,6 +49,21 @@ class RequirementMatch(BaseModel):
     clarification_question: Optional[str] = Field(default=None, description="Yes/No screening question for application form or recruiter call if clarification needed")
     transferable_skill: Optional[str] = Field(default=None, description="Transferable or adjacent technology detected from candidate profile (e.g. 'GCP -> AWS')")
     benefit_of_doubt: Optional[bool] = Field(default=False, description="True if requirement was given benefit of the doubt due to low confidence or ambiguous phrasing")
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def normalize_score(cls, v: Any) -> float:
+        if v is None:
+            return 0.0
+        try:
+            val = float(v)
+        except (ValueError, TypeError):
+            return 0.0
+        if 1.0 < val <= 5.0:
+            return round(min(1.0, max(0.0, val / 5.0)), 3)
+        if 5.0 < val <= 100.0:
+            return round(min(1.0, max(0.0, val / 100.0)), 3)
+        return round(min(1.0, max(0.0, val)), 3)
 
 
 from backend.schemas.token_usage import ActionAuditInfo, TokenUsageInfo

@@ -248,11 +248,11 @@ class ScoringEngine:
             and hard_not_met_count >= 1
         )
 
-        if has_multiple_hard_rejections or (must_have_gaps_count >= 1 and is_failing_score) or is_subpar_with_hard_gap:
+        if has_multiple_hard_rejections or overall_score < 50.0 or (must_have_gaps_count >= 1 and is_failing_score) or is_subpar_with_hard_gap:
             recommendation = Recommendation.REJECT
-        elif must_have_gaps_count >= 1 or clarification_count > 0 or (reject_min_score <= overall_score < strong_min_score):
-            recommendation = Recommendation.BORDERLINE
-        elif overall_score >= strong_min_score:
+        elif overall_score >= 75.0 and not has_multiple_hard_rejections:
+            recommendation = Recommendation.STRONG_MATCH
+        elif overall_score >= strong_min_score and must_have_gaps_count == 0 and clarification_count == 0:
             recommendation = Recommendation.STRONG_MATCH
         else:
             recommendation = Recommendation.BORDERLINE

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID, uuid4
 
-from sqlalchemy import desc, select, delete
+from sqlalchemy import desc, select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -162,6 +162,8 @@ class DatabaseRepository:
             runs_result = await s.execute(select(ScreeningRunModel))
             runs = runs_result.scalars().all()
             for run in runs:
+                if cid_str not in str(run.payload or {}):
+                    continue
                 payload = dict(run.payload or {})
                 modified = False
 
@@ -260,6 +262,7 @@ class DatabaseRepository:
                 existing.raw_text = original_text or existing.raw_text
                 existing.custom_sections_json = custom_sec
                 existing.unused_details_json = getattr(job, "unused_details", [])
+                existing.updated_at = datetime.now(timezone.utc)
                 record = existing
                 # Clear and re-populate requirements
                 existing.requirements.clear()
@@ -331,7 +334,12 @@ class DatabaseRepository:
     ) -> List[JobRequisitionModel]:
         """Lists all job requisitions ordered by creation time."""
         async def _op(s: AsyncSession) -> List[JobRequisitionModel]:
-            stmt = select(JobRequisitionModel).options(selectinload(JobRequisitionModel.requirements)).order_by(desc(JobRequisitionModel.created_at)).limit(limit)
+            stmt = (
+                select(JobRequisitionModel)
+                .options(selectinload(JobRequisitionModel.requirements))
+                .order_by(desc(func.coalesce(JobRequisitionModel.updated_at, JobRequisitionModel.created_at)))
+                .limit(limit)
+            )
             result = await s.execute(stmt)
             return list(result.scalars().all())
 

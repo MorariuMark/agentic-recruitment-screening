@@ -32,6 +32,7 @@ export function ModelSelector({
   const [isTogglingParallel, setIsTogglingParallel] = useState<boolean>(false);
 
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const settingsRequestInFlight = useRef(false);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -45,6 +46,8 @@ export function ModelSelector({
   }, []);
 
   const fetchSettings = async () => {
+    if (settingsRequestInFlight.current) return;
+    settingsRequestInFlight.current = true;
     try {
       const data = await api.getLLMSettings();
       setLlmSettings(data);
@@ -53,6 +56,8 @@ export function ModelSelector({
       }
     } catch (err) {
       console.warn("Failed to fetch LLM settings in ModelSelector:", err);
+    } finally {
+      settingsRequestInFlight.current = false;
     }
   };
 

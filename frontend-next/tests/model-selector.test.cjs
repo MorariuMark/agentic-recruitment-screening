@@ -49,3 +49,10 @@ test("a background catalog refresh does not disable an otherwise usable model se
   const select = renderSelector({fetching: true}).match(/<select[^>]*id="recruiter-model"[^>]*>/)[0];
   assert.doesNotMatch(select, /\bdisabled\b/);
 });
+
+test("duplicate catalog entries render as one selectable model", () => {
+  const duplicateData = {...modelData, providers_catalog: {groq: {...modelData.providers_catalog.groq,
+    models: [...modelData.providers_catalog.groq.models, {id: "alternate", name: "Duplicate"}]}}};
+  const html = renderSelector({data: duplicateData});
+  assert.equal((html.match(/value="groq\|alternate"/g) || []).length, 1);
+});

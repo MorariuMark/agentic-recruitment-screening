@@ -298,6 +298,9 @@ class ApiClient {
   async recruiterModels(): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
     return this.request("/api/v1/screening/models");
   }
+  async refreshRecruiterLocalModels(): Promise<Awaited<ReturnType<ApiClient["recruiterModels"]>> & { local_discovery: { ollama: {running: boolean; models_count: number}; lmstudio: {running: boolean; live_models_count: number; disk_models_count: number} } }> {
+    return this.request("/api/v1/screening/models/refresh-local", {method: "POST"});
+  }
   async selectRecruiterModel(provider: string, model: string): Promise<Pick<LLMSettings, "active_provider" | "active_model" | "providers_catalog" | "fallback_enabled"> & { parallel_screening_enabled?: boolean; cooldown_statuses?: Record<string, any> }> {
     return this.request("/api/v1/screening/models", {method: "POST", body: JSON.stringify({provider, model})});
   }

@@ -5,7 +5,7 @@ Application settings and configuration management using Pydantic Settings.
 
 from pathlib import Path
 
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from backend.services.session_secret import load_or_create_session_secret
@@ -88,6 +88,14 @@ class Settings(BaseSettings):
         default=None,
         description="Tertiary fallback API key for Groq Cloud API when secondary hits rate limits",
     )
+    groq_quaternary_api_key: Optional[str] = Field(
+        default=None,
+        description="Quaternary fallback API key for Groq Cloud API",
+    )
+    groq_quinary_api_key: Optional[str] = Field(
+        default=None,
+        description="Quinary fallback API key for Groq Cloud API",
+    )
     groq_model: str = Field(
         default="qwen/qwen3.8-27b",
         description="Groq model identifier",
@@ -124,12 +132,24 @@ class Settings(BaseSettings):
         default=None,
         description="Secondary fallback API key for Google Gemini when primary hits rate limits",
     )
+    gemini_tertiary_api_key: Optional[str] = Field(
+        default=None,
+        description="Tertiary fallback API key for Google Gemini",
+    )
+    gemini_quaternary_api_key: Optional[str] = Field(
+        default=None,
+        description="Quaternary fallback API key for Google Gemini",
+    )
+    gemini_quinary_api_key: Optional[str] = Field(
+        default=None,
+        description="Quinary fallback API key for Google Gemini",
+    )
     gemini_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description="Base URL for Gemini OpenAI endpoint",
     )
     gemini_model: str = Field(
-        default="gemini-flash-latest",
+        default="gemini-3.5-flash",
         description="Google Gemini model identifier",
     )
 
@@ -240,6 +260,16 @@ class Settings(BaseSettings):
         if url.startswith("sqlite:///") and not url.startswith("sqlite+aiosqlite:///"):
             return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
         return url
+
+    def get_provider_keys(self, provider: str) -> List[str]:
+        """Returns non-empty configured API keys for a provider in priority order."""
+        p = provider.lower()
+        keys: List[str] = []
+        for suffix in ["api_key", "secondary_api_key", "tertiary_api_key", "quaternary_api_key", "quinary_api_key"]:
+            val = getattr(self, f"{p}_{suffix}", None)
+            if val and isinstance(val, str) and val.strip() and val.strip() not in keys:
+                keys.append(val.strip())
+        return keys
 
     model_config = SettingsConfigDict(
         env_file=".env",

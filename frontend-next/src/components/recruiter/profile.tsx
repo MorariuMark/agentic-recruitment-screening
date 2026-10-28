@@ -86,13 +86,28 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
     }
   }
 
-  const rec = row?.deep_evaluation?.recommendation;
-  const recPillClass =
-    rec === "strong_match"
-      ? "success"
-      : rec === "borderline"
-      ? "warning"
-      : "alert-pill";
+  const score = row?.deep_evaluation?.overall_score;
+  let rec = row?.deep_evaluation?.recommendation;
+  let recPillClass: "success" | "warning" | "alert-pill" = "alert-pill";
+  if (score != null) {
+    if (score >= 75) {
+      rec = "strong_match";
+      recPillClass = "success";
+    } else if (score < 50) {
+      rec = "reject";
+      recPillClass = "alert-pill";
+    } else {
+      rec = "borderline";
+      recPillClass = "warning";
+    }
+  } else if (rec) {
+    recPillClass =
+      rec === "strong_match"
+        ? "success"
+        : rec === "borderline"
+        ? "warning"
+        : "alert-pill";
+  }
 
   return (
     <dialog
@@ -161,7 +176,7 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
                   </h3>
                   {rec && (
                     <span className={`r-pill ${recPillClass}`}>
-                      {rec.replaceAll("_", " ")}
+                      {rec === "strong_match" ? "Match" : rec === "borderline" ? "Borderline" : "Reject"}
                     </span>
                   )}
                 </div>

@@ -356,11 +356,23 @@ class VectorStoreService:
 
     def delete_candidate(self, candidate_id: Union[UUID, str]) -> int:
         """Remove every vector belonging to the candidate, regardless of cache version."""
-        existing = self.candidate_collection.get(where={"candidate_id": str(candidate_id)}, include=[])
-        ids = existing.get("ids", [])
-        if ids:
-            self.candidate_collection.delete(ids=ids)
-        return len(ids)
+        cid = str(candidate_id)
+        try:
+            # Fast path: use raw collection without loading heavy SentenceTransformer embedding function
+            col = self._candidate_collection
+            if col is None:
+                col = self.client.get_or_create_collection(
+                    name="candidate_chunks",
+                    metadata={"hnsw:space": "cosine"},
+                )
+            existing = col.get(where={"candidate_id": cid}, include=[])
+            ids = existing.get("ids", [])
+            if ids:
+                col.delete(ids=ids)
+            return len(ids)
+        except Exception as e:
+            logger.warning("Error deleting candidate %s vectors: %s", cid, e)
+            return 0
 
     def reset(self) -> None:
         """Helper to clear collections for testing and test isolation."""

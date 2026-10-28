@@ -1,26 +1,22 @@
 [
   {
     "provider": "groq",
-    "model": "openai/gpt-oss-20b"
-  },
-  {
-    "provider": "groq",
     "model": "qwen/qwen3.8-27b"
   },
   {
     "provider": "gemini",
-    "model": "gemini-3.5-flash-lite"
+    "model": "gemini-3.5-flash"
   },
   {
-    "provider": "cohere",
-    "model": "command-r-08-2024"
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b"
+  },
+  {
+    "provider": "agnes",
+    "model": "agnes-2.5-flash"
   },
   {
     "provider": "nvidia_nim",
     "model": "meta/llama-3.2-11b-vision-instruct"
-  },
-  {
-    "provider": "openrouter",
-    "model": "openrouter/free"
   }
 ]

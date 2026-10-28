@@ -42,7 +42,6 @@ export function LocalModelControl({
   const [selectedProvider, setSelectedProvider] = useState<"lmstudio" | "ollama">("lmstudio");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedContext, setSelectedContext] = useState<number>(0); // 0 = Auto-tune
-  const [offloadMode, setOffloadMode] = useState<"auto" | "max" | "off">("auto");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isUnloading, setIsUnloading] = useState<boolean>(false);
   const [isStartingServer, setIsStartingServer] = useState<boolean>(false);
@@ -92,7 +91,7 @@ export function LocalModelControl({
     setIsLoading(true);
     const targetCtx = selectedContext > 0 ? selectedContext : (profile?.recommended_context_window || 4096);
     setActionMessage({
-      text: `Loading '${selectedModel}' into memory (${targetCtx.toLocaleString()} context, offload: ${offloadMode})...`,
+      text: `Loading '${selectedModel}' with maximum GPU offload (${targetCtx.toLocaleString()} context)...`,
       type: "info",
     });
 
@@ -101,8 +100,8 @@ export function LocalModelControl({
         provider: selectedProvider,
         model: selectedModel,
         context_window: targetCtx,
-        gpu_layers: offloadMode === "off" ? 0 : 99,
-        gpu_offload_mode: offloadMode,
+        gpu_layers: 99,
+        gpu_offload_mode: "max",
         set_as_active: true,
       });
       setActionMessage({
@@ -445,15 +444,7 @@ export function LocalModelControl({
                 <Zap className="w-3.5 h-3.5 text-purple-400" />
                 <span>GPU Offload Strategy</span>
               </label>
-              <select
-                value={offloadMode}
-                onChange={(e) => setOffloadMode(e.target.value as any)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 cursor-pointer"
-              >
-                <option value="auto">Auto (Safe Layer Offload - Prevents 4GB OOM)</option>
-                <option value="max">Max (100% GPU VRAM - High Throughput)</option>
-                <option value="off">Off (CPU Mode - Zero VRAM Required)</option>
-              </select>
+              <p className="text-xs text-slate-300">Maximum GPU offload requested. Models that exceed available VRAM may fail to load.</p>
             </div>
           </div>
 

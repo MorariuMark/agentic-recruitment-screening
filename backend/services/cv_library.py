@@ -177,7 +177,7 @@ async def change_documents(ids, action):
                     if record.candidate_id:
                         # Includes relational results, run redaction, vectors and in-memory caches.
                         try:
-                            await routes.delete_candidate(UUID(record.candidate_id))
+                            await routes.delete_candidate_profile(UUID(record.candidate_id), session=db)
                         except HTTPException as error:
                             if error.status_code != 404:
                                 raise

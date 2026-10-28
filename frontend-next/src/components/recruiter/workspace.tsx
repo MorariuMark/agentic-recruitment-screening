@@ -2,11 +2,11 @@
 
 
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { BriefcaseBusiness, FileCheck2, Columns3, MessagesSquare, LogOut, ChevronRight, Cpu, Menu, X, PanelLeftClose, PanelLeftOpen, ChartNoAxesColumn, RotateCcw, ScrollText, Terminal, AlertTriangle, Zap } from "lucide-react";
+import { BriefcaseBusiness, FileCheck2, Columns3, MessagesSquare, LogOut, ChevronRight, Cpu, Menu, X, ChartNoAxesColumn, RotateCcw, RefreshCw, ScrollText, Terminal, AlertTriangle, Zap, Search } from "lucide-react";
 import { LiveLLMDebugModal } from "@/components/layout/live-llm-debug-modal";
 
 import { beginWorkspaceReset, finishWorkspaceReset, clearWorkspaceSession, freshWorkspaceAfter } from "@/lib/workspace-session";
@@ -17,7 +17,7 @@ import { clearTrackedProcesses } from "@/lib/processes";
 
 import { api } from "@/lib/api";
 
-import { CandidateSummary, ScreeningRun } from "@/types";
+import { CandidateSummary, ScreeningRun, JobDescription } from "@/types";
 
 import { workflowProgress, workflowStages } from "@/lib/guided-workflow";
 import { WorkflowProgress } from "./workflow-progress";
@@ -80,7 +80,7 @@ function EngineSelector({compact}: {compact: boolean}) {
     return () => document.removeEventListener("mousedown", close);
   }, [compact, open]);
   const data = settings.data;
-  const loading = settings.isFetching || !!busy || workspaceActive;
+  const loading = (settings.isFetching && !settings.data) || !!busy || workspaceActive;
 
   // Real-time cooldown inspection for active model
   const activeStatusKey = data ? `${data.active_provider}:${data.active_model}` : "";
@@ -109,7 +109,7 @@ function EngineSelector({compact}: {compact: boolean}) {
 
           return (
             <optgroup key={provider} label={`${info.name}${provFlag}`}>
-              {info.models.filter(m => `${provider}|${m.id}` !== `${data?.active_provider}|${data?.active_model}`).map(model => {
+              {info.models.filter((m, index, models) => models.findIndex(other => other.id === m.id) === index && `${provider}|${m.id}` !== `${data?.active_provider}|${data?.active_model}`).map(model => {
                 const mStatusKey = `${provider}:${model.id}`;
                 const mStatus = data?.cooldown_statuses?.[mStatusKey];
                 const flag = mStatus?.exhausted ? " [⚠️ EXHAUSTED]" : mStatus ? ` [⏳ COOLDOWN ${Math.round(mStatus.remaining_seconds)}s]` : "";
@@ -168,18 +168,13 @@ function EngineSelector({compact}: {compact: boolean}) {
         <span>
           Parallel Screening{" "}
           <span className="r-failover-state" style={{ color: data?.parallel_screening_enabled ? "#38bdf8" : undefined }}>
-            {data?.parallel_screening_enabled ? "⚡ On (Parallel)" : "Off (Sequential)"}
+            {data?.parallel_screening_enabled ? "On" : "Off"}
           </span>
         </span>
         <span className={`r-switch-track cyan ${data?.parallel_screening_enabled ? "on" : ""}`} aria-hidden="true">
           <span />
         </span>
       </button>
-      <small className="r-engine-help">
-        {data?.parallel_screening_enabled
-          ? "⚡ Requirements spread concurrently across all healthy tested providers with auto-failover."
-          : "Sequential screening: active provider evaluates criteria one-by-one."}
-      </small>
 
       {(error || settings.isError) && <small role="alert">{error || message(settings.error)}</small>}
     </div>
@@ -243,13 +238,23 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
   const resetTimers = useResetTimers();
   const workspaceBusy = useWorkspaceActivity();
   const parsing = useParsingBatch();
-  const [guided, setGuided] = useState(false);
+  const [guided, setGuided] = useState(() => {
+    try {
+      const saved = localStorage.getItem("atos_guided_workflow");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
   const [advancing, setAdvancing] = useState(false);
   const advanceLock = useRef(false);
   const jobsPanel = useRef<HTMLDivElement>(null);
   const [workflowError, setWorkflowError] = useState("");
   useEffect(() => {
-    try {setGuided(localStorage.getItem("atos_guided_workflow") === "true");} catch { /* Optional preference. */ }
+    try {
+      const saved = localStorage.getItem("atos_guided_workflow");
+      setGuided(saved !== null ? saved === "true" : true);
+    } catch { /* Optional preference. */ }
   }, []);
 
 
@@ -314,7 +319,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
   const [collapsed, setCollapsed] = useState(savedSidebarCollapsed);
 
-  const jobs = useQuery({queryKey: ["recruiter-jobs"], queryFn: () => api.getJobs(1000)});
+  const jobs = useQuery({queryKey: ["recruiter-jobs"], queryFn: () => api.getJobs(1000), staleTime: 0, refetchOnMount: true});
 
   const candidates = useQuery({queryKey: ["recruiter-candidates", "all"], queryFn: ({signal}) => loadCandidateCohort((limit, offset) => api.getCandidates(limit, offset, signal)), gcTime: 0});
 
@@ -329,6 +334,19 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
   activeJobRef.current = jobId;
 
   const openedJobs = [...new Set([...visitedJobs, jobId])].filter(id => id && jobs.data?.some(j => j.id === id));
+
+  const [jobSearch, setJobSearch] = useState("");
+  const filteredJobs = useMemo(() => {
+    const list = jobs.data || [];
+    if (!jobSearch.trim()) return list;
+    const q = jobSearch.toLowerCase().trim();
+    return list.filter(j =>
+      j.title.toLowerCase().includes(q) ||
+      (j.department && j.department.toLowerCase().includes(q)) ||
+      (j.location && j.location.toLowerCase().includes(q)) ||
+      (j.seniority_level && j.seniority_level.toLowerCase().includes(q))
+    );
+  }, [jobs.data, jobSearch]);
 
   const runHistoryQuery = useQuery({queryKey: ["recruiter-run-history", jobId], queryFn: () => api.jobScreeningRuns(jobId), enabled: !!jobId});
 
@@ -412,7 +430,9 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
   const navigate = (next: Step) => {
 
-    const params = new URLSearchParams(window.location.search); params.set("step", next);
+    const params = new URLSearchParams(window.location.search);
+    params.set("step", next);
+    if (jobId) params.set("job", jobId);
 
     window.history.pushState(null, "", `${window.location.pathname}?${params}`);
 
@@ -420,7 +440,18 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
   };
 
-  const selectJob = (id: string) => {setVisitedJobs(current => [...new Set([...current, jobId, id])].filter(Boolean)); setSelectedJob(id); setActiveRunId("");};
+  const selectJob = (id: string) => {
+    setVisitedJobs(current => [...new Set([...current, jobId, id])].filter(Boolean));
+    setSelectedJob(id);
+    setActiveRunId("");
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (id) params.set("job", id);
+      else params.delete("job");
+      params.delete("run");
+      window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+    }
+  };
 
   const currentStep = steps.find(s => s.id === step)!;
 
@@ -482,7 +513,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
     <aside id="recruiter-sidebar" className={`r-sidebar ${mobileOpen ? "open" : ""}`}>
 
-      <div className="r-brand"><GhostMascot activityKey={`${step}:${jobId}`}/><span className="r-brand-name r-asap-wordmark">ASAP</span><button className="r-mobile-close" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X size={20}/></button><button className="r-collapse-sidebar" aria-label={collapsed ? "Expand sidebar" : "Minimize sidebar"} title={collapsed ? "Expand sidebar" : "Minimize sidebar"} aria-controls="recruiter-sidebar" aria-expanded={!collapsed} onClick={() => {const next = !collapsed; setCollapsed(next); try {localStorage.setItem("atos_recruiter_sidebar_collapsed", String(next));} catch { /* Sidebar remains usable without storage. */ }}}>{collapsed ? <PanelLeftOpen size={16}/> : <PanelLeftClose size={16}/>}</button></div>
+      <div className="r-brand"><GhostMascot activityKey={`${step}:${jobId}`}/><span className="r-brand-name r-asap-wordmark">ASAP</span><button className="r-mobile-close" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X size={20}/></button><button className="r-collapse-sidebar" aria-label={collapsed ? "Expand sidebar" : "Minimize sidebar"} title={collapsed ? "Expand sidebar" : "Minimize sidebar"} aria-controls="recruiter-sidebar" aria-expanded={!collapsed} onClick={() => {const next = !collapsed; setCollapsed(next); try {localStorage.setItem("atos_recruiter_sidebar_collapsed", String(next));} catch { /* Sidebar remains usable without storage. */ }}}><ChevronRight size={18}/></button></div>
 
 
 
@@ -545,11 +576,50 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
           <label htmlFor="active-role">Hiring for</label>
 
+          <div className="r-job-search-wrap">
+            <Search size={14} className="r-job-search-icon" aria-hidden="true" />
+            <input
+              type="text"
+              className="r-job-search-input"
+              placeholder="Search jobs…"
+              value={jobSearch}
+              onChange={e => setJobSearch(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && filteredJobs.length > 0) {
+                  selectJob(filteredJobs[0].id);
+                }
+              }}
+              aria-label="Search jobs"
+            />
+            {jobSearch && (
+              <button
+                type="button"
+                className="r-job-search-clear"
+                onClick={() => setJobSearch("")}
+                title="Clear job search"
+                aria-label="Clear job search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
           <select id="active-role" value={jobId} onChange={e => selectJob(e.target.value)} disabled={!jobs.data?.length}>
 
-            <option value="" disabled>Select a job description</option>
+            <option value="" disabled>
+              {jobSearch ? `Matching roles (${filteredJobs.length})` : "Select a job description"}
+            </option>
+            {jobId && !filteredJobs.some(j => j.id === jobId) && (
+              <option value={jobId} disabled>
+                {selectedRole ? `Current: ${selectedRole.title}` : "Loading role…"}
+              </option>
+            )}
 
-            {jobs.data?.map(job => <option key={job.id} value={job.id}>{job.title}</option>)}
+            {filteredJobs.map(job => (
+              <option key={job.id} value={job.id}>
+                {job.title} {job.department ? `· ${job.department}` : ""}
+              </option>
+            ))}
 
           </select>
 
@@ -585,13 +655,25 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
           <div hidden={step !== "library"}><CVLibrary/></div>
 
-          <div ref={jobsPanel} hidden={step !== "jobs"}><Jobs jobs={jobs.data || []} selectedId={jobId} editorIds={openedJobs} onSelect={selectJob} onSaved={async id => {await jobs.refetch(); selectJob(id);}} onContinue={() => navigate("verification")}/></div>
+          <div ref={jobsPanel} hidden={step !== "jobs"}><Jobs jobs={jobs.data || []} selectedId={jobId} editorIds={openedJobs} onSelect={selectJob} onSaved={async (jobOrId) => {
+  const persisted = typeof jobOrId === "object" ? jobOrId : undefined;
+  const targetId = typeof jobOrId === "object" ? jobOrId.id : jobOrId;
+  if (persisted) {
+    cache.setQueryData<JobDescription[]>(["recruiter-jobs"], (current = []) => {
+      const filtered = current.filter(j => j.id !== targetId);
+      return [persisted, ...filtered];
+    });
+  }
+  await cache.invalidateQueries({queryKey: ["recruiter-jobs"]});
+  await jobs.refetch();
+  selectJob(targetId);
+}} onContinue={() => navigate("verification")}/></div>
 
-          {openedJobs.map(id => <CandidateWorkspace key={id} jobId={id} activeRunId={id === jobId ? activeRunId : ""} freshAfter={freshAfter} visible={id === jobId && step !== "jobs" && step !== "library"} step={step} candidates={candidates.data || []} onRun={updateRun} onRefresh={() => candidates.refetch()} onNavigate={next => {if (activeJobRef.current === id) navigate(next);}} onRunHistoryUpdate={() => runHistoryQuery.refetch()}/>)}
+          {openedJobs.map(id => <CandidateWorkspace key={id} jobId={id} activeRunId={id === jobId ? activeRunId : ""} freshAfter={freshAfter} visible={id === jobId && step !== "jobs" && step !== "library"} step={step} candidates={candidates.data || []} onRun={updateRun} onRefresh={() => candidates.refetch()} onNavigate={next => {if (activeJobRef.current === id) navigate(next);}} onRunHistoryUpdate={() => runHistoryQuery.refetch()} jobs={jobs.data || []} onSelectJob={selectJob}/>)}
 
           {!jobId && step !== "jobs" && step !== "library" && <p className="r-inline-empty">{jobs.data?.length ? "Select a job description above to begin a fresh screening." : "Add a job description to begin screening candidates."}</p>}
 
-          {!jobId && <div hidden={step !== "verification"}><Verification jobId="" candidates={candidates.data || []} run={null} onRun={updateRun} onRefresh={() => candidates.refetch()} onCompare={() => navigate("comparison")}/></div>}
+          {!jobId && <div hidden={step !== "verification"}><Verification jobId="" candidates={candidates.data || []} run={null} onRun={updateRun} onRefresh={() => candidates.refetch()} onCompare={() => navigate("comparison")} jobs={jobs.data || []} onSelectJob={selectJob}/></div>}
 
         </>}
 
@@ -607,13 +689,13 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
 /** Keep each visited job's working views mounted so navigation never discards a request or result. */
 
-function CandidateWorkspace({jobId, activeRunId, freshAfter, visible, step, candidates, onRun, onRefresh, onNavigate, onRunHistoryUpdate}: {
+function CandidateWorkspace({jobId, activeRunId, freshAfter, visible, step, candidates, onRun, onRefresh, onNavigate, onRunHistoryUpdate, jobs, onSelectJob}: {
 
   jobId: string; activeRunId: string; freshAfter: number; visible: boolean; step: Step; candidates: CandidateSummary[];
 
   onRun: (run: ScreeningRun, originRunId?: string) => void; onRefresh: () => Promise<unknown>; onNavigate: (step: Step) => void;
 
-  onRunHistoryUpdate?: () => void;
+  onRunHistoryUpdate?: () => void; jobs: JobDescription[]; onSelectJob: (id: string) => void;
 
 }) {
 
@@ -643,7 +725,7 @@ function CandidateWorkspace({jobId, activeRunId, freshAfter, visible, step, cand
 
   return <div hidden={!visible}>
 
-    <div hidden={step !== "verification"}><Verification jobId={jobId} candidates={candidates} run={run} onRun={receiveRun} onRefresh={onRefresh} onCompare={() => onNavigate("comparison")}/></div>
+    <div hidden={step !== "verification"}><Verification jobId={jobId} candidates={candidates} run={run} onRun={receiveRun} onRefresh={onRefresh} onCompare={() => onNavigate("comparison")} jobs={jobs} onSelectJob={onSelectJob}/></div>
 
     <div hidden={step !== "comparison"}><Review key={run?.id || jobId} run={run} candidates={candidates} onRun={receiveRun} onInterview={() => onNavigate("interview")} onBack={() => onNavigate("verification")}/></div>
 

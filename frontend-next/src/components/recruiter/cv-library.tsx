@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FileText, Search, Trash2, Upload, RotateCcw } from "lucide-react";
+import { ChevronRight, FileText, Search, Trash2, Upload, RotateCcw, LoaderCircle } from "lucide-react";
 import { useParsingBatch } from "@/lib/parsing-batch";
 import { ParsingProgress } from "./parsing-progress";
 import { api, type CVDocument } from "@/lib/api";
@@ -26,6 +26,8 @@ export function CVLibrary() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<string>("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [page, setPage] = useState(0);
@@ -42,15 +44,16 @@ export function CVLibrary() {
   const all = filtered.length > 0 && filtered.every(cv => ids.includes(cv.id));
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 25) - 1));
   const visible = filtered.slice(currentPage * 25, currentPage * 25 + 25);
-  async function perform(work: () => Promise<string>) {
-    setBusy(true); setError(""); setNotice("");
+  async function perform(work: () => Promise<string>, actionType: string = "", targetId: string | null = null) {
+    setBusy(true); setBusyAction(actionType); setDeletingId(targetId); setError(""); setNotice("");
     try {setNotice(await work()); setSelected([]);}
     catch (e) {setError(message(e));}
-    finally {setBusy(false); await cache.invalidateQueries({queryKey: ["cv-library"]}); await cache.invalidateQueries({queryKey: ["recruiter-candidates"]}); await cache.invalidateQueries({queryKey: ["recruiter-run"]});}
+    finally {setBusy(false); setBusyAction(""); setDeletingId(null); await cache.invalidateQueries({queryKey: ["cv-library"]}); await cache.invalidateQueries({queryKey: ["recruiter-candidates"]}); await cache.invalidateQueries({queryKey: ["recruiter-run"]});}
   }
   function change(action: "trash" | "restore" | "delete", targets = ids) {
     if (action === "delete" && !window.confirm(`Permanently delete ${targets.length} CV(s), including their profiles and screening results? This cannot be undone.`)) return;
-    void perform(async () => {const result = await api.libraryAction(targets, action); return `${result.changed} CV(s) ${action === "trash" ? "moved to Trash for 30 days" : action === "restore" ? "restored" : "permanently deleted"}.`;});
+    const targetSingle = targets.length === 1 ? targets[0] : null;
+    void perform(async () => {const result = await api.libraryAction(targets, action); return `${result.changed} CV(s) ${action === "trash" ? "moved to Trash for 30 days" : action === "restore" ? "restored" : "permanently deleted"}.`;}, action, targetSingle);
   }
   return <>
     <div className="r-tabs" role="tablist" aria-label="CV library view">
@@ -80,7 +83,7 @@ export function CVLibrary() {
           <button className="r-button" disabled={busy || !ids.length} onClick={() => change("trash")}><Trash2 size={16}/>Move selected to Trash</button>
 
         </>}
-        <button className="r-button r-danger" disabled={busy || !ids.length} onClick={() => change("delete")}>Permanently delete selected</button>
+        <button className="r-button r-danger" disabled={busy || !ids.length} onClick={() => change("delete")}>{busy && busyAction === "delete" && !deletingId ? <><LoaderCircle className="r-spinner" size={15}/> Deleting {ids.length} CV(s)…</> : "Permanently delete selected"}</button>
       </div>
       {!trash && <div className="r-library-parse-controls" aria-label="Batch parsing settings">
         <label className="r-field">CVs in this batch<input type="number" min={1} max={1000} value={batchLimit} disabled={parsing} onChange={event => setBatchLimit(Number(event.target.value))}/></label>
@@ -117,7 +120,7 @@ export function CVLibrary() {
         <td><span className={`r-pill ${!trash && candidateId(cv) ? "success" : ""}`}>{trash ? "In Trash" : candidateId(cv) ? "Ready for verification" : fileProgress.get(cv.id)?.status === "PROCESSING" && parsing ? "Processing" : fileProgress.get(cv.id)?.status === "QUEUED" && parsing ? "Queued" : fileProgress.get(cv.id)?.status === "FAILED" ? "Parsing failed" : "Imported · not parsed"}</span>{!trash && parsing && fileProgress.get(cv.id)?.status === "PROCESSING" && <small className="r-library-file-phase">{fileProgress.get(cv.id)?.phase}</small>}</td>
         <td>{cv.size === null ? "Original unavailable" : `${Math.max(1, Math.ceil(cv.size / 1024))} KB`}</td>
         <td>{new Date((trash ? cv.expires_at : cv.created_at)!).toLocaleString()}</td>
-        <td><div className="r-library-row-actions"><button className="r-button subtle" disabled={busy} onClick={() => change(trash ? "restore" : "trash", [cv.id])}>{trash ? "Restore" : "Move to Trash"}</button><button className="r-button r-danger" disabled={busy} onClick={() => change("delete", [cv.id])}>Delete permanently</button></div></td>
+        <td><div className="r-library-row-actions"><button className="r-button subtle" disabled={busy} onClick={() => change(trash ? "restore" : "trash", [cv.id])}>{trash ? "Restore" : "Move to Trash"}</button><button className="r-button r-danger" disabled={busy} onClick={() => change("delete", [cv.id])}>{busy && busyAction === "delete" && deletingId === cv.id ? <><LoaderCircle className="r-spinner" size={14}/> Deleting…</> : "Delete permanently"}</button></div></td>
         <td><button className="r-icon-button" aria-label={`View ${cv.filename} ${candidateId(cv) ? "parsed profile" : "original text"}`} onClick={() => setPreview({...cv, candidate_id: candidateId(cv)})}><ChevronRight size={18}/></button></td>
       </tr>)}</tbody></table></div>}
       <div className="r-table-footer"><span>{filtered.length} CV(s) · Page {currentPage + 1} of {Math.max(1, Math.ceil(filtered.length / 25))}</span><div><button className="r-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><button className="r-button" disabled={(currentPage + 1) * 25 >= filtered.length} onClick={() => setPage(currentPage + 1)}>Next</button></div></div>

@@ -37,6 +37,58 @@ def test_scanner_extract_quantization():
     assert scanner._extract_quantization("model-f16.gguf") == "F16"
 
 
+def test_offline_ollama_scans_custom_registry_manifests(tmp_path, monkeypatch):
+    root = tmp_path / "ollama"
+    for name in ("registry.ollama.ai/library/qwen3/4b", "hf.co/author/model/Q4_K_M"):
+        manifest = root / "manifests" / name
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("{}")
+    monkeypatch.setenv("OLLAMA_MODELS", str(root))
+    scanner = LocalModelScanner(ollama_service=MagicMock())
+    scanner.ollama_svc.get_status.return_value = {"running": False}
+    result = scanner.scan_ollama()
+    assert {model["id"] for model in result["installed_models"]} == {"qwen3:4b", "hf.co/author/model:Q4_K_M"}
+    assert all(not model["can_activate"] for model in result["installed_models"])
+
+
+def test_discovery_keeps_same_identifier_for_both_local_providers(monkeypatch):
+    scanner = LocalModelScanner()
+    def item(provider):
+        return {"id": "shared", "name": "shared", "provider": provider, "source": provider, "format": "gguf"}
+    monkeypatch.setattr(scanner, "scan_ollama", lambda: {"status": {"running": True}, "installed_models": [item("ollama")]})
+    monkeypatch.setattr(scanner, "scan_lm_studio", lambda: {"server_running": True, "live_models": [item("lmstudio")], "disk_models": []})
+    monkeypatch.setattr(scanner, "scan_jan_and_local_servers", lambda: {"detected_servers": []})
+    monkeypatch.setattr(scanner, "scan_common_directories", lambda: [])
+    monkeypatch.setattr(scanner, "_update_catalog_with_discovered_models", lambda *_: None)
+    result = scanner.scan_all(force=True)
+    assert {(m["provider"], m["id"]) for m in result["all_models"]} == {("ollama", "shared"), ("lmstudio", "shared")}
+
+
+def test_recruiter_refresh_forces_scan_without_import(client, monkeypatch):
+    scanner = get_local_model_scanner()
+    scan = MagicMock(return_value={"ollama": {"running": True}, "lmstudio": {"running": False}})
+    monkeypatch.setattr(scanner, "refresh_local_engines", scan)
+    response = client.post("/api/v1/screening/models/refresh-local")
+    assert response.status_code == 200
+    assert response.json()["local_discovery"]["ollama"]["running"] is True
+    scan.assert_called_once_with()
+
+
+def test_catalog_deduplicates_model_ids_per_provider(monkeypatch):
+    import copy
+    monkeypatch.setitem(CATALOG_PROVIDERS, "ollama", copy.deepcopy(CATALOG_PROVIDERS["ollama"]))
+    monkeypatch.setitem(CATALOG_PROVIDERS, "lmstudio", copy.deepcopy(CATALOG_PROVIDERS["lmstudio"]))
+    models = [
+        {"id": "same", "name": "live", "provider": "lmstudio", "source": "LM Studio (Live API)"},
+        {"id": "same", "name": "disk", "provider": "lmstudio", "source": "LM Studio (Disk GGUF)"},
+        {"id": "same", "name": "other", "provider": "ollama", "source": "LM Studio (Disk GGUF)"},
+    ]
+    LocalModelScanner()._update_catalog_with_discovered_models(models, True)
+    assert [m.id for m in CATALOG_PROVIDERS["lmstudio"].models] == ["same"]
+    assert CATALOG_PROVIDERS["lmstudio"].models[0].name.startswith("live")
+    assert [m.id for m in CATALOG_PROVIDERS["ollama"].models] == ["same"]
+
+
 def test_scan_all_mocked():
     scanner = LocalModelScanner()
 

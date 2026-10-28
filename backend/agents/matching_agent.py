@@ -776,7 +776,7 @@ class MatchingAgent:
                         ) from e
 
                 if is_parallel and len(provider_pool) > 1:
-                    max_workers = min(len(remaining_requirements), len(provider_pool) * 2, 8)
+                    max_workers = min(len(remaining_requirements), len(provider_pool), 12)
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         futures = [
                             executor.submit(

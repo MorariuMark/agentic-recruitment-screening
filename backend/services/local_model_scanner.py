@@ -102,30 +102,35 @@ class LocalModelScanner:
         # Also check local Ollama manifest directories on disk if daemon is stopped
         if not installed_models:
             user_dir = os.path.expanduser("~")
-            manifest_candidates = [
-                os.path.join(user_dir, ".ollama", "models", "manifests", "registry.ollama.ai", "library"),
-                os.environ.get("OLLAMA_MODELS", ""),
-            ]
+            model_root = os.environ.get("OLLAMA_MODELS") or os.path.join(user_dir, ".ollama", "models")
+            manifest_candidates = [os.path.join(model_root, "manifests")]
             for m_dir in manifest_candidates:
                 if m_dir and os.path.exists(m_dir):
                     try:
-                        for model_folder in os.listdir(m_dir):
-                            folder_path = os.path.join(m_dir, model_folder)
-                            if os.path.isdir(folder_path):
-                                for tag_file in os.listdir(folder_path):
-                                    tag_id = f"{model_folder}:{tag_file}"
-                                    installed_models.append({
-                                        "id": tag_id,
-                                        "name": model_folder,
-                                        "provider": "ollama",
-                                        "source": "Ollama Manifest (Disk)",
-                                        "size_gb": 0.0,
-                                        "parameter_size": "Local",
-                                        "format": "ollama-blob",
-                                        "status": "installed",
-                                        "is_running": False,
-                                        "can_activate": status.get("running", False),
-                                    })
+                        for root, _, files in os.walk(m_dir):
+                            parts = os.path.relpath(root, m_dir).split(os.sep)
+                            if len(parts) < 3:
+                                continue
+                            registry, *name_parts = parts
+                            name = "/".join(name_parts)
+                            if registry == "registry.ollama.ai" and name.startswith("library/"):
+                                name = name[len("library/"):]
+                            else:
+                                name = f"{registry}/{name}"
+                            for tag_file in files:
+                                tag_id = f"{name}:{tag_file}"
+                                installed_models.append({
+                                    "id": tag_id,
+                                    "name": tag_id,
+                                    "provider": "ollama",
+                                    "source": "Ollama Manifest (Disk)",
+                                    "size_gb": 0.0,
+                                    "parameter_size": "Local",
+                                    "format": "ollama-blob",
+                                    "status": "installed",
+                                    "is_running": False,
+                                    "can_activate": status.get("running", False),
+                                })
                     except Exception as e:
                         logger.debug(f"Manifest parse error: {e}")
 
@@ -241,6 +246,23 @@ class LocalModelScanner:
             "live_models": live_models,
             "disk_models": disk_models,
             "total_count": len(live_models) + len(disk_models),
+        }
+
+    def refresh_local_engines(self) -> Dict[str, Any]:
+        """Refresh just Ollama and LM Studio without importing model files."""
+        ollama = self.scan_ollama()
+        lmstudio = self.scan_lm_studio()
+        models = []
+        seen = set()
+        for model in ollama.get("installed_models", []) + lmstudio.get("live_models", []) + lmstudio.get("disk_models", []):
+            identity = (model.get("provider"), model["id"])
+            if identity not in seen:
+                seen.add(identity)
+                models.append(model)
+        self._update_catalog_with_discovered_models(models, lmstudio.get("server_running", False))
+        return {
+            "ollama": {"running": ollama.get("status", {}).get("running", False), "models_count": len(ollama.get("installed_models", []))},
+            "lmstudio": {"running": lmstudio.get("server_running", False), "live_models_count": len(lmstudio.get("live_models", [])), "disk_models_count": len(lmstudio.get("disk_models", []))},
         }
 
     def scan_jan_and_local_servers(self) -> Dict[str, Any]:
@@ -377,36 +399,36 @@ class LocalModelScanner:
         common_dirs_res = self.scan_common_directories()
 
         all_models: List[Dict[str, Any]] = []
-        seen_ids: Set[str] = set()
+        seen_ids: Set[tuple] = set()
 
         # 1. Add Ollama models
         for m in ollama_res.get("installed_models", []):
-            if m["id"] not in seen_ids:
-                seen_ids.add(m["id"])
+            if (m.get("provider"), m["id"]) not in seen_ids:
+                seen_ids.add((m.get("provider"), m["id"]))
                 all_models.append(m)
 
         # 2. Add LM Studio live models
         for m in lm_res.get("live_models", []):
-            if m["id"] not in seen_ids:
-                seen_ids.add(m["id"])
+            if (m.get("provider"), m["id"]) not in seen_ids:
+                seen_ids.add((m.get("provider"), m["id"]))
                 all_models.append(m)
 
         # 3. Add other local servers
         for m in other_servers_res.get("detected_servers", []):
-            if m["id"] not in seen_ids:
-                seen_ids.add(m["id"])
+            if (m.get("provider"), m["id"]) not in seen_ids:
+                seen_ids.add((m.get("provider"), m["id"]))
                 all_models.append(m)
 
         # 4. Add LM Studio disk GGUF models
         for m in lm_res.get("disk_models", []):
-            if m["id"] not in seen_ids:
-                seen_ids.add(m["id"])
+            if (m.get("provider"), m["id"]) not in seen_ids:
+                seen_ids.add((m.get("provider"), m["id"]))
                 all_models.append(m)
 
         # 5. Add common directories GGUF models
         for m in common_dirs_res:
-            if m["id"] not in seen_ids:
-                seen_ids.add(m["id"])
+            if (m.get("provider"), m["id"]) not in seen_ids:
+                seen_ids.add((m.get("provider"), m["id"]))
                 all_models.append(m)
 
         # Auto-import disk GGUF models into Ollama if requested and Ollama is running
@@ -477,8 +499,10 @@ class LocalModelScanner:
 
         # 1. Update Ollama Provider Models
         ollama_models: List[ModelInfo] = []
+        ollama_ids: Set[str] = set()
         for m in all_models:
-            if m.get("provider") == "ollama" or "ollama" in m.get("source", "").lower():
+            if (m.get("provider") == "ollama" or (not m.get("provider") and "ollama" in m.get("source", "").lower())) and m["id"] not in ollama_ids:
+                ollama_ids.add(m["id"])
                 clean_name = m["name"].replace(":latest", "")
                 src_badge = f" [{m['source']}]" if "Disk" in m["source"] or "Auto" in m["source"] else ""
                 ollama_models.append(
@@ -500,8 +524,10 @@ class LocalModelScanner:
 
         # 2. Register or Update LM Studio Provider Models
         lm_models: List[ModelInfo] = []
+        lm_ids: Set[str] = set()
         for m in all_models:
-            if m.get("provider") == "lmstudio" or "lm studio" in m.get("source", "").lower():
+            if (m.get("provider") == "lmstudio" or (not m.get("provider") and "lm studio" in m.get("source", "").lower())) and m["id"] not in lm_ids:
+                lm_ids.add(m["id"])
                 lm_models.append(
                     ModelInfo(
                         id=m["id"],

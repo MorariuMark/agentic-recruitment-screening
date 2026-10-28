@@ -19,6 +19,101 @@ def isolate_cooldowns(monkeypatch):
     monkeypatch.setattr(factory.settings, "fallback_enabled", True)
 
 
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio"])
+@pytest.mark.parametrize("method", ["generate_text", "generate_structured"])
+@pytest.mark.parametrize("fallback_enabled", [True, False])
+def test_local_failure_is_reported_and_next_request_can_retry(monkeypatch, provider, method, fallback_enabled):
+    monkeypatch.setattr(factory.settings, "fallback_enabled", fallback_enabled)
+    monkeypatch.setattr(factory.time, "sleep", lambda _: None)
+    local = MagicMock(api_key=None, last_usage={}, last_raw_response="", last_key_used=None)
+    call = getattr(local, method)
+    failures = 1 if fallback_enabled else 3
+    call.side_effect = [RuntimeError("Local server connection failed") for _ in range(failures)] + ["recovered"]
+    client = factory.DynamicLLMClient()
+    monkeypatch.setattr(client, "get_fallback_chain", lambda: [(provider, "local-model", local)])
+    kwargs = {"response_model": RequirementMatch} if method == "generate_structured" else {}
+
+    with pytest.raises(RuntimeError, match="Local server connection failed"):
+        getattr(client, method)("Evaluate", **kwargs)
+    assert not factory.is_model_in_cooldown(provider, "local-model")
+    assert not factory.get_active_cooldown_statuses()
+    assert getattr(client, method)("Evaluate", **kwargs) == "recovered"
+    assert call.call_count == failures + 1
+
+
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio"])
+@pytest.mark.parametrize("method", ["generate_text", "generate_structured"])
+def test_local_model_retries_same_request_when_failover_disabled(monkeypatch, provider, method):
+    monkeypatch.setattr(factory.settings, "fallback_enabled", False)
+    delays = []
+    monkeypatch.setattr(factory.time, "sleep", delays.append)
+    local = MagicMock(api_key=None, last_usage={}, last_raw_response="", last_key_used=None)
+    call = getattr(local, method)
+    call.side_effect = [TimeoutError("local timeout"), "recovered"]
+    client = factory.DynamicLLMClient()
+    monkeypatch.setattr(client, "get_fallback_chain", lambda: [(provider, "local-model", local)])
+    kwargs = {"response_model": RequirementMatch} if method == "generate_structured" else {}
+    assert getattr(client, method)("Evaluate", **kwargs) == "recovered"
+    assert call.call_count == 2
+    assert call.call_args_list[0] == call.call_args_list[1]
+    assert delays == [1]
+
+
+def test_api_provider_is_not_retried_when_failover_disabled(monkeypatch):
+    monkeypatch.setattr(factory.settings, "fallback_enabled", False)
+    remote = MagicMock(api_key="synthetic", last_raw_response="")
+    remote.generate_text.side_effect = RuntimeError("remote failure")
+    client = factory.DynamicLLMClient()
+    monkeypatch.setattr(client, "get_fallback_chain", lambda: [("groq", "remote", remote)])
+    with pytest.raises(RuntimeError):
+        client.generate_text("Evaluate")
+    assert remote.generate_text.call_count == 1
+
+
+def test_ollama_uses_native_thinking_control_without_assistant_prefill(monkeypatch):
+    monkeypatch.setattr(factory.settings, "local_thinking_enabled", False)
+    local = factory.OllamaClient.__new__(factory.OllamaClient)
+    local.model = "local-model"
+    local.client = MagicMock()
+    local.client.chat.return_value = SimpleNamespace(message=SimpleNamespace(content='{"answer":"ok"}'))
+    local._record_telemetry = MagicMock()
+    from pydantic import BaseModel
+    class Answer(BaseModel):
+        answer: str
+    assert local.generate_structured("Evaluate", Answer).answer == "ok"
+    request = local.client.chat.call_args.kwargs
+    assert request["think"] is False
+    assert [message["role"] for message in request["messages"]] == ["system", "user"]
+
+
+def test_local_gpu_load_uses_max_and_reports_failure(monkeypatch):
+    from backend.services import local_model_service as module
+    service = module.LocalModelService()
+    monkeypatch.setattr(service, "get_gpu_telemetry", lambda: {"profile": {"is_low_end": True}})
+    monkeypatch.setattr(service, "_find_lms_cli", lambda: "lms")
+    monkeypatch.setattr(service, "start_lmstudio_server", lambda: {"success": True})
+    run = MagicMock(return_value=SimpleNamespace(returncode=1, stdout=b"", stderr=b"not enough GPU memory"))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = service.load_model("lmstudio", "model", context_window=4096)
+    assert not result["success"]
+    assert "not enough GPU memory" in result["error"]
+    command = run.call_args.args[0]
+    assert command[command.index("--gpu") + 1] == "max"
+    assert run.call_count == 1
+
+
+def test_ollama_inference_requests_all_gpu_layers(monkeypatch):
+    monkeypatch.setattr(factory.settings, "local_gpu_layers", 0)
+    local = factory.OllamaClient.__new__(factory.OllamaClient)
+    assert local._get_execution_options()["num_gpu"] == 999
+
+
+def test_stale_local_cooldown_is_ignored():
+    factory._MODEL_COOLDOWNS[("ollama", "local-model", None)] = time.time() + 30
+    assert not factory.is_model_in_cooldown("ollama", "local-model")
+    assert not factory.get_active_cooldown_statuses()
+
+
 @pytest.mark.parametrize("choices", [None, [], [None], [SimpleNamespace(message=None)]])
 def test_openrouter_missing_completion_is_a_provider_response_error(choices):
     client = factory.OpenRouterClient(api_key="synthetic")

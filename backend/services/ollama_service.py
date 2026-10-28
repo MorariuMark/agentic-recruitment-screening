@@ -452,7 +452,7 @@ PARAMETER stop "<|im_end|>"
                 payload = {
                     "model": model_name,
                     "keep_alive": keep_alive,
-                    "options": {"num_ctx": ctx},
+                    "options": {"num_ctx": ctx, "num_gpu": 999, "main_gpu": 0},
                 }
                 res = client.post(f"{self.base_url}/api/generate", json=payload)
                 res.raise_for_status()
