@@ -40,14 +40,18 @@ export interface ActiveProgressState {
 }
 
 const getApiBase = (): string => {
-  if (typeof window !== "undefined") return "";
+  if (typeof window !== "undefined") {
+    // In browser: dynamically target the FastAPI backend directly on port 8000 matching the current host
+    // (localhost vs 127.0.0.1) so requests bypass Next.js dev server rewrite proxy completely.
+    // This eliminates dev-proxy socket ECONNRESET crashes and unwanted HMR full page reloads.
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
+    }
+    const host = window.location.hostname || "127.0.0.1";
+    return `http://${host}:8000`;
+  }
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
-  }
-  if (typeof window !== "undefined") {
-    // In the browser, always use relative base ("") so requests go to the same origin (Next.js server),
-    // which reliably proxies /api/* and /health to FastAPI via next.config.ts rewrites with ZERO CORS/PNA issues.
-    return "";
   }
   // Server-side (SSR / Node.js) default to direct local backend
   return "http://127.0.0.1:8000";
@@ -84,20 +88,18 @@ class ApiClient {
     }
 
     // Determine primary URL and fallback URL:
-    // If preferDirectBackend is set (e.g. for multi-second LLM workflows like match/evaluate),
-    // start directly with loopback http://127.0.0.1:8000 to avoid Next.js dev server rewrite proxy socket timeouts.
-    let primaryUrl = `${this.base}${endpoint}`;
-    let fallbackUrl = this.base ? endpoint : `http://127.0.0.1:8000${endpoint}`;
-    // Workspace cookies must belong to the frontend host even when the configured
-    // API URL uses 127.0.0.1 and the user opened the frontend through localhost.
-    if (sameOrigin && typeof window !== "undefined") {
-      primaryUrl = endpoint;
-      fallbackUrl = endpoint;
-    }
-    if (preferDirectBackend && !sameOrigin) {
-      primaryUrl = `http://127.0.0.1:8000${endpoint}`;
-      fallbackUrl = endpoint;
-    }
+    // Direct FastAPI communication is primary to avoid Next.js dev server proxy drops / ECONNRESET.
+    // The relative endpoint (Next.js rewrite proxy) acts as the resilient fallback.
+    const directBackendUrl = typeof window !== "undefined"
+      ? (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || `http://${window.location.hostname || "127.0.0.1"}:8000`)
+      : (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://127.0.0.1:8000");
+
+    let primaryUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+      ? endpoint
+      : `${this.base || directBackendUrl}${endpoint}`;
+    let fallbackUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+      ? endpoint
+      : endpoint;
 
     const executeFetch = async (targetUrl: string): Promise<T> => {
       const controller = new AbortController();
@@ -739,7 +741,12 @@ class ApiClient {
     });
   }
 
+  async clearRecruiterFailover(): Promise<{ status: string }> {
+    return this.request("/api/v1/screening/models/clear-failover", { method: "POST" });
+  }
+
   async clearFallbackEvent(): Promise<{ status: string; message: string }> {
+    try { await this.clearRecruiterFailover(); } catch {}
     return this.request("/api/v1/settings/llm/clear-fallback", {
       method: "POST",
     });
@@ -814,6 +821,107 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ provider: "lmstudio", port }),
     });
+  }
+
+  async chatWithAsap(
+    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+    context?: { current_job_id?: string | null; current_candidate_id?: string | null; active_step?: string | null }
+  ): Promise<{
+    reply: string;
+    model: string;
+    provider: string;
+    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; latency_ms?: number };
+    sources: Array<{ type: string; id: string; title: string }>;
+    action?: any;
+  }> {
+    return this.request("/api/v1/asap/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages, context: context || {} }),
+      timeoutMs: 60000,
+    });
+  }
+
+  async chatWithAsapStream(
+    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+    context: { current_job_id?: string | null; current_candidate_id?: string | null; active_step?: string | null } | undefined,
+    callbacks: {
+      onStart?: (sources: Array<{ type: string; id: string; title: string }>) => void;
+      onChunk?: (text: string) => void;
+      onAction?: (action: any) => void;
+      onDone?: (meta: { model?: string; provider?: string; sources?: Array<{ type: string; id: string; title: string }>; action?: any }) => void;
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const targetUrl = typeof window !== "undefined" ? "/api/v1/asap/chat/stream" : "http://127.0.0.1:8000/api/v1/asap/chat/stream";
+    const res = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      },
+      credentials: "include",
+      body: JSON.stringify({ messages, context: context || {} }),
+      signal,
+    });
+
+    if (!res.ok) {
+      let errDetail = `HTTP ${res.status}`;
+      try {
+        const body = await res.json();
+        errDetail = body?.detail || errDetail;
+      } catch {}
+      throw new Error(errDetail);
+    }
+
+    if (!res.body) {
+      throw new Error("No response stream body available.");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() || "";
+
+      for (const block of blocks) {
+        const trimmed = block.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr) continue;
+        try {
+          const event = JSON.parse(jsonStr);
+          if (event.type === "start") {
+            callbacks.onStart?.(event.sources || []);
+          } else if (event.type === "action") {
+            callbacks.onAction?.(event.action);
+          } else if (event.type === "chunk" && event.text) {
+            callbacks.onChunk?.(event.text);
+          } else if (event.type === "done") {
+            callbacks.onDone?.(event);
+          }
+        } catch {
+          // ignore malformed SSE block
+        }
+      }
+    }
+  }
+
+  async getAsapGreetings(): Promise<string[]> {
+    try {
+      return await this.request<string[]>("/api/v1/asap/greetings");
+    } catch {
+      return [
+        "Hello, I'm ASAP, your candidate screening assistant, how may I assist you today?",
+        "Hi! I'm ASAP, your candidate screening assistant. What jobs, candidates, or evaluations can I help you explore today?",
+        "Greetings! I'm ASAP, your candidate screening assistant. How can I assist your recruitment workflow today?",
+        "Hello there! I'm ASAP, your screening and talent intelligence assistant. How may I help you evaluate your pipeline today?",
+      ];
+    }
   }
 }
 

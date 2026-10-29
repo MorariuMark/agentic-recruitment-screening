@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, BriefcaseBusiness, MapPin, Plus, Search, Trash2, X, WandSparkles } from "lucide-react";
+import { ArrowRight, BriefcaseBusiness, Check, MapPin, Plus, Search, Trash2, X, WandSparkles } from "lucide-react";
 import { JobDescription, JobRequirement } from "@/types";
 import { api } from "@/lib/api";
 import { validateJobDraft, JobDraftIssue } from "@/lib/job-draft";
@@ -45,13 +45,83 @@ export function Jobs({jobs, selectedId, editorIds, onSelect, onSaved, onContinue
     };
   }, []);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
   const [creating, setCreating] = useState(false);
   const [draftKey, setDraftKey] = useState<string | null>(null);
   const job = jobs.find(j => j.id === selectedId);
   const filtered = jobs.filter(j => `${j.title} ${j.department || ""}`.toLowerCase().includes(search.toLowerCase()));
   return <>
     <div className="r-section-toolbar">
-      <div className="r-search"><Search size={17}/><input aria-label="Search jobs" placeholder="Search job descriptions" value={search} onChange={e => setSearch(e.target.value)}/></div>
+      <div className="r-search" style={{ position: "relative" }} ref={searchWrapRef}>
+        <Search size={17}/>
+        <input
+          aria-label="Search jobs"
+          placeholder="Search job descriptions"
+          value={search}
+          onChange={e => {
+            setSearch(e.target.value);
+            setSearchOpen(true);
+          }}
+          onFocus={() => { if (search.trim()) setSearchOpen(true); }}
+          onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); }}
+        />
+        {search && (
+          <button
+            type="button"
+            className="r-job-search-clear"
+            onClick={() => {
+              setSearch("");
+              setSearchOpen(false);
+            }}
+            aria-label="Clear job search"
+          >
+            <X size={14}/>
+          </button>
+        )}
+        {searchOpen && search.trim() && (
+          <div className="r-search-autocomplete" role="listbox">
+            {filtered.length === 0 ? (
+              <div className="r-search-empty">No matching roles found</div>
+            ) : (
+              filtered.slice(0, 8).map(j => (
+                <button
+                  key={j.id}
+                  type="button"
+                  className={`r-search-item ${j.id === selectedId ? "active" : ""}`}
+                  onClick={() => {
+                    setCreating(false);
+                    onSelect(j.id);
+                    setSearchOpen(false);
+                  }}
+                  role="option"
+                  aria-selected={j.id === selectedId}
+                >
+                  <div className="r-search-item-title">
+                    <span>{j.title}</span>
+                    {j.id === selectedId && <span className="r-pill success" style={{ fontSize: 10, padding: "1px 6px" }}>Active</span>}
+                  </div>
+                  <div className="r-search-item-meta">
+                    <span>{j.department || "General"}</span>
+                    <span>·</span>
+                    <span>{j.requirements?.length || 0} criteria</span>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
       <button className="r-button primary" onClick={() => {setDraftKey(current => current || crypto.randomUUID()); setCreating(true);}}><Plus size={17}/> Add job description</button>
     </div>
     <div className="r-jobs-layout">
@@ -78,6 +148,7 @@ export function Jobs({jobs, selectedId, editorIds, onSelect, onSaved, onContinue
 function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; onSave: (jobOrId: JobDescription | string) => Promise<void>; onContinue: () => void; onCancel?: () => void}) {
   const [draft, setDraft] = useState<JobDescription>(job || {id: crypto.randomUUID(), title: "", department: "", location: "", requirements: [], raw_text: ""});
   const [url, setUrl] = useState("");
+  const [extractionDuration, setExtractionDuration] = useState<number | null>(null);
   const [busy, setBusy, startedAt, lastActivity] = useTimedActivity<string>("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -87,11 +158,13 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
   useEffect(() => {if (error || issues.length) errorSummary.current?.focus();}, [error, issues]);
   function update(value: Partial<JobDescription>) {setDraft(current => ({...current, ...value})); setSaved(false); setDirty(true); setIssues([]); setError("");}
   async function extract(fromUrl: boolean) {
+    const startTime = Date.now();
     setBusy(fromUrl ? "url" : "parse"); setError("");
     try {
       const result = fromUrl ? await api.parseRecruiterJobUrl(url) : await api.parseRecruiterJob(draft.raw_text!);
       // Preserve the parser's complete contract and requirement identifiers, as Admin does.
       update({...result.job_description, id: draft.id});
+      setExtractionDuration(Math.round((Date.now() - startTime) / 100) / 10);
     } catch (e) {setError(message(e));} finally {setBusy("");}
   }
   return <form className="r-panel r-job-editor" noValidate onSubmit={async e => {
@@ -130,6 +203,7 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
         <button type="button" className="r-button" aria-busy={busy === "url"} disabled={!!busy || !/^https?:\/\//.test(url)} onClick={() => extract(true)}><WandSparkles size={16}/><ProcessIndicator active={busy === "url"} startedAt={lastActivity === "url" ? startedAt : null} label="Extracting from URL"/> {busy === "url" ? "Extracting from URL…" : "Extract from URL"}</button>
         <label className="r-field">Or paste the full description<textarea rows={6} value={draft.raw_text || ""} onChange={e => update({raw_text: e.target.value})} placeholder="Paste the job description here…"/></label>
         <button type="button" className="r-button" aria-busy={busy === "parse"} disabled={!!busy || !(draft.raw_text || "").trim()} onClick={() => extract(false)}><WandSparkles size={16}/><ProcessIndicator active={busy === "parse"} startedAt={lastActivity === "parse" ? startedAt : null} label="Extracting job criteria"/> {busy === "parse" ? "Extracting criteria…" : "Extract criteria"}</button>
+        {extractionDuration != null && <span className="r-duration-badge success" style={{ marginLeft: 8 }}><Check size={12}/>Criteria extracted in {extractionDuration.toFixed(1)}s</span>}
       </details>
       <details className="r-disclosure"><summary>Role details & additional extracted content</summary>
         <div className="r-form-grid">
@@ -142,7 +216,18 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
         {!!draft.unused_details?.length && <><h3>Other source content</h3><ExtractedData value={draft.unused_details}/></>}
         <button type="button" className="r-button subtle" onClick={() => downloadJson(draft, "job-description.json")}>Download structured job description</button>
       </details>
-      <div id={`${draft.id}-criteria`} tabIndex={-1} className="r-criteria-heading"><div><h3>Screening criteria</h3><p>Open a criterion to adjust its evidence, importance and experience.</p></div><button type="button" className="r-button subtle" onClick={() => update({requirements: [...draft.requirements, {id: crypto.randomUUID(), title: "", description: "", category: "must_have", weight: 1}]})}><Plus size={16}/> Add criterion</button></div>
+      <div id={`${draft.id}-criteria`} tabIndex={-1} className="r-criteria-heading">
+        <div>
+          <h3>Screening criteria</h3>
+          <p>Open a criterion to adjust its evidence, importance and experience.</p>
+        </div>
+        {extractionDuration != null && (
+          <span className="r-duration-badge success" style={{ marginLeft: "auto", marginRight: 12 }}>
+            <Check size={12}/>Criteria extracted in {extractionDuration.toFixed(1)}s
+          </span>
+        )}
+        <button type="button" className="r-button subtle" onClick={() => update({requirements: [...draft.requirements, {id: crypto.randomUUID(), title: "", description: "", category: "must_have", weight: 1}]})}><Plus size={16}/> Add criterion</button>
+      </div>
       {draft.requirements.length === 0 && <p className="r-inline-empty">No criteria yet. Add a requirement or extract them from the description.</p>}
       <div className="r-criteria-list">{draft.requirements.map((r, index) => <Criterion key={r.id} idPrefix={draft.id} requirement={r} index={index} onChange={value => update({requirements: draft.requirements.map((item, i) => i === index ? {...item, ...value} : item)})} onRemove={() => update({requirements: draft.requirements.filter((_, i) => i !== index)})}/>)}</div>
       {saved && <p className="r-success" role="status">Job description saved.</p>}

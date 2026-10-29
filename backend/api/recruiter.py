@@ -131,16 +131,27 @@ async def logout(response: Response):
     return {"status": "ok"}
 
 
+_CACHED_CATALOG_PROVIDERS = {key: value.model_dump(mode="json") for key, value in CATALOG_PROVIDERS.items()}
+
 @router.get("/screening/models")
 async def model_catalog():
     """Use the shared catalog without rescanning disks/hardware on every UI visit."""
-    from backend.agents.llm_factory import get_active_cooldown_statuses
+    from backend.agents.llm_factory import get_active_cooldown_statuses, get_last_fallback_event
     return {"active_provider": settings.llm_provider,
             "active_model": existing._get_active_model_for_provider(settings.llm_provider),
             "fallback_enabled": settings.fallback_enabled,
             "parallel_screening_enabled": getattr(settings, "parallel_screening_enabled", False),
             "cooldown_statuses": get_active_cooldown_statuses(),
-            "providers_catalog": {key: value.model_dump(mode="json") for key, value in CATALOG_PROVIDERS.items()}}
+            "last_fallback_event": get_last_fallback_event(),
+            "providers_catalog": _CACHED_CATALOG_PROVIDERS}
+
+
+@router.post("/screening/models/clear-failover")
+async def clear_failover_alert():
+    """Clear active failover alert in recruiter workspace."""
+    from backend.agents.llm_factory import clear_last_fallback_event
+    clear_last_fallback_event()
+    return await model_catalog()
 
 
 @router.post("/screening/models/refresh-local")

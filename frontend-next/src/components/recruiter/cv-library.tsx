@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FileText, Search, Trash2, Upload, RotateCcw, LoaderCircle } from "lucide-react";
+import { ChevronRight, FileText, Search, Trash2, Upload, RotateCcw, LoaderCircle, X } from "lucide-react";
 import { useParsingBatch } from "@/lib/parsing-batch";
 import { ParsingProgress } from "./parsing-progress";
 import { api, type CVDocument } from "@/lib/api";
@@ -24,6 +24,18 @@ export function CVLibrary() {
   const progressPanel = useRef<HTMLDivElement>(null);
   const [trash, setTrash] = useState(false);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<string>("");
@@ -72,7 +84,65 @@ export function CVLibrary() {
     <div ref={progressPanel} className="r-parsing-anchor"><ParsingProgress/></div>
     <section className="r-panel r-cohort" aria-busy={busy}>
       <div className="r-table-toolbar"><div><h2>{trash ? "Trash" : "CV library"} <span>{records.length}</span></h2><p>{ids.length} selected · {filtered.length} matching</p></div>
-        <div className="r-table-toolbar-actions"><div className="r-search"><Search size={16}/><input aria-label="Search CV filenames" placeholder="Search CV filenames" value={search} onChange={event => {setSearch(event.target.value); setPage(0);}}/></div>
+        <div className="r-table-toolbar-actions">
+          <div className="r-search" style={{ position: "relative" }} ref={searchWrapRef}>
+            <Search size={16}/>
+            <input
+              aria-label="Search CV filenames"
+              placeholder="Search CV filenames"
+              value={search}
+              onChange={event => {
+                setSearch(event.target.value);
+                setPage(0);
+                setSearchOpen(true);
+              }}
+              onFocus={() => { if (search.trim()) setSearchOpen(true); }}
+              onKeyDown={e => { if (e.key === "Escape") setSearchOpen(false); }}
+            />
+            {search && (
+              <button
+                type="button"
+                className="r-job-search-clear"
+                onClick={() => {
+                  setSearch("");
+                  setSearchOpen(false);
+                }}
+                aria-label="Clear file search"
+              >
+                <X size={14}/>
+              </button>
+            )}
+            {searchOpen && search.trim() && (
+              <div className="r-search-autocomplete" role="listbox">
+                {filtered.length === 0 ? (
+                  <div className="r-search-empty">No matching files found</div>
+                ) : (
+                  filtered.slice(0, 8).map(cv => (
+                    <button
+                      key={cv.id}
+                      type="button"
+                      className="r-search-item"
+                      onClick={() => {
+                        setSearch(cv.filename);
+                        setSearchOpen(false);
+                      }}
+                      role="option"
+                    >
+                      <div className="r-search-item-title">
+                        <span>{cv.filename}</span>
+                        {candidateId(cv) && <span className="r-pill success" style={{ fontSize: 10, padding: "1px 6px" }}>Parsed</span>}
+                      </div>
+                      <div className="r-search-item-meta">
+                        <span>{cv.size ? `${(cv.size / 1024).toFixed(0)} KB` : "Original file"}</span>
+                        <span>·</span>
+                        <span>{candidateId(cv) ? "Parsed profile ready" : "Awaiting parsing"}</span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           {!trash && <button className="r-button primary" disabled={busy} onClick={() => input.current?.click()}><Upload size={16}/>Import CVs</button>}
         </div>
       </div>

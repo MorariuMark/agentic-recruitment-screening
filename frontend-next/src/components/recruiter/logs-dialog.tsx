@@ -53,7 +53,11 @@ export function LogsDialog({ jobId, runId, onClose }: LogsDialogProps) {
 
   useEffect(() => {
     const el = dialog.current;
-    el?.showModal();
+    if (el && !el.open) {
+      try {
+        el.showModal();
+      } catch {}
+    }
     return () => {
       el?.close();
     };

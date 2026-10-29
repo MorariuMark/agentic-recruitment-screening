@@ -146,9 +146,25 @@ export function GhostMascot({activityKey}: {activityKey: string}) {
   }, [busy]);
   useEffect(() => {controller.current?.react("curious");}, [activityKey]);
 
+  useEffect(() => {
+    const handleReaction = (event: Event) => {
+      const custom = event as CustomEvent<{ expression?: Expression }>;
+      if (custom.detail?.expression && controller.current) {
+        controller.current.react(custom.detail.expression);
+      }
+    };
+    window.addEventListener("asap-chat-reaction", handleReaction);
+    return () => window.removeEventListener("asap-chat-reaction", handleReaction);
+  }, []);
+
   return <button ref={root} type="button" className="r-ghost" data-busy={busy}
-    aria-label="Play with ghost companion" title={busy ? "Ghost is keeping you company while work runs" : "Say hello to your ghost companion"}
-    onClick={() => controller.current?.react(playfulPool[Math.floor(Math.random() * playfulPool.length)])}>
+    aria-label="Chat with ASAP candidate screening assistant" title={busy ? "Ghost is keeping you company while work runs · Click to chat with ASAP" : "Click to chat with ASAP, your candidate screening assistant"}
+    onClick={() => {
+      controller.current?.react(playfulPool[Math.floor(Math.random() * playfulPool.length)]);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("open-asap-chat"));
+      }
+    }}>
     <span aria-hidden="true"><GhostArt id={`ghost-${id}`}/></span>
   </button>;
 }

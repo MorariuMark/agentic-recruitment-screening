@@ -37,6 +37,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  X,
   Zap,
   HardDrive,
   HelpCircle,
@@ -543,6 +544,15 @@ export function SettingsView() {
             className="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold transition-colors shrink-0 cursor-pointer"
           >
             Dismiss Alert
+          </button>
+          <button
+            type="button"
+            onClick={handleClearFallbackAlert}
+            className="p-1.5 rounded-lg hover:bg-amber-500/30 text-amber-300 hover:text-white transition-colors cursor-pointer"
+            aria-label="Close failover alert"
+            title="Close failover alert"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}

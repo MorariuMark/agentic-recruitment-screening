@@ -11,14 +11,24 @@ export function RawCVDialog({document, onClose}: {document: CVDocument; onClose:
   const text = useQuery({queryKey: ["cv-document-text", document.id], queryFn: () => api.cvDocumentText(document.id)});
   useEffect(() => {
     const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
+    if (element && !element.open) {
+      try {
+        element.showModal();
+      } catch {}
+    }
+    return () => {
+      if (element && element.open) {
+        try {
+          element.close();
+        } catch {}
+      }
+    };
   }, []);
   return <dialog ref={dialog} className="recruiter r-profile-dialog" aria-labelledby="raw-cv-title" onClose={onClose}>
     <header><div><span className="r-muted">Original CV · not parsed</span><h2 id="raw-cv-title">{document.filename}</h2></div>
-      <button className="r-icon-button" aria-label="Close original CV" onClick={() => dialog.current?.close()}><X size={20}/></button></header>
+      <button type="button" className="r-icon-button" aria-label="Close original CV" onClick={() => dialog.current?.close()}><X size={20}/></button></header>
     <div className="r-raw-cv-content">
-      {text.isPending ? <p role="status">Loading original CV text…</p> : text.error ? <div className="r-alert" role="alert">{message(text.error)}<button onClick={() => text.refetch()}>Retry</button></div>
+      {text.isPending ? <p role="status">Loading original CV text…</p> : text.error ? <div className="r-alert" role="alert">{message(text.error)}<button type="button" onClick={() => text.refetch()}>Retry</button></div>
         : <pre className="r-cv-text">{text.data?.text || "No readable text was found in this original CV."}</pre>}
     </div>
   </dialog>;

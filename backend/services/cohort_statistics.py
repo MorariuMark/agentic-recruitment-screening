@@ -34,9 +34,18 @@ async def screening_statistics(*, job_id=None, days=0, limit=25, offset=0):
         calls = {entry.id: entry.details_json for entry in logs if entry.entity_id == run.id}
         calls.update({entry["id"]: entry for entry in action_logger.get_logs(limit=0, run_id=run.id)})
         tokens = None
+        model_calls_count = len(calls)
         if calls:
             tokens = {key: sum((entry.get("tokens") or {}).get(field, 0) or 0 for entry in calls.values())
                       for key, field in (("input", "prompt"), ("output", "completion"), ("total", "total"))}
+        elif rows:
+            p_tokens = sum((r.get("deep_evaluation") or {}).get("token_usage", {}).get("prompt_tokens", 0) or 0 for r in rows)
+            c_tokens = sum((r.get("deep_evaluation") or {}).get("token_usage", {}).get("completion_tokens", 0) or 0 for r in rows)
+            t_tokens = sum((r.get("deep_evaluation") or {}).get("token_usage", {}).get("total_tokens", 0) or 0 for r in rows)
+            m_calls = sum((r.get("deep_evaluation") or {}).get("token_usage", {}).get("model_calls", 0) or 0 for r in rows)
+            if t_tokens > 0:
+                tokens = {"input": p_tokens, "output": c_tokens, "total": t_tokens}
+                model_calls_count = m_calls
         pre = payload.get("pre_screening_ms", elapsed("ranking"))
         deep = payload.get("deep_evaluation_ms", payload.get("diagnostics", {}).get("timings_ms", {}).get("deep_evaluation"))
         history.append(dict(run_id=run.id, job_id=run.job_id, job_title=payload.get("job", {}).get("title", "Job"),
@@ -44,5 +53,5 @@ async def screening_statistics(*, job_id=None, days=0, limit=25, offset=0):
             candidate_count=len(payload.get("candidate_ids", rows)),
             evaluated_count=sum(row.get("deep_status") == "completed" for row in rows),
             pre_screening_ms=pre, deep_evaluation_ms=deep,
-            total_ms=elapsed("screening_run"), tokens=tokens, model_calls=len(calls)))
+            total_ms=elapsed("screening_run"), tokens=tokens, model_calls=model_calls_count))
     return dict(history=history, total=total, has_more=offset + len(history) < total)

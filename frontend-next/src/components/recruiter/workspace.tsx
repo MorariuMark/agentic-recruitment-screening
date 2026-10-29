@@ -85,6 +85,8 @@ function EngineSelector({compact}: {compact: boolean}) {
   // Real-time cooldown inspection for active model
   const activeStatusKey = data ? `${data.active_provider}:${data.active_model}` : "";
   const activeCooldown = data?.cooldown_statuses?.[activeStatusKey];
+  const [dismissedCooldown, setDismissedCooldown] = useState(false);
+  const [dismissedFailover, setDismissedFailover] = useState(false);
 
   return <div ref={root} className={`r-engine ${compact ? "compact" : ""}`} onKeyDown={e => {if (e.key === "Escape") setOpen(false);}}>
     {compact && <button className="r-engine-launch" aria-label="Model and failover settings" aria-expanded={open} title="Model and failover settings" onClick={() => setOpen(!open)}>
@@ -125,7 +127,7 @@ function EngineSelector({compact}: {compact: boolean}) {
       </select>
 
       {/* Real-time cooldown warning banner */}
-      {activeCooldown && (
+      {activeCooldown && !dismissedCooldown && (
         <div className={activeCooldown.exhausted ? "r-engine-exhausted-warning" : "r-engine-cooldown-warning"}>
           <AlertTriangle size={13} />
           <span>
@@ -133,6 +135,37 @@ function EngineSelector({compact}: {compact: boolean}) {
               ? "Active model rate limit hit — requests auto-failover."
               : `Active model cooling down (${Math.round(activeCooldown.remaining_seconds)}s remaining).`}
           </span>
+          <button
+            type="button"
+            className="r-alert-close-btn"
+            onClick={() => setDismissedCooldown(true)}
+            aria-label="Close cooldown notification"
+            title="Close notification (X)"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      {/* Real-time failover notification banner */}
+      {(data as any)?.last_fallback_event && !dismissedFailover && (
+        <div className="r-engine-cooldown-warning" style={{ background: "rgba(245, 158, 11, 0.15)", borderColor: "rgba(245, 158, 11, 0.4)" }}>
+          <AlertTriangle size={13} />
+          <span>
+            Failover: {(data as any).last_fallback_event.from_provider} &rarr; {(data as any).last_fallback_event.to_provider}
+          </span>
+          <button
+            type="button"
+            className="r-alert-close-btn"
+            onClick={async () => {
+              setDismissedFailover(true);
+              try { await api.clearFallbackEvent(); } catch {}
+            }}
+            aria-label="Close failover alert"
+            title="Close failover alert (X)"
+          >
+            <X size={12} />
+          </button>
         </div>
       )}
 
@@ -221,6 +254,8 @@ export function RecruiterWorkspace({onLogout}: {onLogout: () => Promise<void>}) 
 
       setVersion(current => current + 1);
 
+      try { sessionStorage.removeItem("atos_workspace_session_active"); } catch {}
+
       window.scrollTo({top: 0, behavior: "instant"});
 
     } catch (error) {finishWorkspaceReset(false); throw error;}
@@ -303,15 +338,28 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
 
 
-  const initialStep = (getInitialParam("step") as Step) || "jobs";
+  const initialStep = (getInitialParam("step") as Step) || "library";
 
-  const validStep = steps.some(s => s.id === initialStep) ? initialStep : "jobs";
+  const validStep = steps.some(s => s.id === initialStep) ? initialStep : "library";
 
   const [step, setStep] = useState<Step>(validStep);
 
   const [selectedJob, setSelectedJob] = useState(() => getInitialParam("job"));
 
-  const [activeRunId, setActiveRunId] = useState(() => getInitialParam("run"));
+  const [activeRunId, setActiveRunId] = useState("");
+
+  useEffect(() => {
+    try {
+      if (!sessionStorage.getItem("atos_workspace_session_active")) {
+        sessionStorage.setItem("atos_workspace_session_active", "true");
+        setStep("library");
+        setActiveRunId("");
+        if (typeof window !== "undefined" && window.location.search) {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }
+    } catch {}
+  }, []);
 
   const [visitedJobs, setVisitedJobs] = useState<string[]>([]);
 
@@ -319,11 +367,41 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
   const [collapsed, setCollapsed] = useState(savedSidebarCollapsed);
 
+  // Listen for actions executed by ASAP Chat Assistant
+  useEffect(() => {
+    const handleScreeningStarted = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.job_id) {
+        setSelectedJob(detail.job_id);
+      }
+      if (detail?.run_id) {
+        setActiveRunId(detail.run_id);
+        setStep("verification");
+      }
+      cache.invalidateQueries({ queryKey: ["recruiter-jobs"] });
+      cache.invalidateQueries({ queryKey: ["screening-runs"] });
+    };
+
+    const handleNavigate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.target === "job" && detail?.id) {
+        setSelectedJob(detail.id);
+      }
+    };
+
+    window.addEventListener("atos-screening-started", handleScreeningStarted);
+    window.addEventListener("atos-navigate", handleNavigate);
+    return () => {
+      window.removeEventListener("atos-screening-started", handleScreeningStarted);
+      window.removeEventListener("atos-navigate", handleNavigate);
+    };
+  }, [cache]);
+
   const jobs = useQuery({queryKey: ["recruiter-jobs"], queryFn: () => api.getJobs(1000), staleTime: 0, refetchOnMount: true});
 
   const candidates = useQuery({queryKey: ["recruiter-candidates", "all"], queryFn: ({signal}) => loadCandidateCohort((limit, offset) => api.getCandidates(limit, offset, signal)), gcTime: 0});
 
-  const jobId = jobs.data?.some(j => j.id === selectedJob) ? selectedJob : freshAfter ? "" : jobs.data?.[0]?.id || "";
+  const jobId = jobs.data?.some(j => j.id === selectedJob) ? selectedJob : selectedJob ? selectedJob : jobs.data?.[0]?.id || "";
 
   const activeRunRef = useRef(activeRunId);
 
@@ -336,6 +414,19 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
   const openedJobs = [...new Set([...visitedJobs, jobId])].filter(id => id && jobs.data?.some(j => j.id === id));
 
   const [jobSearch, setJobSearch] = useState("");
+  const [jobSearchOpen, setJobSearchOpen] = useState(false);
+  const jobSearchWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (jobSearchWrapRef.current && !jobSearchWrapRef.current.contains(e.target as Node)) {
+        setJobSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
+
   const filteredJobs = useMemo(() => {
     const list = jobs.data || [];
     if (!jobSearch.trim()) return list;
@@ -354,15 +445,15 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
     queryKey: ["recruiter-run", jobId, activeRunId || ""],
 
-    queryFn: () => activeRunId ? api.screeningRun(activeRunId, jobId) : api.latestScreeningRun(jobId),
+    queryFn: () => activeRunId ? api.screeningRun(activeRunId, jobId) : null,
 
-    enabled: !!jobId,
+    enabled: !!jobId && !!activeRunId,
 
     refetchInterval: current => ["ranking", "evaluating"].includes(current.state.data?.status || "") ? 2000 : false,
 
   });
 
-  const run = runQuery.data?.job_id === jobId && (activeRunId || !freshAfter || (runQuery.data.started_at || 0) >= freshAfter) ? runQuery.data : null;
+  const run = runQuery.data?.job_id === jobId ? runQuery.data : null;
 
 
 
@@ -414,7 +505,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
       const next = params.get("step") as Step;
 
-      setStep(steps.some(s => s.id === next) ? next : "jobs");
+      setStep(steps.some(s => s.id === next) ? next : "library");
 
       setSelectedJob(params.get("job") || "");
 
@@ -576,17 +667,26 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
           <label htmlFor="active-role">Hiring for</label>
 
-          <div className="r-job-search-wrap">
+          <div className="r-job-search-wrap" ref={jobSearchWrapRef}>
             <Search size={14} className="r-job-search-icon" aria-hidden="true" />
             <input
               type="text"
               className="r-job-search-input"
               placeholder="Search jobs…"
               value={jobSearch}
-              onChange={e => setJobSearch(e.target.value)}
+              onChange={e => {
+                setJobSearch(e.target.value);
+                setJobSearchOpen(true);
+              }}
+              onFocus={() => {
+                if (jobSearch.trim()) setJobSearchOpen(true);
+              }}
               onKeyDown={e => {
                 if (e.key === "Enter" && filteredJobs.length > 0) {
                   selectJob(filteredJobs[0].id);
+                  setJobSearchOpen(false);
+                } else if (e.key === "Escape") {
+                  setJobSearchOpen(false);
                 }
               }}
               aria-label="Search jobs"
@@ -595,12 +695,49 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
               <button
                 type="button"
                 className="r-job-search-clear"
-                onClick={() => setJobSearch("")}
+                onClick={() => {
+                  setJobSearch("");
+                  setJobSearchOpen(false);
+                }}
                 title="Clear job search"
                 aria-label="Clear job search"
               >
                 <X size={12} />
               </button>
+            )}
+            {jobSearchOpen && jobSearch.trim() && (
+              <div className="r-search-autocomplete" role="listbox">
+                {filteredJobs.length === 0 ? (
+                  <div className="r-search-empty">No matching roles found</div>
+                ) : (
+                  filteredJobs.slice(0, 8).map(j => (
+                    <button
+                      key={j.id}
+                      type="button"
+                      className={`r-search-item ${j.id === jobId ? "active" : ""}`}
+                      onClick={() => {
+                        selectJob(j.id);
+                        setJobSearch("");
+                        setJobSearchOpen(false);
+                      }}
+                      role="option"
+                      aria-selected={j.id === jobId}
+                    >
+                      <div className="r-search-item-title">
+                        <span>{j.title}</span>
+                        {j.id === jobId && <span className="r-pill success" style={{ fontSize: 10, padding: "1px 6px" }}>Active</span>}
+                      </div>
+                      <div className="r-search-item-meta">
+                        <span>{j.department || "General"}</span>
+                        <span>·</span>
+                        <span>{j.location || j.work_model || "Remote"}</span>
+                        <span>·</span>
+                        <span>{j.requirements?.length || 0} criteria</span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
             )}
           </div>
 
@@ -623,24 +760,48 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
           </select>
 
-          {!!runHistoryQuery.data?.length && runHistoryQuery.data.length > 1 && (
-
-            <select aria-label="Run history" value={run?.id || ""} onChange={e => setActiveRunId(e.target.value)} title="Select past screening run">
-
-              <option value="">Latest run</option>
-
-              {runHistoryQuery.data.map(r => (
-
-                <option key={r.id} value={r.id}>
-
-                  Run: {r.created_at ? new Date(r.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : r.id.slice(0,6)} ({r.ranked_candidates} candidates)
-
+          {!!runHistoryQuery.data?.length && (
+            <div className="r-run-select-wrap">
+              <label htmlFor="active-run" className="r-run-select-label">Screening run:</label>
+              <select
+                id="active-run"
+                aria-label="Screening run selection"
+                value={activeRunId || ""}
+                onChange={e => {
+                  const newRunId = e.target.value;
+                  setActiveRunId(newRunId);
+                  if (typeof window !== "undefined") {
+                    const params = new URLSearchParams(window.location.search);
+                    if (newRunId) params.set("run", newRunId);
+                    else params.delete("run");
+                    window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+                  }
+                }}
+                title="Select past screening run or start fresh"
+                className="r-run-selector"
+              >
+                <option value="">
+                  {activeRunId ? "+ Start new fresh run" : "✦ Fresh run (Ready to screen)"}
                 </option>
-
-              ))}
-
-            </select>
-
+                {runHistoryQuery.data.map((r, idx) => {
+                  let dateStr = r.id.slice(0, 8);
+                  if (r.created_at) {
+                    const d = new Date(r.created_at);
+                    if (!isNaN(d.getTime())) {
+                      dateStr = d.toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+                    }
+                  }
+                  const statusStr = r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1) : "Completed";
+                  const evalStr = r.deep_completed > 0 ? `, ${r.deep_completed} deep` : "";
+                  const isSelected = r.id === activeRunId;
+                  return (
+                    <option key={r.id} value={r.id}>
+                      {`Past run: ${dateStr} · ${statusStr} (${r.ranked_candidates} candidates${evalStr})${isSelected ? " (Active)" : ""}`}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
           )}
 
           <span>{run?.shortlist_ids.length || 0} in comparison <span className="r-dot">/</span> {approved} approved for interview</span>
@@ -699,11 +860,13 @@ function CandidateWorkspace({jobId, activeRunId, freshAfter, visible, step, cand
 
 }) {
 
-  const query = useQuery({queryKey: ["recruiter-run", jobId, activeRunId || ""], queryFn: () => activeRunId ? api.screeningRun(activeRunId, jobId) : api.latestScreeningRun(jobId),
+  const query = useQuery({queryKey: ["recruiter-run", jobId, activeRunId || ""], queryFn: () => activeRunId ? api.screeningRun(activeRunId, jobId) : null,
+
+    enabled: !!jobId && !!activeRunId,
 
     refetchInterval: current => ["ranking", "evaluating"].includes(current.state.data?.status || "") ? 2000 : false});
 
-  const run = query.data?.job_id === jobId && (activeRunId || !freshAfter || (query.data.started_at || 0) >= freshAfter) ? query.data : null;
+  const run = query.data?.job_id === jobId ? query.data : null;
 
   const prevStatus = useRef(run?.status);
 

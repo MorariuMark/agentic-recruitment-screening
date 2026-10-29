@@ -52,7 +52,12 @@ export function StatisticsDialog({onClose}: {onClose: () => void}) {
   const actions = useQuery({queryKey: ["operation-statistics", days, operation, jobId, batchId, runId, offset],
     queryFn: () => api.operationStatistics({days, operation, job_id: jobId, batch_id: batchId, run_id: runId, offset}), refetchInterval: 5000});
   useEffect(() => {
-    const element = dialog.current; element?.showModal();
+    const element = dialog.current;
+    if (element && !element.open) {
+      try {
+        element.showModal();
+      } catch {}
+    }
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => {element?.close(); clearInterval(interval);};
   }, []);

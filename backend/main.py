@@ -186,6 +186,8 @@ from backend.api.cv_library import router as cv_library_router
 app.include_router(cv_library_router)
 from backend.api.recruiter import auth_router
 app.include_router(auth_router)
+from backend.api.asap_chat import router as asap_chat_router
+app.include_router(asap_chat_router)
 
 
 # ---------------------------------------------------------------------------

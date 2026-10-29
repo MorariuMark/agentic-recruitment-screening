@@ -55,8 +55,22 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
 
   useEffect(() => {
     const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
+    if (element && !element.open) {
+      try {
+        element.showModal();
+      } catch {
+        // Element may already be open
+      }
+    }
+    return () => {
+      if (element && element.open) {
+        try {
+          element.close();
+        } catch {
+          // Ignore
+        }
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -123,7 +137,7 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
           <span className="r-muted">Candidate profile</span>
           <h2 id="candidate-title">{profile.data?.masked_name || "Candidate"}</h2>
         </div>
-        <button className="r-icon-button" aria-label="Close profile" onClick={onClose}>
+        <button type="button" className="r-icon-button" aria-label="Close profile" onClick={onClose}>
           <X size={20} />
         </button>
       </header>
@@ -264,6 +278,7 @@ export function ProfileDialog({ id, row, initialQuote, onClose }: ProfileDialogP
             <details className="r-profile-section">
               <summary>Export profile</summary>
               <button
+                type="button"
                 className="r-button"
                 onClick={() =>
                   downloadJson(profile.data?.parsed_cv, `candidate-${id}.json`)

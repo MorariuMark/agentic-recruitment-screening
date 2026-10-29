@@ -10,6 +10,7 @@ import {
   Users2,
 } from "lucide-react";
 import { ModelSelector } from "./model-selector";
+import { GhostMascot } from "@/components/recruiter/ghost-mascot";
 import { useTheme } from "@/components/providers/theme-provider";
 
 export type NavTab = "library" | "pipeline" | "requisitions" | "comparison" | "evaluation" | "interview" | "settings";
@@ -77,6 +78,15 @@ export function Sidebar({
   return (
     <aside className="w-72 border-r border-slate-800 bg-slate-950 flex flex-col justify-between shrink-0 select-none animate-in slide-in-from-left duration-200">
       <div className="p-3 pt-3 space-y-3">
+        {/* Brand with Animated Face SVG in Top Left Corner */}
+        <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-900/80">
+          <GhostMascot activityKey={`admin:${activeTab}`} />
+          <div className="flex flex-col">
+            <span className="font-black italic text-lg tracking-tight text-white skew-x-[-4deg] leading-none">ASAP</span>
+            <span className="text-[10px] text-slate-400 font-medium">Candidate Screening Agent</span>
+          </div>
+        </div>
+
         {/* Model Selector at Top of Sidebar */}
         <div className="pb-1 border-b border-slate-900/80">
           <ModelSelector

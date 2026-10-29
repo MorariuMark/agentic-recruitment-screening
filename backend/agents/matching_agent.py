@@ -451,11 +451,12 @@ class MatchingAgent:
         # 4. Invoke LLM structured generation
         effective_client = override_client or self.llm_client
         if hasattr(effective_client, "set_action_context"):
+            exec_ctx = getattr(self, "execution_context", {}) or {}
             effective_client.set_action_context(
                 "candidate_evaluation",
                 metadata={
-                    **getattr(self, "execution_context", {}),
-                    "job_id": str(getattr(self, "job_id", "")),
+                    **exec_ctx,
+                    "job_id": str(exec_ctx.get("job_id") or getattr(self, "job_id", "") or ""),
                     "candidate_id": str(candidate.candidate_id) if candidate else None,
                     "requirement_id": str(requirement.id),
                     "requirement_title": requirement.title,

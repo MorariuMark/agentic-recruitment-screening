@@ -239,15 +239,34 @@ class ActionLogger:
         from sqlalchemy import select
         entries = self.get_logs(limit=0, run_id=run_id)
         if not entries:
+            entries = [e for e in self.get_all_logs() if e.get("metadata", {}).get("run_id") == str(run_id)]
+        if not entries:
             return
         async with async_session_scope() as db:
-            known = set((await db.scalars(select(AuditLogModel.id).where(
-                AuditLogModel.id.in_([entry["id"] for entry in entries])))).all())
+            candidate_ids = []
             for entry in entries:
-                if entry["id"] not in known:
-                    db.add(AuditLogModel(id=entry["id"], entity_type="screening_run",
-                        entity_id=run_id, action="model_call", details_json=entry,
-                        created_at=datetime.fromisoformat(entry["timestamp"])))
+                eid = str(entry.get("id") or "")
+                if len(eid) > 36 or not eid:
+                    eid = str(uuid.uuid5(uuid.NAMESPACE_DNS, eid or str(uuid.uuid4())))
+                candidate_ids.append(eid)
+            known = set((await db.scalars(select(AuditLogModel.id).where(
+                AuditLogModel.id.in_(candidate_ids)))).all())
+            for idx, entry in enumerate(entries):
+                eid = candidate_ids[idx]
+                if eid not in known:
+                    ts_val = entry.get("timestamp")
+                    try:
+                        created_dt = datetime.fromisoformat(ts_val) if isinstance(ts_val, str) else datetime.now(timezone.utc)
+                    except Exception:
+                        created_dt = datetime.now(timezone.utc)
+                    db.add(AuditLogModel(
+                        id=eid,
+                        entity_type="screening_run",
+                        entity_id=run_id,
+                        action="model_call",
+                        details_json=entry,
+                        created_at=created_dt,
+                    ))
             await db.commit()
 
     def get_all_logs(self) -> List[Dict[str, Any]]:
