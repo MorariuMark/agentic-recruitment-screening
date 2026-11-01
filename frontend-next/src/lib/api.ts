@@ -39,22 +39,32 @@ export interface ActiveProgressState {
   token_usage?: any;
 }
 
+const isLocalhostHost = (host: string): boolean => {
+  if (!host) return true;
+  return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.startsWith("192.168.") || host.startsWith("10.") || host.endsWith(".local");
+};
+
 const getApiBase = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
+  }
   if (typeof window !== "undefined") {
-    // In browser: dynamically target the FastAPI backend directly on port 8000 matching the current host
-    // (localhost vs 127.0.0.1) so requests bypass Next.js dev server rewrite proxy completely.
-    // This eliminates dev-proxy socket ECONNRESET crashes and unwanted HMR full page reloads.
-    if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
-    }
+    // In browser: dynamically target the FastAPI backend directly on port 8000 only when running
+    // locally on localhost / 127.0.0.1 to avoid dev server proxy drops.
+    // In any cloud or production deployment (Render, Hugging Face, custom domain), port 8000 is NOT
+    // exposed to the internet. We MUST use relative paths ("") so all API requests route through
+    // the Next.js rewrite proxy on HTTPS port 443.
     const host = window.location.hostname || "127.0.0.1";
-    return `http://${host}:8000`;
+    if (isLocalhostHost(host)) {
+      return `http://${host}:8000`;
+    }
+    return "";
   }
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
   }
   // Server-side (SSR / Node.js) default to direct local backend
-  return "http://127.0.0.1:8000";
+  return process.env.BACKEND_API_URL || "http://127.0.0.1:8000";
 };
 
 const API_BASE = getApiBase();
@@ -90,13 +100,17 @@ class ApiClient {
     // Determine primary URL and fallback URL:
     // Direct FastAPI communication is primary to avoid Next.js dev server proxy drops / ECONNRESET.
     // The relative endpoint (Next.js rewrite proxy) acts as the resilient fallback.
+    const host = typeof window !== "undefined" ? (window.location.hostname || "127.0.0.1") : "127.0.0.1";
+    const isLocal = isLocalhostHost(host);
     const directBackendUrl = typeof window !== "undefined"
-      ? (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || `http://${window.location.hostname || "127.0.0.1"}:8000`)
-      : (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://127.0.0.1:8000");
+      ? (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || (isLocal ? `http://${host}:8000` : ""))
+      : (process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || process.env.BACKEND_API_URL || "http://127.0.0.1:8000");
 
     let primaryUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://")
       ? endpoint
-      : `${this.base || directBackendUrl}${endpoint}`;
+      : sameOrigin || !isLocal
+        ? endpoint
+        : `${this.base || directBackendUrl}${endpoint}`;
     let fallbackUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://")
       ? endpoint
       : endpoint;

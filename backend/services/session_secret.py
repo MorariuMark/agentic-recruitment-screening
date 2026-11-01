@@ -21,8 +21,11 @@ def load_or_create_session_secret(filename: str) -> str:
                 os.fsync(stream.fileno())
             try:
                 os.link(temporary, path)
-            except FileExistsError:
-                pass
+            except (FileExistsError, OSError):
+                try:
+                    os.replace(temporary, path)
+                except Exception:
+                    pass
         except OSError as error:
             raise RuntimeError("Cannot persist the session signing key. Set AUTH_SECRET_KEY or a writable AUTH_SECRET_FILE.") from error
         finally:
