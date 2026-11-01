@@ -1,3 +1,13 @@
+---
+title: Agentic Recruitment Screening
+emoji: 🎯
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Autonomous Agentic Recruitment & Screening Platform
 ### Enterprise-Ready Human-in-the-Loop AI Talent Intelligence Engine
 

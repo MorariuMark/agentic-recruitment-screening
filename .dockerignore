@@ -1,0 +1,37 @@
+.git
+.gitignore
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+scratch/
+.code-review-graph/
+
+# Local databases & logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+data/screening.db
+data/screening.db*
+data/test_pytest_isolated.db*
+data/chroma_db_pytest/
+data/chroma_db_test/
+data/test_chroma/
+data/.auth_session_secret
+
+# Node / Next.js local artifacts
+node_modules/
+frontend-next/node_modules/
+frontend-next/.next/
+frontend-next/.env.local
+frontend/node_modules/
+
+# Secrets
+.env
