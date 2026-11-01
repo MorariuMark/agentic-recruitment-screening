@@ -458,6 +458,7 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
   const loadLatestRunForJob = async () => {
     if (!jobId) return;
     try {
+      cache.removeQueries({queryKey: ["recruiter-run", jobId]});
       const latest = await api.latestScreeningRun(jobId);
       if (latest && latest.job_id === jobId) {
         updateRun(latest);
@@ -847,7 +848,7 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
             {message(error)}{" "}
             <button onClick={() => {jobs.refetch(); candidates.refetch(); if (activeRunId) runQuery.refetch();}}>Retry</button>
             {jobId && <button onClick={() => void loadLatestRunForJob()}>Load latest run for this role</button>}
-            <button onClick={() => { setActiveRunId(""); }} style={{ marginLeft: "auto", opacity: 0.8 }}>Dismiss</button>
+            <button onClick={() => { setActiveRunId(""); cache.removeQueries({queryKey: ["recruiter-run", jobId]}); }} style={{ marginLeft: "auto", opacity: 0.8 }}>Dismiss</button>
           </div>
         )}
 

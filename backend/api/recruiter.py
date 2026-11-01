@@ -275,20 +275,25 @@ async def read_run(run_id: UUID | str) -> dict:
         except HTTPException:
             raise
         except Exception as e:
-            if attempt < 3:
-                await asyncio.sleep(0.1 * (attempt + 1))
+            if attempt < 4:
+                await asyncio.sleep(0.2 * (attempt + 1))
                 continue
-            logger.error("Failed to read screening run %s: %s", run_id_str, e)
-            raise HTTPException(500, f"Error reading screening run: {e}")
+            logger.warning("Failed to read screening run %s from DB (attempt %d): %s", run_id_str, attempt + 1, e)
+            if run_id_str in _active_runs:
+                return copy.deepcopy(_active_runs[run_id_str])
+            raise HTTPException(503, f"Database busy reading screening run: {e}. Please retry.")
 
 
-async def save_run(payload: dict):
+async def save_run(payload: dict, persist_to_db: bool = True):
     if not payload or not payload.get("id"):
         return
     run_id = str(payload["id"])
     _active_runs[run_id] = copy.deepcopy(payload)
 
-    for attempt in range(4):
+    if not persist_to_db:
+        return
+
+    for attempt in range(5):
         try:
             async with async_session_scope() as db:
                 record = await db.get(ScreeningRunModel, run_id)
@@ -301,10 +306,10 @@ async def save_run(payload: dict):
                 await db.commit()
             break
         except Exception as e:
-            if attempt < 3:
-                await asyncio.sleep(0.15 * (attempt + 1))
+            if attempt < 4:
+                await asyncio.sleep(0.2 * (attempt + 1))
             else:
-                logger.warning("save_run failed after 4 attempts for %s: %s", run_id, e)
+                logger.warning("save_run failed after 5 attempts for %s: %s", run_id, e)
 
 
 async def recover_interrupted_runs():
@@ -346,18 +351,20 @@ async def hybrid_rank(payload, candidates, job, embedding_fn):
         rows = await asyncio.to_thread(engine.rank, candidates, job, payload.get("evidence_per_requirement", 3))
         rebuilt_cache = True
         engine.diagnostics["warnings"].append("Invalid evidence cache rebuilt from source profiles.")
-    try:
-        async with async_session_scope() as db:
-            existing_keys = {record.key for record in cached}
-            for key, value in engine.cache_updates.items():
-                if key not in existing_keys:
-                    db.add(ScreeningFeatureCacheModel(key=key, payload=value))
-                elif rebuilt_cache:
-                    await db.merge(ScreeningFeatureCacheModel(key=key, payload=value))
-            await db.commit()
-    except Exception:
-        # Cache contention must not fail an otherwise valid screening run.
-        engine.diagnostics["warnings"].append("Evidence cache write skipped; ranking results are unaffected.")
+    is_cloud_container = bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1")
+    if not is_cloud_container and engine.embedding_fn:
+        try:
+            async with async_session_scope() as db:
+                existing_keys = {record.key for record in cached}
+                for key, value in engine.cache_updates.items():
+                    if key not in existing_keys:
+                        db.add(ScreeningFeatureCacheModel(key=key, payload=value))
+                    elif rebuilt_cache:
+                        await db.merge(ScreeningFeatureCacheModel(key=key, payload=value))
+                await db.commit()
+        except Exception:
+            # Cache contention must not fail an otherwise valid screening run.
+            engine.diagnostics["warnings"].append("Evidence cache write skipped; ranking results are unaffected.")
     is_cloud_container = bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1")
     if is_cloud_container:
         engine.diagnostics["reranker_fallback"] = True
@@ -471,7 +478,7 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             cand_name = getattr(cand_profile, "masked_name", None) or row.get("candidate_name") or f"Candidate {row['candidate_id'][:8]}"
             payload["active_candidate_id"] = row["candidate_id"]
             payload["phase"] = f"Evaluating {cand_name} ({eval_idx + 1}/{len(eval_rows)})"
-            await save_run(payload)
+            await save_run(payload, persist_to_db=False)
             while True:
                 agent.resume_matches = [RequirementMatch.model_validate(match) for match in row.get("deep_requirement_matches", [])]
                 agent.completed_matches = []
@@ -497,7 +504,7 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                     if delay > min(provider_wait_remaining, 30):
                         break
                     payload["phase"] = f"Waiting for AI providers; retrying unfinished criteria in {delay:.0f}s"
-                    await save_run(payload)
+                    await save_run(payload, persist_to_db=False)
                     await _wait_for_evaluation_provider(delay)
                     provider_wait_remaining -= delay
                     row.update(deep_status="pending", error=None, retry_after=None)
@@ -668,15 +675,15 @@ async def get_run(run_id: UUID, job_id: UUID | None = None):
 @router.get("/screening/jobs/{job_id}/latest")
 async def latest_run(job_id: UUID):
     job_id_str = str(job_id)
-    # Check in-memory active runs first
+    # Check in-memory active runs first - prioritize completed/partial runs
     for r in reversed(list(_active_runs.values())):
-        if r.get("job_id") == job_id_str:
+        if r.get("job_id") == job_id_str and r.get("status") in {"completed", "evaluating", "ranking", "partial"}:
             payload = copy.deepcopy(r)
-            if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+            if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(row.get("deep_status") == "completed" for row in payload["rows"]):
                 payload["rows"] = sort_screening_rows(payload["rows"])
             return payload
 
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             async with async_session_scope() as db:
                 record = await db.scalar(
@@ -688,14 +695,15 @@ async def latest_run(job_id: UUID):
                 if not record or not record.payload:
                     return None
                 payload = copy.deepcopy(record.payload)
-                if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+                if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(row.get("deep_status") == "completed" for row in payload["rows"]):
                     payload["rows"] = sort_screening_rows(payload["rows"])
                 _active_runs[payload.get("id", "")] = copy.deepcopy(payload)
                 return payload
-        except Exception:
-            if attempt < 2:
-                await asyncio.sleep(0.1)
+        except Exception as e:
+            if attempt < 4:
+                await asyncio.sleep(0.2 * (attempt + 1))
                 continue
+            logger.warning("latest_run DB query failed for job %s: %s", job_id_str, e)
             return None
 
 
