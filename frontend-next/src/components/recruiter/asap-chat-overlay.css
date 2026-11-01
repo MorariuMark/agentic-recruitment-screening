@@ -522,8 +522,8 @@
 
 .asap-minimized-ghost-wrapper {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -532,38 +532,38 @@
 
 /* Reduced faint ambient glow on the ghost PNG */
 .asap-minimized-ghost-img {
-  width: 56px;
-  height: 56px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
-  filter: drop-shadow(0 0 5px rgba(165, 204, 255, 0.4)) drop-shadow(0 0 12px rgba(59, 130, 246, 0.22));
+  filter: drop-shadow(0 0 4px rgba(165, 204, 255, 0.4)) drop-shadow(0 0 8px rgba(59, 130, 246, 0.22));
   pointer-events: none;
   transition: filter 0.2s ease, transform 0.2s ease;
 }
 
 .asap-minimized-floating:hover .asap-minimized-ghost-img {
-  filter: drop-shadow(0 0 8px rgba(191, 219, 254, 0.55)) drop-shadow(0 0 16px rgba(59, 130, 246, 0.32));
+  filter: drop-shadow(0 0 6px rgba(191, 219, 254, 0.55)) drop-shadow(0 0 12px rgba(59, 130, 246, 0.32));
 }
 
 /* Status point: green when active, red when inactive */
 .asap-minimized-status-dot {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 11px;
-  height: 11px;
+  bottom: 0px;
+  right: 0px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 2px solid #0b0f19;
+  border: 1.5px solid #0b0f19;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .asap-minimized-status-dot.active {
   background: #10b981;
-  box-shadow: 0 0 6px #10b981;
+  box-shadow: 0 0 5px #10b981;
 }
 
 .asap-minimized-status-dot.inactive {
   background: #ef4444;
-  box-shadow: 0 0 6px #ef4444;
+  box-shadow: 0 0 5px #ef4444;
 }
 
 /* Session count bubble badge */
@@ -571,20 +571,20 @@
   position: absolute;
   top: -3px;
   right: -3px;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 4px;
-  border-radius: 10px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
   background: #2563eb;
-  border: 2px solid #0b0f19;
+  border: 1.5px solid #0b0f19;
   color: #ffffff;
-  font-size: 10.5px;
+  font-size: 8.5px;
   font-weight: 700;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 

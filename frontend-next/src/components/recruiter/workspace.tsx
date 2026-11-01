@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { BriefcaseBusiness, FileCheck2, Columns3, MessagesSquare, LogOut, ChevronRight, Cpu, Menu, X, ChartNoAxesColumn, RotateCcw, RefreshCw, ScrollText, Terminal, AlertTriangle, Zap, Search } from "lucide-react";
+import { BriefcaseBusiness, FileCheck2, Columns3, MessagesSquare, LogOut, ChevronRight, Cpu, Menu, X, ChartNoAxesColumn, RotateCcw, RefreshCw, ScrollText, Terminal, AlertTriangle, Zap, Search, ShieldCheck } from "lucide-react";
 import { LiveLLMDebugModal } from "@/components/layout/live-llm-debug-modal";
 
 import { beginWorkspaceReset, finishWorkspaceReset, clearWorkspaceSession, freshWorkspaceAfter } from "@/lib/workspace-session";
@@ -222,7 +222,7 @@ function savedSidebarCollapsed() {
 
 
 
-export function RecruiterWorkspace({onLogout}: {onLogout: () => Promise<void>}) {
+export function RecruiterWorkspace({onLogout, onSwitchToAdmin}: {onLogout: () => Promise<void>; onSwitchToAdmin?: () => Promise<void>}) {
 
   const cache = useQueryClient();
 
@@ -262,13 +262,13 @@ export function RecruiterWorkspace({onLogout}: {onLogout: () => Promise<void>}) 
 
   };
 
-  return <ActivityProvider key={version}><RecruiterWorkspaceContent onLogout={onLogout} onReset={reset} freshAfter={freshAfter}/></ActivityProvider>;
+  return <ActivityProvider key={version}><RecruiterWorkspaceContent onLogout={onLogout} onSwitchToAdmin={onSwitchToAdmin} onReset={reset} freshAfter={freshAfter}/></ActivityProvider>;
 
 }
 
 
 
-function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: () => Promise<void>; onReset: () => Promise<void>; freshAfter: number}) {
+function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAfter}: {onLogout: () => Promise<void>; onSwitchToAdmin?: () => Promise<void>; onReset: () => Promise<void>; freshAfter: number}) {
 
   const resetTimers = useResetTimers();
   const workspaceBusy = useWorkspaceActivity();
@@ -628,7 +628,7 @@ function RecruiterWorkspaceContent({onLogout, onReset, freshAfter}: {onLogout: (
 
         {resetError && <p className="r-inline-error" role="alert">{resetError}</p>}
 
-      <div className="r-profile"><span className="r-avatar">R</span><div><strong>Recruiter</strong><small>User workspace</small></div><button onClick={onLogout} title="Sign out" aria-label="Sign out"><LogOut size={18}/></button></div>
+      <div className="r-profile"><span className="r-avatar">R</span><div><strong>Recruiter</strong><small>User workspace</small></div>{onSwitchToAdmin && <button type="button" onClick={onSwitchToAdmin} title="Switch to Admin workspace" aria-label="Switch to Admin workspace"><ShieldCheck size={18}/></button>}<button onClick={onLogout} title="Sign out" aria-label="Sign out"><LogOut size={18}/></button></div>
 
       </div>
 

@@ -20,7 +20,24 @@ const pipelineSteps = [
 
 export default function Home() {
   const cache = useQueryClient();
-  const session = useQuery({queryKey: ["workspace-session"], queryFn: () => api.session(), retry: false, refetchOnReconnect: false});
+  const session = useQuery({
+    queryKey: ["workspace-session"],
+    queryFn: async () => {
+      const res = await api.session();
+      if (res?.role) return res;
+      if (typeof window !== "undefined" && sessionStorage.getItem("atos_logged_out") === "true") {
+        return { role: null };
+      }
+      try {
+        const auto = await api.login("user", "");
+        return auto;
+      } catch {
+        return { role: null };
+      }
+    },
+    retry: false,
+    refetchOnReconnect: false
+  });
   const [sessionExpired, setSessionExpired] = useState(false);
   const [fadingLogin, setFadingLogin] = useState(false);
 
@@ -45,14 +62,18 @@ export default function Home() {
   async function logout() {
     setBusy(true);
     try {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("atos_logged_out", "true");
+        sessionStorage.removeItem("atos_token");
+        sessionStorage.removeItem("atos_workspace_session_active");
+      }
       await api.logout();
       setSessionExpired(false);
       setFadingLogin(false);
-      try { sessionStorage.removeItem("atos_workspace_session_active"); } catch {}
       if (typeof window !== "undefined" && window.location.search) {
         window.history.replaceState(null, "", window.location.pathname);
       }
-      cache.clear();
+      cache.setQueryData(["workspace-session"], { role: null });
       setPassword("");
       setError("");
     } catch (e) {
@@ -67,6 +88,9 @@ export default function Home() {
     setBusy(true);
     setError("");
     try {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("atos_logged_out");
+      }
       const value = await api.login(role, password);
       try { sessionStorage.removeItem("atos_workspace_session_active"); } catch {}
       if (typeof window !== "undefined" && window.location.search) {
@@ -76,6 +100,22 @@ export default function Home() {
       cache.setQueryData(["workspace-session"], value);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to sign in.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function switchToRole(newRole: "admin" | "user") {
+    setBusy(true);
+    setError("");
+    try {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("atos_logged_out");
+      }
+      const value = await api.login(newRole, "");
+      cache.setQueryData(["workspace-session"], value);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to switch workspace.");
     } finally {
       setBusy(false);
     }
@@ -147,7 +187,25 @@ export default function Home() {
       <>
         <div className="r-workspace-enter">
           <AdminWorkspace />
-          <button className="r-admin-exit" onClick={logout} disabled={busy}><LogOut size={16}/> Sign out of Admin</button>
+          <div className="r-admin-actions-bar">
+            <button
+              type="button"
+              className="r-admin-switch"
+              onClick={() => switchToRole("user")}
+              disabled={busy}
+              title="Open Recruiter Candidate Screening Workspace"
+            >
+              <Users size={16}/> Go to Recruiter Workspace
+            </button>
+            <button
+              type="button"
+              className="r-admin-exit"
+              onClick={logout}
+              disabled={busy}
+            >
+              <LogOut size={16}/> Sign out of Admin
+            </button>
+          </div>
           {error && <div className="r-admin-error" role="alert">{error}</div>}
           {reauthentication}
         </div>
@@ -161,7 +219,7 @@ export default function Home() {
     return (
       <>
         <div className="r-workspace-enter">
-          <RecruiterWorkspace onLogout={logout} />
+          <RecruiterWorkspace onLogout={logout} onSwitchToAdmin={() => switchToRole("admin")} />
           {reauthentication}
         </div>
         <AsapChatOverlay />
@@ -211,7 +269,7 @@ export default function Home() {
               </label>
             ))}
           </fieldset>
-          <label className="r-field">Password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>
+          <label className="r-field">Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password optional (auth disabled)"/></label>
           {(error || session.isError) && <div className="r-alert" role="alert">{error || "Cannot connect to the backend. Start the API and try signing in again."}</div>}
           <button className="r-button primary r-login-submit" disabled={busy}>{busy ? "Signing in…" : "Open workspace"}<ArrowRight size={18}/></button>
         </form>

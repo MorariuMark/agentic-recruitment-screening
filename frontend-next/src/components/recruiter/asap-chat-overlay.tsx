@@ -163,8 +163,8 @@ export function AsapChatOverlay({
   // Center/clamp initial position
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const defaultX = Math.max(20, Math.min(window.innerWidth - 430, 270));
-      const defaultY = Math.max(20, Math.min(window.innerHeight - 600, 75));
+      const defaultX = Math.max(20, window.innerWidth - 50);
+      const defaultY = 16;
       setPosition({ x: defaultX, y: defaultY });
     }
   }, []);
@@ -261,7 +261,7 @@ export function AsapChatOverlay({
       minDragStartRef.current.moved = true;
     }
 
-    const maxX = Math.max(0, window.innerWidth - 130);
+    const maxX = Math.max(0, window.innerWidth - 44);
     const maxY = Math.max(0, window.innerHeight - 60);
 
     const nextX = Math.max(10, Math.min(maxX, minDragStartRef.current.startX + deltaX));

@@ -92,20 +92,12 @@ async def cohort_statistics(job_id: UUID | None = None, days: int = Query(defaul
 
 class LoginRequest(BaseModel):
     role: Literal["admin", "user"]
-    password: str
+    password: str = ""
 
 
 @auth_router.post("/auth/login")
 async def login(payload: LoginRequest, response: Response):
     from backend.api.auth import create_session_token
-    # Role-based credential verification (E4)
-    expected_pw = settings.auth_admin_password if payload.role == "admin" else settings.auth_user_password
-    matched = secrets.compare_digest(payload.password, expected_pw)
-    if not matched and settings.auth_demo_mode:
-        matched = secrets.compare_digest(payload.password, "1234")
-    if not matched:
-        raise HTTPException(401, "Incorrect password. Try again.")
-
     token = create_session_token(payload.role)
     response.set_cookie("atos_workspace", token, httponly=True, samesite="lax", max_age=43200)
     return {"role": payload.role, "token": token}
@@ -113,7 +105,17 @@ async def login(payload: LoginRequest, response: Response):
 
 @auth_router.get("/auth/session")
 async def session(atos_workspace: str | None = Cookie(None), authorization: str | None = Header(None)):
-    return {"role": "admin", "token": "admin_session_token"}
+    from backend.api.auth import verify_session_token
+    token = atos_workspace
+    if not token and authorization:
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        else:
+            token = authorization.strip()
+    user = verify_session_token(token or "")
+    if user:
+        return {"role": user.get("role"), "token": token}
+    return {"role": None}
 
 
 @auth_router.post("/auth/logout")
