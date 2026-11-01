@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: agentic-recruitment-screening
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 7860
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: AUTH_DEMO_MODE
+        value: "true"
+      - key: AUTH_ADMIN_PASSWORD
+        sync: false
