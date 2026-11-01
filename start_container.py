@@ -145,46 +145,16 @@ def main():
     signal.signal(signal.SIGTERM, shutdown_children)
     signal.signal(signal.SIGINT, shutdown_children)
 
-    # 2. Launch FastAPI Backend on 127.0.0.1:8000
-    print("[Supervisor] Launching FastAPI backend on 127.0.0.1:8000...", flush=True)
-    backend_proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "backend.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8000",
-        ]
-    )
+    # 2. Select non-colliding backend port (avoid primary_port)
+    backend_port = 8000 if primary_port != 8000 else 8088
+    backend_url = f"http://127.0.0.1:{backend_port}"
 
-    # 3. Wait for Backend /health readiness
-    health_url = "http://127.0.0.1:8000/health"
-    print("[Supervisor] Polling backend health endpoint...", flush=True)
-    max_wait_seconds = 60
-    start_time = time.time()
-    backend_ready = False
-
-    while time.time() - start_time < max_wait_seconds:
-        if backend_proc.poll() is not None:
-            print(f"[Supervisor] Backend process exited unexpectedly with code {backend_proc.returncode}!", flush=True)
-            sys.exit(1)
-        if is_service_healthy(health_url):
-            backend_ready = True
-            print(f"[Supervisor] FastAPI backend is healthy ({time.time() - start_time:.1f}s)!", flush=True)
-            break
-        time.sleep(1)
-
-    if not backend_ready:
-        print("[Supervisor] Backend failed to become healthy within timeout. Continuing anyway...", flush=True)
-
-    # 4. Launch Next.js Frontend on 0.0.0.0:{primary_port}
+    # 3. Launch Next.js Frontend immediately so public port 10000 opens in seconds
     print(f"[Supervisor] Launching Next.js frontend on 0.0.0.0:{primary_port}...", flush=True)
     frontend_env = os.environ.copy()
     frontend_env["PORT"] = str(primary_port)
-    frontend_env["BACKEND_API_URL"] = "http://127.0.0.1:8000"
+    frontend_env["BACKEND_API_URL"] = backend_url
+    frontend_env["NODE_OPTIONS"] = "--max-old-space-size=128"
 
     frontend_dir = Path("./frontend-next")
     frontend_proc = subprocess.Popen(
@@ -202,11 +172,53 @@ def main():
         env=frontend_env,
     )
 
-    # 5. Start auxiliary port forwarders so all cloud platforms route successfully
+    # 4. Start auxiliary port forwarders so all cloud platforms route successfully
     candidate_ports = [10000, 7860, 8080]
     for p in candidate_ports:
         if p != primary_port:
             start_port_forwarder(p, primary_port)
+
+    # 5. Launch FastAPI Backend with low-memory thread tuning
+    print(f"[Supervisor] Launching FastAPI backend on 127.0.0.1:{backend_port}...", flush=True)
+    backend_env = os.environ.copy()
+    backend_env["OMP_NUM_THREADS"] = "1"
+    backend_env["OPENBLAS_NUM_THREADS"] = "1"
+    backend_env["MKL_NUM_THREADS"] = "1"
+    backend_env["DISABLE_RERANKER_WARMUP"] = "1"
+    backend_proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(backend_port),
+        ],
+        env=backend_env,
+    )
+
+    # 6. Monitor Backend /health readiness
+    health_url = f"{backend_url}/health"
+    print("[Supervisor] Polling backend health endpoint...", flush=True)
+    max_wait_seconds = 60
+    start_time = time.time()
+    backend_ready = False
+
+    while time.time() - start_time < max_wait_seconds:
+        if backend_proc.poll() is not None:
+            print(f"[Supervisor] Backend process exited unexpectedly with code {backend_proc.returncode}!", flush=True)
+            shutdown_children()
+            sys.exit(1)
+        if is_service_healthy(health_url):
+            backend_ready = True
+            print(f"[Supervisor] FastAPI backend is healthy ({time.time() - start_time:.1f}s)!", flush=True)
+            break
+        time.sleep(1)
+
+    if not backend_ready:
+        print("[Supervisor] Backend failed to become healthy within timeout. Continuing anyway...", flush=True)
 
     print("[Supervisor] Both services are running. Monitoring container...", flush=True)
 

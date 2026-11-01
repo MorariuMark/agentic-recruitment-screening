@@ -3,6 +3,16 @@ backend/main.py
 FastAPI application entry point for the Agentic Recruitment Screening system.
 Configures CORS, OpenTelemetry / Arize Phoenix instrumentation, and mounts API routers.
 """
+import os
+try:
+    import torch
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
+
 
 from contextlib import asynccontextmanager
 import logging
@@ -73,21 +83,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from backend.services.vector_store import get_cached_embedding_function
         from backend.schemas.models_catalog import sync_all_local_models
         from backend.services.ollama_service import OllamaService
-        asyncio.create_task(asyncio.to_thread(get_cached_embedding_function))
-        asyncio.create_task(asyncio.to_thread(sync_all_local_models))
-        asyncio.create_task(asyncio.to_thread(OllamaService().get_hardware_profile))
-        from backend.api.recruiter import _RERANKER_EXECUTOR
-        from backend.services.screening_reranker import get_reranker
 
-        async def warm_reranker():
-            try:
-                await asyncio.get_running_loop().run_in_executor(_RERANKER_EXECUTOR, get_reranker)
-                logger.info("Local screening reranker is ready.")
-            except Exception as error:
-                logger.info("Reranker pre-warming skipped; hybrid fallback remains available: %s", error)
+        is_cloud_container = bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1")
 
-        reranker_warmup = asyncio.create_task(warm_reranker())
-        logger.info("Dispatched background pre-warming for local models and vector embedding model.")
+        if not is_cloud_container:
+            asyncio.create_task(asyncio.to_thread(get_cached_embedding_function))
+            asyncio.create_task(asyncio.to_thread(sync_all_local_models))
+            asyncio.create_task(asyncio.to_thread(OllamaService().get_hardware_profile))
+
+            from backend.api.recruiter import _RERANKER_EXECUTOR
+            from backend.services.screening_reranker import get_reranker
+
+            async def warm_reranker():
+                try:
+                    await asyncio.get_running_loop().run_in_executor(_RERANKER_EXECUTOR, get_reranker)
+                    logger.info("Local screening reranker is ready.")
+                except Exception as error:
+                    logger.info("Reranker pre-warming skipped; hybrid fallback remains available: %s", error)
+
+            reranker_warmup = asyncio.create_task(warm_reranker())
+            logger.info("Dispatched background pre-warming for local models and vector embedding model.")
+        else:
+            logger.info("Cloud container environment detected (Render): lazy-loading embedding & cross-encoder to stay safely within memory limits.")
     except Exception as warm_err:
         logger.warning(f"Could not dispatch embedding pre-warming: {warm_err}")
 
