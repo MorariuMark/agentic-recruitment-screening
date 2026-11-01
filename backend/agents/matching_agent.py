@@ -35,6 +35,11 @@ class EvaluationProviderError(RuntimeError):
     pass
 
 
+class EvaluationCancelledError(RuntimeError):
+    """Raised when candidate evaluation is cancelled by recruiter."""
+    pass
+
+
 class EvaluationSourceError(ValueError):
     """Original source is unavailable; missing source is not a negative finding."""
 
@@ -748,6 +753,11 @@ class MatchingAgent:
                     provider_pool = self.llm_client.get_healthy_provider_pool()
 
                 def _evaluate_single(req: JobRequirement, assigned_client: Optional[BaseLLMClient] = None) -> RequirementMatch:
+                    run_id = (self.execution_context or {}).get("run_id")
+                    if run_id:
+                        from backend.services.process_control import cancelled_jobs
+                        if f"run:{run_id}" in cancelled_jobs:
+                            raise EvaluationCancelledError(f"Screening run {run_id} was cancelled by user.")
                     try:
                         if hasattr(self.llm_client, "set_action_context"):
                             self.llm_client.set_action_context("candidate_evaluation")
@@ -766,7 +776,7 @@ class MatchingAgent:
                             item_completed=req.title,
                         )
                         return res
-                    except EvidenceRetrievalError:
+                    except (EvidenceRetrievalError, EvaluationCancelledError):
                         raise
                     except LLMProvidersCoolingDownError as error:
                         raise EvaluationDeferredError(req, error.retry_after) from error
@@ -794,6 +804,12 @@ class MatchingAgent:
                                 self.completed_matches.append(future.result())
                             except Exception as error:
                                 errors.append(error)
+                                if isinstance(error, EvaluationCancelledError):
+                                    try:
+                                        executor.shutdown(wait=False, cancel_futures=True)
+                                    except Exception:
+                                        pass
+                                    raise
                         if errors:
                             raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
                 else:
@@ -814,6 +830,12 @@ class MatchingAgent:
                                 self.completed_matches.append(future.result())
                             except Exception as error:
                                 errors.append(error)
+                                if isinstance(error, EvaluationCancelledError):
+                                    try:
+                                        executor.shutdown(wait=False, cancel_futures=True)
+                                    except Exception:
+                                        pass
+                                    raise
                         if errors:
                             raise next((error for error in errors if not getattr(error, "retryable", False)), errors[0])
             completed = {match.requirement_id: match for match in self.completed_matches}

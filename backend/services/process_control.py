@@ -75,8 +75,7 @@ async def run_job(key, function, *args, scope=None):
 
 
 async def cancel_job(key):
-    if key in job_scopes:
-        cancelled_jobs.add(key)
+    cancelled_jobs.add(key)
     task = jobs.get(key)
     if task:
         task.cancel()

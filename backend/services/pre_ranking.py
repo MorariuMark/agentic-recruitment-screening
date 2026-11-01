@@ -106,12 +106,15 @@ class PreRankingEngine:
             ]) or "No documented professional evidence")
         profiles = [clean_model_text(profile) for profile in profiles]
         job_text = " ".join([job.title, *[f"{r.title}: {r.description}" for r in job.requirements if r.weight > 0]])
-        vectors = np.asarray(self.embedding_fn([job_text, *profiles]), dtype=float)
-        if vectors.ndim != 2 or vectors.shape[0] != len(candidates) + 1 or not np.isfinite(vectors).all():
-            raise ValueError("Embedding service returned invalid vectors")
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        normalized = np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
-        similarities = np.clip(normalized[1:] @ normalized[0], 0, 1) * 100
+        if self.embedding_fn is not None:
+            vectors = np.asarray(self.embedding_fn([job_text, *profiles]), dtype=float)
+            if vectors.ndim != 2 or vectors.shape[0] != len(candidates) + 1 or not np.isfinite(vectors).all():
+                raise ValueError("Embedding service returned invalid vectors")
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            normalized = np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+            similarities = np.clip(normalized[1:] @ normalized[0], 0, 1) * 100
+        else:
+            similarities = np.zeros(len(candidates), dtype=float)
         rows = []
         for candidate, profile, similarity in zip(candidates, profiles, similarities):
             buckets: dict[str, list[tuple[float, float]]] = {"skills_score": [], "experience_score": [], "degree_score": []}

@@ -124,7 +124,11 @@ class ApiClient {
       const longRead = /recommended-jobs|compliance\/dossier|settings\/local-models|ollama\/(models|hardware)/.test(endpoint);
       const tracked = (method !== "GET" || longRead) && !endpoint.includes("/auth/") && !endpoint.includes("/cancel") && !endpoint.includes("/processes/");
       const finishProcess = tracked ? trackProcess(processId, endpoint, async () => {
-        const response = await fetch(`${this.base}/api/v1/processes/${processId}/cancel`, {method: "POST", credentials: "include", headers: {"X-Workspace-ID": tabId}});
+        const cancelHeaders = new Headers();
+        if (tabId) cancelHeaders.set("X-Workspace-ID", tabId);
+        const token = _savedAuthToken || (typeof window !== "undefined" ? sessionStorage.getItem("atos_token") : null);
+        if (token) cancelHeaders.set("Authorization", `Bearer ${token}`);
+        const response = await fetch(`${this.base}/api/v1/processes/${processId}/cancel`, {method: "POST", credentials: "include", headers: cancelHeaders});
         if (!response.ok) throw new Error("Cancellation failed. Try again.");
         controller.abort(new DOMException("Process cancelled. Completed steps are retained.", "AbortError"));
       }) : () => {};

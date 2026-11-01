@@ -348,6 +348,12 @@ async def execute_rank(payload: dict, candidates: list[AnonymizedCandidate], job
 
 async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], job: JobDescription, frozen_client=None):
     started = time.perf_counter()
+    from backend.services.process_control import cancelled_jobs
+    from backend.agents.matching_agent import EvaluationCancelledError
+    run_key = f"run:{payload['id']}"
+    if run_key in cancelled_jobs or (await read_run(payload["id"])).get("status") == "cancelled":
+        logger.info("Screening run %s was cancelled before execution.", payload["id"])
+        return
     try:
         if payload.get("rows"):
             rows = [PreScreenRow.model_validate(row) for row in payload["rows"]]
@@ -406,6 +412,9 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
         provider_wait_remaining = settings.screening_provider_wait_seconds
         eval_rows = [row for row in payload["rows"] if row["candidate_id"] in selected_ids]
         for eval_idx, row in enumerate(eval_rows):
+            if run_key in cancelled_jobs or (await read_run(payload["id"])).get("status") == "cancelled":
+                logger.info("Screening run %s cancelled by user; aborting candidate loop.", payload["id"])
+                return
             cand_profile = profiles.get(row["candidate_id"])
             cand_name = getattr(cand_profile, "masked_name", None) or row.get("candidate_name") or f"Candidate {row['candidate_id'][:8]}"
             payload["active_candidate_id"] = row["candidate_id"]
@@ -421,6 +430,14 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
                     row.update(deep_evaluation=result.model_dump(mode="json"), deep_status="completed", error=None, retry_after=None)
                     row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
                     break
+                except EvaluationCancelledError:
+                    logger.info("Screening run %s cancelled during candidate %s", payload["id"], row["candidate_id"])
+                    row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
+                    row.update(deep_status="failed", error="Cancelled by recruiter.")
+                    payload["status"] = "cancelled"
+                    payload["phase"] = "Cancelled by recruiter"
+                    await save_run(payload)
+                    return
                 except EvaluationDeferredError as error:
                     row["deep_requirement_matches"] = [match.model_dump(mode="json") for match in agent.completed_matches]
                     delay = max(1.0, error.retry_after)
@@ -457,10 +474,20 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             while item["kept_candidate_id"] in representatives:
                 item["kept_candidate_id"] = representatives[item["kept_candidate_id"]]
         payload["phase"] = "Completed" if payload["status"] == "completed" else "Completed with deferred or unavailable evaluations"
+    except (asyncio.CancelledError, EvaluationCancelledError):
+        logger.info("Screening run %s aborted due to cancellation.", payload.get("id"))
+        payload["status"] = "cancelled"
+        payload["phase"] = "Cancelled by recruiter"
+        payload["error"] = "Cancelled by recruiter."
+        await save_run(payload)
+        return
     except Exception as error:
         payload["status"] = "failed"
         payload["error"] = str(error)
         payload["phase"] = "Failed"
+    if run_key in cancelled_jobs or (await read_run(payload["id"])).get("status") == "cancelled":
+        logger.info("Run %s is cancelled, skipping completed state save", payload["id"])
+        return
     payload["ended_at"] = int(time.time() * 1000)
     payload.setdefault("diagnostics", {}).setdefault("timings_ms", {})["attempt_total"] = round((time.perf_counter() - started) * 1000, 2)
     await save_run(payload)

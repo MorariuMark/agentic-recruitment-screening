@@ -18,9 +18,9 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
   const [cohortSize, setCohortSize] = useState(() => Math.min(100, candidates.length));
   const [search, setSearch] = useState("");
   const [jobSearchQuery, setJobSearchQuery] = useState("");
-  const [topK, setTopK] = useState(10);
-  const [shortlistCount, setShortlistCount] = useState(10);
-  const [mode, setMode] = useState("hybrid-deep");
+  const [topK, setTopK] = useState(5);
+  const [shortlistCount, setShortlistCount] = useState(5);
+  const [mode, setMode] = useState("hybrid-fast");
   const [demoOnly, setDemoOnly] = useState(false);
   const deep = mode.endsWith("deep");
   const improved = mode.startsWith("hybrid");
@@ -354,6 +354,24 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
               ? `Pre-screen score: ${singleRow.pre_screen_score.toFixed(1)} / 100${singleRow.deep_status === "deferred" ? " · Deep eval deferred (providers busy)" : ""}`
               : "Evaluation pending."}
           </span>
+          {activeRun && singleRun && (
+            <button
+              type="button"
+              className="r-button secondary"
+              style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: 5 }}
+              onClick={async () => {
+                try {
+                  await api.cancelBackgroundProcess(`run:${singleRun.id}`);
+                  const updated = await api.screeningRun(singleRun.id);
+                  onRun(updated);
+                } catch (e) {
+                  setError(message(e));
+                }
+              }}
+            >
+              <X size={13}/> Cancel
+            </button>
+          )}
         </div>
       )}
       {singleRow && <button type="button" className="r-button" onClick={() => setProfileId(single.candidate_id)}>View evaluation and evidence<ArrowRight size={16}/></button>}
@@ -374,6 +392,24 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
             <label className="r-field">Screening mode<select value={mode} onChange={e => setMode(e.target.value)} disabled={!!busy || activeRun}><option value="legacy-deep">Fast Batch Rank (Top-K Deep Eval)</option><option value="hybrid-deep">Improved hybrid rank (Top-K Deep Eval)</option><option value="hybrid-fast">Improved hybrid pre-screen only</option><option value="legacy-fast">Fast pre-screen only</option></select></label>
             <label className="r-field r-small-field">Deep top<input type="number" min={1} max={100} value={topK} disabled={!deep || !!busy || activeRun} onChange={e => setTopK(Number(e.target.value))}/></label>
                         <button className="r-button primary" disabled={!canScreen} onClick={triggerScreening}><Zap size={16}/><ProcessIndicator active={screening} startedAt={rankStartedAt} timer={screening} label="Screening candidates"/> {screening ? "Screening…" : `Rank ${selectedIds.length || "selected"} candidates`}</button>
+            {activeRun && run && (
+              <button
+                type="button"
+                className="r-button secondary"
+                style={{ borderColor: "var(--border-warning, #f59e0b)", color: "var(--text-warning, #f59e0b)" }}
+                onClick={async () => {
+                  try {
+                    await api.cancelBackgroundProcess(`run:${run.id}`);
+                    const updated = await api.screeningRun(run.id);
+                    onRun(updated);
+                  } catch (e) {
+                    setError(message(e));
+                  }
+                }}
+              >
+                <X size={15}/> Cancel screening
+              </button>
+            )}
           </div>
         </div>
         </section>
@@ -393,6 +429,24 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
       {run && <div className="r-run-status" role="status">
         {activeRun ? <ProcessIndicator active timer={false} label="Evaluating cohort"/> : <span className="r-status-dot"/>}
         <span>{run.status === "ranking" ? (run.phase || "Computing batch similarity and evidence checks…") : run.status === "evaluating" ? (run.phase || `${run.rows.length} candidates ranked. Deep evaluation: ${run.rows.filter(r => r.deep_status === "completed" || r.deep_status === "failed").length} of ${run.deep_candidate_ids?.length ?? Math.min(run.top_k, run.rows.length)} complete.`) : run.status === "cancelled" ? "Screening cancelled. Completed evaluations are retained." : run.status === "failed" ? `Screening failed: ${run.error}` : `${run.rows.length} candidates ranked · ${run.rows.filter(r => r.deep_status === "completed").length} deep evaluations complete${run.status === "partial" ? " · Some evaluations are unavailable; use Retry unfinished screening." : ""}`}</span>
+        {activeRun && (
+          <button
+            type="button"
+            className="r-button secondary"
+            style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: 5 }}
+            onClick={async () => {
+              try {
+                await api.cancelBackgroundProcess(`run:${run.id}`);
+                const updated = await api.screeningRun(run.id);
+                onRun(updated);
+              } catch (e) {
+                setError(message(e));
+              }
+            }}
+          >
+            <X size={13}/> Cancel
+          </button>
+        )}
         {runTotalMs != null && !activeRun && (
           <span className="r-duration-badge success" style={{ marginLeft: "auto" }}>
             <Zap size={13}/>

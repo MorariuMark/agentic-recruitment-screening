@@ -173,7 +173,14 @@ async def cancel_request(process_id: UUID, request: Request):
     entry = requests.get(str(process_id))
     if entry:
         owner = request.headers.get("authorization") or request.cookies.get("atos_workspace", "")
-        if entry[0] != owner:
+        tab_id = request.headers.get("x-workspace-id", "")
+        is_authorized = (
+            entry[0] == owner
+            or (tab_id and entry[2] == tab_id)
+            or not entry[0]
+            or os.getenv("AUTH_REQUIRED", "false").lower() != "true"
+        )
+        if not is_authorized:
             raise HTTPException(403, "This process belongs to another session.")
         entry[1].cancel()
         await asyncio.gather(entry[1], return_exceptions=True)
@@ -183,12 +190,14 @@ async def cancel_request(process_id: UUID, request: Request):
 @router.post("/screening/runs/{run_id}/cancel")
 async def cancel_screening(run_id: UUID):
     from backend.api.recruiter import read_run, save_run, _run_lock
+    from backend.services.process_control import cancelled_jobs
+    cancelled_jobs.add(f"run:{run_id}")
     await cancel_job(f"run:{run_id}")
     async with _run_lock:
         payload = await read_run(run_id)
         if payload["status"] in {"ranking", "evaluating"}:
             payload.update(status="cancelled", phase="Cancelled", error="Cancelled by recruiter.")
-            for row in payload["rows"]:
+            for row in payload.get("rows", []):
                 if row.get("deep_status") == "pending":
                     row.update(deep_status="failed", error="Cancelled by recruiter.")
             await save_run(payload)
