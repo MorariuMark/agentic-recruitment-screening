@@ -455,6 +455,30 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
 
   const run = runQuery.data?.job_id === jobId ? runQuery.data : null;
 
+  const loadLatestRunForJob = async () => {
+    if (!jobId) return;
+    try {
+      const latest = await api.latestScreeningRun(jobId);
+      if (latest && latest.job_id === jobId) {
+        updateRun(latest);
+      } else {
+        setActiveRunId("");
+      }
+    } catch {
+      setActiveRunId("");
+    }
+  };
+
+  useEffect(() => {
+    if (jobId && !activeRunId) {
+      api.latestScreeningRun(jobId).then(latest => {
+        if (latest && latest.job_id === jobId && !activeRunRef.current) {
+          updateRun(latest);
+        }
+      }).catch(() => {});
+    }
+  }, [jobId]);
+
 
 
   useEffect(() => {
@@ -531,7 +555,7 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
 
   };
 
-  const selectJob = (id: string) => {
+  const selectJob = async (id: string) => {
     setVisitedJobs(current => [...new Set([...current, jobId, id])].filter(Boolean));
     setSelectedJob(id);
     setActiveRunId("");
@@ -541,6 +565,14 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
       else params.delete("job");
       params.delete("run");
       window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+    }
+    if (id) {
+      try {
+        const latest = await api.latestScreeningRun(id);
+        if (latest && latest.job_id === id) {
+          updateRun(latest);
+        }
+      } catch {}
     }
   };
 
@@ -589,7 +621,7 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
     onNavigate: (next: Step) => {setWorkflowError(""); navigate(next);}, onNext: () => void advance(),
   };
 
-  const error = jobs.error || candidates.error || runQuery.error;
+  const error = jobs.error || candidates.error || (activeRunId ? runQuery.error : null);
 
   return <div className={`recruiter r-workspace ${collapsed ? "sidebar-collapsed" : ""}`} data-theme="dark">
 
@@ -810,7 +842,14 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
 
         <ActiveProcesses/>
 
-        {error && <div role="alert" className="r-alert">{message(error)} <button onClick={() => {jobs.refetch(); candidates.refetch(); runQuery.refetch();}}>Retry</button>{activeRunId && <button onClick={() => setActiveRunId("")}>Load latest run for this role</button>}</div>}
+        {error && (
+          <div role="alert" className="r-alert">
+            {message(error)}{" "}
+            <button onClick={() => {jobs.refetch(); candidates.refetch(); if (activeRunId) runQuery.refetch();}}>Retry</button>
+            {jobId && <button onClick={() => void loadLatestRunForJob()}>Load latest run for this role</button>}
+            <button onClick={() => { setActiveRunId(""); }} style={{ marginLeft: "auto", opacity: 0.8 }}>Dismiss</button>
+          </div>
+        )}
 
         {jobs.isPending || candidates.isPending ? <div className="r-loading" role="status"><ProcessIndicator active timer={false} label="Loading workspace"/>Loading your workspace…</div> : <>
 

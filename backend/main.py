@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Dict
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from backend.api.routes import router as api_router
 from backend.api.recruiter import router as recruiter_router
@@ -155,6 +156,7 @@ async def add_private_network_headers(request: Request, call_next):
     return response
 
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

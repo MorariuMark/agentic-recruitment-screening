@@ -50,6 +50,9 @@ def get_engine() -> AsyncEngine:
                 try:
                     cursor.execute("PRAGMA journal_mode=WAL")
                     cursor.execute("PRAGMA busy_timeout=30000")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
+                    cursor.execute("PRAGMA cache_size=-64000")
+                    cursor.execute("PRAGMA temp_store=MEMORY")
                 except Exception:
                     pass
                 finally:

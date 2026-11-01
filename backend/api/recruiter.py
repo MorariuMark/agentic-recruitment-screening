@@ -189,63 +189,122 @@ async def select_model(request: ModelSelection):
     return await model_catalog()
 
 
+_active_runs: dict[str, dict] = {}
+
+
 def sort_screening_rows(rows: list[dict]) -> list[dict]:
     if not rows:
         return rows
 
     def sort_key(row: dict):
+        if not isinstance(row, dict):
+            return (3, 0, 0, 999999)
         deep_status = row.get("deep_status")
-        deep_eval = row.get("deep_evaluation") or {}
+        deep_eval = row.get("deep_evaluation")
+        if not isinstance(deep_eval, dict):
+            deep_eval = {}
         overall_score = deep_eval.get("overall_score")
-        if deep_status == "completed" and overall_score is not None:
+
+        try:
+            parsed_overall = float(overall_score) if overall_score is not None else None
+        except (ValueError, TypeError):
+            parsed_overall = None
+
+        try:
+            pre_score = float(row.get("pre_screen_score") or 0)
+        except (ValueError, TypeError):
+            pre_score = 0.0
+
+        try:
+            rank_val = int(row.get("initial_rank") or row.get("rank") or 999999)
+        except (ValueError, TypeError):
+            rank_val = 999999
+
+        if deep_status == "completed" and parsed_overall is not None:
             return (
                 0,
-                -round(float(overall_score), 4),
-                -round(float(row.get("pre_screen_score") or 0), 4),
-                row.get("initial_rank") or row.get("rank") or 999999,
+                -round(parsed_overall, 4),
+                -round(pre_score, 4),
+                rank_val,
             )
         elif deep_status in {"deferred", "failed"}:
             return (
                 1,
                 0,
-                -round(float(row.get("pre_screen_score") or 0), 4),
-                row.get("initial_rank") or row.get("rank") or 999999,
+                -round(pre_score, 4),
+                rank_val,
             )
         else:
             return (
                 2,
                 0,
-                -round(float(row.get("pre_screen_score") or 0), 4),
-                row.get("initial_rank") or row.get("rank") or 999999,
+                -round(pre_score, 4),
+                rank_val,
             )
 
-    sorted_rows = sorted(rows, key=sort_key)
-    for rank, row in enumerate(sorted_rows, 1):
-        row["rank"] = rank
-    return sorted_rows
+    try:
+        sorted_rows = sorted(rows, key=sort_key)
+        for rank, row in enumerate(sorted_rows, 1):
+            if isinstance(row, dict):
+                row["rank"] = rank
+        return sorted_rows
+    except Exception as e:
+        logger.warning("sort_screening_rows fallback due to error: %s", e)
+        return rows
 
 
 async def read_run(run_id: UUID | str) -> dict:
-    async with async_session_scope() as db:
-        record = await db.get(ScreeningRunModel, str(run_id))
-        if not record:
-            raise HTTPException(404, "Screening run not found.")
-        payload = copy.deepcopy(record.payload)
+    run_id_str = str(run_id)
+    if run_id_str in _active_runs:
+        payload = copy.deepcopy(_active_runs[run_id_str])
         if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
             payload["rows"] = sort_screening_rows(payload["rows"])
         return payload
 
+    for attempt in range(4):
+        try:
+            async with async_session_scope() as db:
+                record = await db.get(ScreeningRunModel, run_id_str)
+                if not record or not record.payload:
+                    raise HTTPException(404, "Screening run not found.")
+                payload = copy.deepcopy(record.payload)
+                if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+                    payload["rows"] = sort_screening_rows(payload["rows"])
+                _active_runs[run_id_str] = copy.deepcopy(payload)
+                return payload
+        except HTTPException:
+            raise
+        except Exception as e:
+            if attempt < 3:
+                await asyncio.sleep(0.1 * (attempt + 1))
+                continue
+            logger.error("Failed to read screening run %s: %s", run_id_str, e)
+            raise HTTPException(500, f"Error reading screening run: {e}")
+
 
 async def save_run(payload: dict):
-    async with async_session_scope() as db:
-        record = await db.get(ScreeningRunModel, payload["id"])
-        if record:
-            if record.payload.get("attempt", 0) > payload.get("attempt", 0):
-                return
-            record.payload = copy.deepcopy(payload)
-        else:
-            db.add(ScreeningRunModel(id=payload["id"], job_id=payload["job_id"], payload=copy.deepcopy(payload)))
-        await db.commit()
+    if not payload or not payload.get("id"):
+        return
+    run_id = str(payload["id"])
+    _active_runs[run_id] = copy.deepcopy(payload)
+
+    for attempt in range(4):
+        try:
+            async with async_session_scope() as db:
+                record = await db.get(ScreeningRunModel, run_id)
+                if record:
+                    if record.payload.get("attempt", 0) > payload.get("attempt", 0):
+                        return
+                    record.payload = copy.deepcopy(payload)
+                else:
+                    db.add(ScreeningRunModel(id=run_id, job_id=str(payload.get("job_id", "")), payload=copy.deepcopy(payload)))
+                await db.commit()
+            break
+        except Exception as e:
+            if attempt < 3:
+                await asyncio.sleep(0.15 * (attempt + 1))
+            else:
+                logger.warning("save_run failed after 4 attempts for %s: %s", run_id, e)
 
 
 async def recover_interrupted_runs():
@@ -263,6 +322,7 @@ async def recover_interrupted_runs():
                 if row["deep_status"] == "pending":
                     row.update(deep_status="failed", error=payload["error"])
             record.payload = payload
+            _active_runs[record.id] = copy.deepcopy(payload)
         await db.commit()
 
 
@@ -607,14 +667,36 @@ async def get_run(run_id: UUID, job_id: UUID | None = None):
 
 @router.get("/screening/jobs/{job_id}/latest")
 async def latest_run(job_id: UUID):
-    async with async_session_scope() as db:
-        record = await db.scalar(select(ScreeningRunModel).where(ScreeningRunModel.job_id == str(job_id)).order_by(ScreeningRunModel.created_at.desc(), ScreeningRunModel.id.desc()).limit(1))
-        if not record:
+    job_id_str = str(job_id)
+    # Check in-memory active runs first
+    for r in reversed(list(_active_runs.values())):
+        if r.get("job_id") == job_id_str:
+            payload = copy.deepcopy(r)
+            if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+                payload["rows"] = sort_screening_rows(payload["rows"])
+            return payload
+
+    for attempt in range(3):
+        try:
+            async with async_session_scope() as db:
+                record = await db.scalar(
+                    select(ScreeningRunModel)
+                    .where(ScreeningRunModel.job_id == job_id_str)
+                    .order_by(ScreeningRunModel.created_at.desc(), ScreeningRunModel.id.desc())
+                    .limit(1)
+                )
+                if not record or not record.payload:
+                    return None
+                payload = copy.deepcopy(record.payload)
+                if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
+                    payload["rows"] = sort_screening_rows(payload["rows"])
+                _active_runs[payload.get("id", "")] = copy.deepcopy(payload)
+                return payload
+        except Exception:
+            if attempt < 2:
+                await asyncio.sleep(0.1)
+                continue
             return None
-        payload = copy.deepcopy(record.payload)
-        if payload.get("rows") and not payload.get("evaluation_candidate_ids") and any(r.get("deep_status") == "completed" for r in payload["rows"]):
-            payload["rows"] = sort_screening_rows(payload["rows"])
-        return payload
 
 
 @router.get("/screening/jobs/{job_id}/runs")

@@ -154,7 +154,7 @@ def main():
     frontend_env = os.environ.copy()
     frontend_env["PORT"] = str(primary_port)
     frontend_env["BACKEND_API_URL"] = backend_url
-    frontend_env["NODE_OPTIONS"] = "--max-old-space-size=128"
+    frontend_env["NODE_OPTIONS"] = "--max-old-space-size=256"
 
     frontend_dir = Path("./frontend-next")
     frontend_proc = subprocess.Popen(
@@ -195,6 +195,8 @@ def main():
             "127.0.0.1",
             "--port",
             str(backend_port),
+            "--timeout-keep-alive",
+            "30",
         ],
         env=backend_env,
     )
