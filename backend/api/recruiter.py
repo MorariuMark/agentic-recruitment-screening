@@ -275,9 +275,11 @@ async def recover_interrupted_runs():
 
 async def hybrid_rank(payload, candidates, job, embedding_fn):
     model_key = f"{existing._vector_store.model_name}:{getattr(settings, 'screening_embedding_cache_version', '1')}"
-    keys = [feature_key(candidate, model_key) for candidate in candidates]
+    candidate_keys = [feature_key(candidate, model_key) for candidate in candidates]
+    req_keys = [f"req:{r.id}" for r in job.requirements if r.weight > 0]
+    all_keys = [*candidate_keys, *req_keys]
     async with async_session_scope() as db:
-        cached = list((await db.scalars(select(ScreeningFeatureCacheModel).where(ScreeningFeatureCacheModel.key.in_(keys)))).all())
+        cached = list((await db.scalars(select(ScreeningFeatureCacheModel).where(ScreeningFeatureCacheModel.key.in_(all_keys)))).all())
     engine = HybridRankingEngine(embedding_fn, model_key, {entry.key: entry.payload for entry in cached})
     payload["phase"] = "Matching requirement evidence"
     await save_run(payload)
@@ -352,7 +354,8 @@ async def _execute_rank(payload: dict, candidates: list[AnonymizedCandidate], jo
             selected = [row for row in rows if str(row.candidate_id) in selected_ids and row.deep_status != "completed"]
         else:
             async with measure("ranking", item_count=len(candidates), label=job.title):
-                embedding_fn = await asyncio.to_thread(lambda: existing._vector_store.embedding_fn)
+                is_cloud_container = bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1")
+                embedding_fn = None if is_cloud_container else await asyncio.to_thread(lambda: existing._vector_store.embedding_fn)
                 if payload.get("pipeline_version") == "v2":
                     rows = await hybrid_rank(payload, candidates, job, embedding_fn)
                 else:

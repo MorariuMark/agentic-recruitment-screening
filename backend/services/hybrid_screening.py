@@ -143,15 +143,36 @@ class HybridRankingEngine:
                     missing_slots.append(slot)
             if len(units) == 40:
                 self.diagnostics["warnings"].append(f"Evidence limit reached for candidate {candidate.candidate_id}; full CV remains available.")
-        texts = [*query_texts, *missing_texts]
+        # Retrieve precomputed requirement vectors from cache
+        query_vecs = [None] * len(query_texts)
+        missing_query_texts = []
+        missing_query_map = []
+        for q_idx, r in enumerate(requirements):
+            cached_req = self.feature_cache.get(f"req:{r.id}", {})
+            vec = cached_req.get("vector")
+            if vec is not None and len(vec) == 384:
+                query_vecs[q_idx] = vec
+            else:
+                missing_query_map.append(q_idx)
+                missing_query_texts.append(query_texts[q_idx])
+
+        texts = [*missing_query_texts, *missing_texts]
         encoded = []
-        for offset in range(0, len(texts), 128):
-            batch = np.asarray(self.embedding_fn(texts[offset:offset + 128]), dtype=float)
-            if batch.ndim != 2 or len(batch) != len(texts[offset:offset + 128]) or not np.isfinite(batch).all():
-                raise ValueError("Embedding service returned invalid evidence vectors")
-            encoded.extend(batch.tolist())
-        queries = np.asarray(encoded[:len(query_texts)], dtype=float)
-        for slot, vector in zip(missing_slots, encoded[len(query_texts):]):
+        if texts:
+            if callable(self.embedding_fn):
+                for offset in range(0, len(texts), 128):
+                    batch = np.asarray(self.embedding_fn(texts[offset:offset + 128]), dtype=float)
+                    if batch.ndim != 2 or len(batch) != len(texts[offset:offset + 128]) or not np.isfinite(batch).all():
+                        raise ValueError("Embedding service returned invalid evidence vectors")
+                    encoded.extend(batch.tolist())
+            else:
+                encoded = [np.zeros(384).tolist() for _ in texts]
+
+        for m_idx, vec in zip(missing_query_map, encoded[:len(missing_query_texts)]):
+            query_vecs[m_idx] = vec
+
+        queries = np.asarray(query_vecs, dtype=float) if query_vecs and all(v is not None for v in query_vecs) else np.empty((0, 384))
+        for slot, vector in zip(missing_slots, encoded[len(missing_query_texts):]):
             vectors[slot] = vector
         matrix = np.asarray(vectors, dtype=float) if vectors else np.empty((0, queries.shape[1]))
         if matrix.ndim != 2 or matrix.shape[1] != queries.shape[1] or not np.isfinite(matrix).all():
