@@ -4,6 +4,7 @@ Container process supervisor for single-container cloud deployment.
 Concurrently launches the FastAPI backend on localhost:8000 and the Next.js frontend
 on the public container port (default 10000 for Render / 7860 for Hugging Face Spaces).
 Transparently forwards ports (10000 <-> 7860 <-> 8080) so that all cloud routing works.
+Automatically restores untrashed seed data (CVs, JDs, ChromaDB) on startup.
 Handles health checks, graceful shutdown (SIGTERM/SIGINT), and process supervision.
 """
 
@@ -96,6 +97,33 @@ def main():
     chroma_dir = Path("./data/chroma_db")
     data_dir.mkdir(parents=True, exist_ok=True)
     chroma_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1.1 Automatically restore untrashed seed database if screening.db is missing or empty
+    seed_gz = data_dir / "screening_seed.db.gz"
+    db_file = data_dir / "screening.db"
+    if seed_gz.exists() and (not db_file.exists() or db_file.stat().st_size < 1024):
+        print(f"[Supervisor] Restoring untrashed seed database from {seed_gz.name}...", flush=True)
+        try:
+            import gzip
+            import shutil
+            with gzip.open(seed_gz, "rb") as f_in:
+                with open(db_file, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            print(f"[Supervisor] Database restored successfully ({db_file.stat().st_size / (1024*1024):.1f} MB)!", flush=True)
+        except Exception as e:
+            print(f"[Supervisor] Database restoration failed: {e}", flush=True)
+
+    # 1.2 Automatically restore pre-computed vector index if chroma_db is empty
+    chroma_gz = data_dir / "chroma_db.tar.gz"
+    if chroma_gz.exists() and (not chroma_dir.exists() or not any(chroma_dir.iterdir())):
+        print(f"[Supervisor] Restoring ChromaDB vector store from {chroma_gz.name}...", flush=True)
+        try:
+            import tarfile
+            with tarfile.open(chroma_gz, "r:gz") as tar:
+                tar.extractall(path=str(data_dir))
+            print("[Supervisor] ChromaDB vector store restored successfully!", flush=True)
+        except Exception as e:
+            print(f"[Supervisor] ChromaDB restoration failed: {e}", flush=True)
 
     backend_proc = None
     frontend_proc = None
