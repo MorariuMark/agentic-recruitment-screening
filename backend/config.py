@@ -6,7 +6,7 @@ Application settings and configuration management using Pydantic Settings.
 from pathlib import Path
 
 from typing import Literal, Optional, List
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from backend.services.session_secret import load_or_create_session_secret
 
@@ -275,6 +275,16 @@ class Settings(BaseSettings):
             if val and isinstance(val, str) and val.strip() and val.strip() not in keys:
                 keys.append(val.strip())
         return keys
+
+    @model_validator(mode="after")
+    def _ensure_primary_keys(self) -> "Settings":
+        for p in ["groq", "gemini", "cohere", "openrouter", "nvidia_nim"]:
+            primary = getattr(self, f"{p}_api_key", None)
+            if not primary or not str(primary).strip():
+                keys = self.get_provider_keys(p)
+                if keys:
+                    setattr(self, f"{p}_api_key", keys[0])
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",
