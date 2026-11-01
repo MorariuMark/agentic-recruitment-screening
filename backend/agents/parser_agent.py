@@ -236,7 +236,11 @@ def extract_text_from_pdf(pdf_source: Union[str, Path, bytes], max_pages: int = 
 
                 if extracted.strip():
                     text_content.append(normalize_extracted_text(extracted.strip()))
+                if hasattr(page, "flush_cache"):
+                    page.flush_cache()
 
+        import gc
+        gc.collect()
         if text_content:
             combined = "\n\n".join(text_content).strip()
             if len(combined.strip()) < 30:

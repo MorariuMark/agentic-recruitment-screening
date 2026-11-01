@@ -5,6 +5,7 @@ vector indexing, and automated candidate-job requirement matching.
 """
 
 import asyncio
+import os
 import logging
 import time
 from contextvars import ContextVar
@@ -27,7 +28,7 @@ from backend.services.vector_store import VectorStoreService
 logger = logging.getLogger("recruitment_screening.batch_processor")
 
 # Global admission semaphore bounding concurrent parsing across all batches (E10)
-GLOBAL_PARSER_SEMAPHORE = asyncio.Semaphore(4)
+GLOBAL_PARSER_SEMAPHORE = asyncio.Semaphore(1 if bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1") else 4)
 _file_phase = ContextVar("cv_file_phase", default=None)
 
 
@@ -168,7 +169,10 @@ class BatchProcessorService:
         # A batch is a single session. Re-delivery must never replay finished work.
         if not record or record.status not in {"PROCESSING", "QUEUED"}:
             return
-        concurrency = max(1, min(int(concurrency), 4))
+        if bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1"):
+            concurrency = 1
+        else:
+            concurrency = max(1, min(int(concurrency), 4))
         if document_ids is None:
             # Persist every original before the first provider call. An outage
             # must not strand the unstarted queue in transient request memory.
