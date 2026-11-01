@@ -6,6 +6,7 @@ ChromaDB vector store manager for local embeddings and asymmetric semantic retri
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
+import os
 import hashlib
 import logging
 from threading import Lock
@@ -37,9 +38,15 @@ def get_cached_embedding_function(model_name: str = DEFAULT_EMBEDDING_MODEL) -> 
     """Returns a process-wide cached SentenceTransformerEmbeddingFunction instance."""
     with _EMBEDDING_FUNCTION_LOCK:
         if model_name not in _EMBEDDING_FUNCTION_CACHE:
-            _EMBEDDING_FUNCTION_CACHE[model_name] = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=model_name
-            )
+            if bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1"):
+                class CloudDummyEmbedding:
+                    def __call__(self, input: list[str]) -> list[list[float]]:
+                        return [[0.0] * 384 for _ in input]
+                _EMBEDDING_FUNCTION_CACHE[model_name] = CloudDummyEmbedding()
+            else:
+                _EMBEDDING_FUNCTION_CACHE[model_name] = embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name=model_name
+                )
         return _EMBEDDING_FUNCTION_CACHE[model_name]
 
 
@@ -100,6 +107,8 @@ class VectorStoreService:
         Returns:
             Number of indexed chunks.
         """
+        if bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1"):
+            return len(getattr(candidate, "anonymized_work_experiences", []))
         cid_str = str(candidate.candidate_id)
         source_hash = hashlib.sha256(clean_model_text(candidate.model_dump_json()).encode("utf-8")).hexdigest()
         if not force:
@@ -321,6 +330,8 @@ class VectorStoreService:
         Returns:
             List of matching chunks with document text, score/distance, and metadata.
         """
+        if bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1"):
+            raise EvidenceRetrievalError("Cloud container mode: using direct source passages to preserve memory.")
         # 1. Query ChromaDB filtered strictly by candidate_id to prevent cross-candidate data leakage
         try:
             results = self.candidate_collection.query(
