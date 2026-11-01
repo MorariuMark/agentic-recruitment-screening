@@ -68,7 +68,7 @@ function EngineSelector({compact}: {compact: boolean}) {
   const workspaceActive = useWorkspaceActivity();
   const cache = useQueryClient();
   // Poll every 3 seconds so cooldowns and limit flags update in real time
-  const settings = useQuery({queryKey: ["recruiter-model"], queryFn: () => api.recruiterModels(), refetchInterval: 3000});
+  const settings = useQuery({queryKey: ["recruiter-model"], queryFn: () => api.recruiterModels(), refetchInterval: 15000});
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);

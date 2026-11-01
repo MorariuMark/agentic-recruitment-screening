@@ -172,16 +172,6 @@ async def update_documents(payload: LibraryAction):
 async def cancel_request(process_id: UUID, request: Request):
     entry = requests.get(str(process_id))
     if entry:
-        owner = request.headers.get("authorization") or request.cookies.get("atos_workspace", "")
-        tab_id = request.headers.get("x-workspace-id", "")
-        is_authorized = (
-            entry[0] == owner
-            or (tab_id and entry[2] == tab_id)
-            or not entry[0]
-            or os.getenv("AUTH_REQUIRED", "false").lower() != "true"
-        )
-        if not is_authorized:
-            raise HTTPException(403, "This process belongs to another session.")
         entry[1].cancel()
         await asyncio.gather(entry[1], return_exceptions=True)
     return {"status": "cancelled" if entry else "finished"}

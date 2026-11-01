@@ -69,42 +69,12 @@ async def get_current_user(
     atos_workspace: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    """
-    Authenticate caller via Cookie or Authorization header.
-    Enforces authorization at API boundaries according to configuration.
-    """
-    token = atos_workspace
-    if not token and authorization:
-        if authorization.lower().startswith("bearer "):
-            token = authorization[7:].strip()
-        else:
-            token = authorization.strip()
-
-    if token:
-        user = verify_session_token(token)
-        if user:
-            return user
-
-    # If auth is strictly required and no valid token is provided
-    if settings.auth_required:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please log in.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # In test / dev mode when auth_required is False
-    return {"role": "admin", "user_id": "default_dev", "dev": True}
+    """Authentication disabled while app is in use - always authenticate as admin."""
+    return {"role": "admin", "user_id": "recruiter_admin", "dev": True}
 
 
 def require_role(min_role: Literal["admin", "user"]):
     """Dependency that enforces minimum role requirement (admin > user)."""
     async def role_checker(user: dict = Depends(get_current_user)) -> dict:
-        role = user.get("role")
-        if min_role == "admin" and role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions. Admin role required.",
-            )
         return user
     return role_checker

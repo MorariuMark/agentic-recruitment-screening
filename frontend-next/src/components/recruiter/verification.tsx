@@ -41,6 +41,7 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
   const [cohortSearchOpen, setCohortSearchOpen] = useState(false);
   const cohortSearchRef = useRef<HTMLDivElement>(null);
   const [uploadDuration, setUploadDuration] = useState<number | null>(null);
+  const [cancellingScreen, setCancellingScreen] = useState(false);
   const [singleEvalDuration, setSingleEvalDuration] = useState<number | null>(null);
   const [screeningDuration, setScreeningDuration] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -390,24 +391,33 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
               checked={cohortCandidates.length > 0 && selectedIds.length === cohortCandidates.length}
               onChange={e => {setSelected(e.target.checked ? cohortCandidates.map(candidate => candidate.id) : []); setCohortSize(e.target.checked ? cohortCandidates.length : Math.min(100, cohortCandidates.length));}}/>Select all {cohortCandidates.length} parsed CVs</label>
             <label className="r-field">Screening mode<select value={mode} onChange={e => setMode(e.target.value)} disabled={!!busy || activeRun}><option value="legacy-deep">Fast Batch Rank (Top-K Deep Eval)</option><option value="hybrid-deep">Improved hybrid rank (Top-K Deep Eval)</option><option value="hybrid-fast">Improved hybrid pre-screen only</option><option value="legacy-fast">Fast pre-screen only</option></select></label>
-            <label className="r-field r-small-field">Deep top<input type="number" min={1} max={100} value={topK} disabled={!deep || !!busy || activeRun} onChange={e => setTopK(Number(e.target.value))}/></label>
+            <label className="r-field r-small-field">Deep top<input type="number" min={1} max={100} value={topK} disabled={!!busy || activeRun} onChange={e => {
+              const val = Math.max(1, Math.min(100, Number(e.target.value) || 1));
+              setTopK(val);
+              if (!deep) setMode("hybrid-deep");
+            }}/></label>
                         <button className="r-button primary" disabled={!canScreen} onClick={triggerScreening}><Zap size={16}/><ProcessIndicator active={screening} startedAt={rankStartedAt} timer={screening} label="Screening candidates"/> {screening ? "Screening…" : `Rank ${selectedIds.length || "selected"} candidates`}</button>
             {activeRun && run && (
               <button
                 type="button"
                 className="r-button secondary"
                 style={{ borderColor: "var(--border-warning, #f59e0b)", color: "var(--text-warning, #f59e0b)" }}
+                disabled={cancellingScreen}
                 onClick={async () => {
                   try {
+                    setCancellingScreen(true);
+                    onRun({ ...run, status: "cancelled", phase: "Screening cancelled by recruiter" });
                     await api.cancelBackgroundProcess(`run:${run.id}`);
                     const updated = await api.screeningRun(run.id);
                     onRun(updated);
                   } catch (e) {
                     setError(message(e));
+                  } finally {
+                    setCancellingScreen(false);
                   }
                 }}
               >
-                <X size={15}/> Cancel screening
+                <X size={15}/> {cancellingScreen ? "Cancelling…" : "Cancel screening"}
               </button>
             )}
           </div>
@@ -434,17 +444,22 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
             type="button"
             className="r-button secondary"
             style={{ marginLeft: "auto", padding: "4px 10px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: 5 }}
+            disabled={cancellingScreen}
             onClick={async () => {
               try {
+                setCancellingScreen(true);
+                if (run) onRun({ ...run, status: "cancelled", phase: "Screening cancelled by recruiter" });
                 await api.cancelBackgroundProcess(`run:${run.id}`);
                 const updated = await api.screeningRun(run.id);
                 onRun(updated);
               } catch (e) {
                 setError(message(e));
+              } finally {
+                setCancellingScreen(false);
               }
             }}
           >
-            <X size={13}/> Cancel
+            <X size={13}/> {cancellingScreen ? "Cancelling…" : "Cancel"}
           </button>
         )}
         {runTotalMs != null && !activeRun && (

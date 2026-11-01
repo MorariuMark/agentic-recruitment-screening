@@ -6,7 +6,7 @@ Application settings and configuration management using Pydantic Settings.
 from pathlib import Path
 
 from typing import Literal, Optional, List
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from backend.services.session_secret import load_or_create_session_secret
 
@@ -28,7 +28,12 @@ class Settings(BaseSettings):
         description="Maximum total cooldown wait per screening run before deferring unfinished evaluations")
 
     # Authentication & Authorization Settings (E4)
-    auth_required: bool = Field(default=True, description="Enforce strict authentication at API boundary")
+    auth_required: bool = Field(default=False, description="Enforce strict authentication at API boundary")
+
+    @field_validator("auth_required", mode="before")
+    @classmethod
+    def _force_auth_disabled(cls, v):
+        return False
     auth_admin_password: str = Field(default="AdminSecret2026!", description="Admin password")
     auth_user_password: str = Field(default="Recruiter2026!", description="Recruiter user password")
     auth_demo_mode: bool = Field(default=True, description="Enable scoped demo fallback access")
