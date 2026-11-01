@@ -1,5 +1,6 @@
 """Recruiter workspace routes, reusing the existing agents, factory and repositories."""
 from backend.services.process_control import CancellableRoute, schedule_job
+import os
 import asyncio
 import concurrent.futures
 import copy
