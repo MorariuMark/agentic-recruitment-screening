@@ -6,7 +6,7 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       - key: PORT
-        value: 7860
+        value: 10000
       - key: LLM_PROVIDER
         value: groq
       - key: GROQ_API_KEY

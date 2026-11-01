@@ -23,7 +23,7 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=7860 \
+    PORT=10000 \
     BACKEND_API_URL=http://127.0.0.1:8000
 
 WORKDIR /app
@@ -59,6 +59,6 @@ RUN useradd -m -u 1000 user \
 
 USER user
 
-EXPOSE 7860
+EXPOSE 10000 7860
 
 CMD ["python", "start_container.py"]

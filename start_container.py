@@ -2,14 +2,17 @@
 start_container.py
 Container process supervisor for single-container cloud deployment.
 Concurrently launches the FastAPI backend on localhost:8000 and the Next.js frontend
-on the public container port (default 7860 for Hugging Face Spaces / cloud environments).
+on the public container port (default 10000 for Render / 7860 for Hugging Face Spaces).
+Transparently forwards ports (10000 <-> 7860 <-> 8080) so that all cloud routing works.
 Handles health checks, graceful shutdown (SIGTERM/SIGINT), and process supervision.
 """
 
 import os
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -27,11 +30,65 @@ def is_service_healthy(url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def start_port_forwarder(source_port: int, target_port: int):
+    """Transparently pipes TCP traffic from source_port to target_port so multiple cloud hosts work."""
+    def handle_client(client_socket):
+        try:
+            target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            target_socket.connect(("127.0.0.1", target_port))
+
+            def pipe(src, dst):
+                try:
+                    while True:
+                        data = src.recv(16384)
+                        if not data:
+                            break
+                        dst.sendall(data)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        dst.shutdown(socket.SHUT_WR)
+                    except Exception:
+                        pass
+
+            t1 = threading.Thread(target=pipe, args=(client_socket, target_socket), daemon=True)
+            t2 = threading.Thread(target=pipe, args=(target_socket, client_socket), daemon=True)
+            t1.start()
+            t2.start()
+        except Exception:
+            try:
+                client_socket.close()
+            except Exception:
+                pass
+
+    def server_loop():
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server.bind(("0.0.0.0", source_port))
+            server.listen(128)
+            print(f"[Port Forwarder] Active: 0.0.0.0:{source_port} -> 127.0.0.1:{target_port}", flush=True)
+            while True:
+                client, _ = server.accept()
+                threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+        except Exception as e:
+            print(f"[Port Forwarder] Port {source_port} binding skipped ({e})", flush=True)
+
+    threading.Thread(target=server_loop, daemon=True).start()
+
+
 def main():
-    port = os.environ.get("PORT", "7860")
+    # Render sets PORT to 10000 by default; Hugging Face uses 7860
+    port_str = os.environ.get("PORT", "10000")
+    try:
+        primary_port = int(port_str)
+    except ValueError:
+        primary_port = 10000
+
     print("=" * 70)
     print(" Starting Enterprise Agentic Screening Platform in Container")
-    print(f" Target Public Port: {port}")
+    print(f" Primary Public Port: {primary_port}")
     print("=" * 70, flush=True)
 
     # 1. Ensure persistent local directories exist
@@ -95,10 +152,10 @@ def main():
     if not backend_ready:
         print("[Supervisor] Backend failed to become healthy within timeout. Continuing anyway...", flush=True)
 
-    # 4. Launch Next.js Frontend on 0.0.0.0:{PORT}
-    print(f"[Supervisor] Launching Next.js frontend on 0.0.0.0:{port}...", flush=True)
+    # 4. Launch Next.js Frontend on 0.0.0.0:{primary_port}
+    print(f"[Supervisor] Launching Next.js frontend on 0.0.0.0:{primary_port}...", flush=True)
     frontend_env = os.environ.copy()
-    frontend_env["PORT"] = port
+    frontend_env["PORT"] = str(primary_port)
     frontend_env["BACKEND_API_URL"] = "http://127.0.0.1:8000"
 
     frontend_dir = Path("./frontend-next")
@@ -109,7 +166,7 @@ def main():
             "start",
             "--",
             "-p",
-            str(port),
+            str(primary_port),
             "-H",
             "0.0.0.0",
         ],
@@ -117,9 +174,15 @@ def main():
         env=frontend_env,
     )
 
+    # 5. Start auxiliary port forwarders so all cloud platforms route successfully
+    candidate_ports = [10000, 7860, 8080]
+    for p in candidate_ports:
+        if p != primary_port:
+            start_port_forwarder(p, primary_port)
+
     print("[Supervisor] Both services are running. Monitoring container...", flush=True)
 
-    # 5. Monitor processes
+    # 6. Monitor processes
     while True:
         if backend_proc.poll() is not None:
             print(f"[Supervisor] Backend exited with code {backend_proc.returncode}. Shutting down.", flush=True)
