@@ -303,7 +303,12 @@ async def hybrid_rank(payload, candidates, job, embedding_fn):
     except Exception:
         # Cache contention must not fail an otherwise valid screening run.
         engine.diagnostics["warnings"].append("Evidence cache write skipped; ranking results are unaffected.")
-    if payload.get("rerank_enabled", True):
+    is_cloud_container = bool(os.getenv("RENDER") or os.getenv("DISABLE_RERANKER_WARMUP") == "1")
+    if is_cloud_container:
+        engine.diagnostics["reranker_fallback"] = True
+        engine.diagnostics["reranker_model"] = "hybrid-dense-lexical"
+        engine.diagnostics["warnings"].append("Cloud environment: using high-performance hybrid dense-lexical ranking for instant response.")
+    elif payload.get("rerank_enabled", True):
         payload["phase"] = "Reranking evidence"
         await save_run(payload)
         started = time.perf_counter()
