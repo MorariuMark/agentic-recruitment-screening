@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, FileText, MessagesSquare, Zap } from "lucide-react";
 import { CandidateSummary, InterviewPlan, ScreeningRun } from "@/types";
 import { api } from "@/lib/api";
+import { formatMinutesAndSeconds } from "@/lib/utils";
 import { candidateName, Empty, message } from "./common";
 import { ProfileDialog } from "./profile";
 import { RequirementEvidence } from "./requirement-evidence";
@@ -59,7 +60,7 @@ export function Review({run, candidates, onRun, onInterview, onBack}: Props & {o
   const visible = shortlisted.filter(row => visibleIds.includes(row.candidate_id));
   const approved = run.shortlist_ids.filter(id => run.decisions[id]?.decision === "interview").length;
 
-  return <><div className="r-review-intro"><div><h2>{shortlisted.length} candidates. One considered shortlist.</h2><p>Select up to 4 candidates to compare. Review their CV evidence before recording your decision.</p></div><div style={{ display: "flex", alignItems: "center", gap: 10 }}>{runTotalSeconds != null && <span className="r-duration-badge success"><Zap size={13}/>Screening completed in {runTotalSeconds.toFixed(1)}s</span>}<span className="r-pill">Human review</span></div></div>
+  return <><div className="r-review-intro"><div><h2>{shortlisted.length} candidates. One considered shortlist.</h2><p>Select up to 4 candidates to compare. Review their CV evidence before recording your decision.</p></div><div style={{ display: "flex", alignItems: "center", gap: 10 }}>{runTotalSeconds != null && <span className="r-duration-badge success"><Zap size={13}/>Screening completed in {formatMinutesAndSeconds(runTotalSeconds)}</span>}<span className="r-pill">Human review</span></div></div>
     <div className="r-candidate-picker" aria-label="Candidates to compare">{shortlisted.map(row => <button key={row.candidate_id} aria-pressed={visibleIds.includes(row.candidate_id)} disabled={!visibleIds.includes(row.candidate_id) && visibleIds.length >= 4} className={visibleIds.includes(row.candidate_id) ? "selected" : ""} onClick={() => setVisibleIds(visibleIds.includes(row.candidate_id) ? visibleIds.filter(id => id !== row.candidate_id) : [...visibleIds, row.candidate_id])}><span>#{row.rank}</span>{candidateName(row.candidate_id, candidates)}{run.decisions[row.candidate_id]?.decision === "interview" && <Check size={14}/>}</button>)}</div>
     {error && <div className="r-alert" role="alert">{error}</div>}{notice && <p className="r-success" role="status">{notice}</p>}
     {!visible.length ? <Empty title="Choose candidates to compare">Select a candidate above to open the comparison matrix.</Empty> : <section className="r-panel r-matrix-scroll"><table className="r-matrix"><thead><tr><th>Review criteria<small>Evidence against this role</small></th>{visible.map(row => <th key={row.candidate_id}><span className="r-muted">Rank {row.rank}</span><h3>{candidateName(row.candidate_id, candidates)}</h3><button type="button" className="r-button subtle" onClick={() => { setProfileId(row.candidate_id); setFocusedQuote(""); }}><FileText size={15}/>Read CV</button></th>)}</tr></thead><tbody>

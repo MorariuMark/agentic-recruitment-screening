@@ -23,17 +23,15 @@ export default function Home() {
   const session = useQuery({
     queryKey: ["workspace-session"],
     queryFn: async () => {
-      const res = await api.session();
-      if (res?.role) return res;
-      if (typeof window !== "undefined" && sessionStorage.getItem("atos_logged_out") === "true") {
+      // Every time a user opens the app via URL, it opens in the login page
+      if (typeof window !== "undefined" && sessionStorage.getItem("atos_user_logged_in") !== "true") {
         return { role: null };
       }
       try {
-        const auto = await api.login("user", "");
-        return auto;
-      } catch {
-        return { role: null };
-      }
+        const res = await api.session();
+        if (res?.role) return res;
+      } catch {}
+      return { role: null };
     },
     retry: false,
     refetchOnReconnect: false
@@ -64,6 +62,7 @@ export default function Home() {
     try {
       if (typeof window !== "undefined") {
         sessionStorage.setItem("atos_logged_out", "true");
+        sessionStorage.removeItem("atos_user_logged_in");
         sessionStorage.removeItem("atos_token");
         sessionStorage.removeItem("atos_workspace_session_active");
       }
@@ -90,6 +89,7 @@ export default function Home() {
     try {
       if (typeof window !== "undefined") {
         sessionStorage.removeItem("atos_logged_out");
+        sessionStorage.setItem("atos_user_logged_in", "true");
       }
       const value = await api.login(role, password);
       try { sessionStorage.removeItem("atos_workspace_session_active"); } catch {}
@@ -99,6 +99,9 @@ export default function Home() {
       setFadingLogin(true);
       cache.setQueryData(["workspace-session"], value);
     } catch (e) {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("atos_user_logged_in");
+      }
       setError(e instanceof Error ? e.message : "Unable to sign in.");
     } finally {
       setBusy(false);
@@ -111,6 +114,7 @@ export default function Home() {
     try {
       if (typeof window !== "undefined") {
         sessionStorage.removeItem("atos_logged_out");
+        sessionStorage.setItem("atos_user_logged_in", "true");
       }
       const value = await api.login(newRole, "");
       cache.setQueryData(["workspace-session"], value);

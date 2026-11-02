@@ -6,6 +6,7 @@ import { ArrowRight, Check, ChevronLeft, ChevronRight, FileText, RotateCcw, Sear
 import { CandidateSummary, CVUploadResponse, ScreeningRun, JobDescription } from "@/types";
 import { api } from "@/lib/api";
 import { cohortSelection } from "@/lib/candidate-cohort";
+import { formatMinutesAndSeconds } from "@/lib/utils";
 import { Empty, message } from "./common";
 import { ProfileDialog } from "./profile";
 import { ParsedProfile } from "./parsed-profile";
@@ -330,8 +331,8 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
       {single ? <div className="r-single-result">
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <span className="r-pill success"><Check size={14}/>Profile loaded</span>
-          {uploadDuration != null && <span className="r-duration-badge success"><Check size={12}/>Parsed in {uploadDuration.toFixed(1)}s</span>}
-          {singleEvalDuration != null && <span className="r-duration-badge success"><Zap size={12}/>Evaluated in {singleEvalDuration.toFixed(1)}s</span>}
+          {uploadDuration != null && <span className="r-duration-badge success"><Check size={12}/>Parsed in {formatMinutesAndSeconds(uploadDuration)}</span>}
+          {singleEvalDuration != null && <span className="r-duration-badge success"><Zap size={12}/>Evaluated in {formatMinutesAndSeconds(singleEvalDuration)}</span>}
         </div>
         <h2>Parsed candidate profile</h2><ParsedProfile profile={single.parsed_cv}/>
       <div className="r-review-ready" aria-busy={screening}>
@@ -465,13 +466,13 @@ export function Verification({jobId, candidates, run, onRun, onRefresh, onCompar
         {runTotalMs != null && !activeRun && (
           <span className="r-duration-badge success" style={{ marginLeft: "auto" }}>
             <Zap size={13}/>
-            Screening completed in {(runTotalMs / 1000).toFixed(1)}s
-            {run.diagnostics?.timings_ms?.fast_screen ? ` (${(run.diagnostics.timings_ms.fast_screen / 1000).toFixed(1)}s pre-screen, ${((run.diagnostics.timings_ms.deep_evaluation || 0) / 1000).toFixed(1)}s deep)` : ""}
+            Screening completed in {formatMinutesAndSeconds(runTotalMs / 1000)}
+            {run.diagnostics?.timings_ms?.fast_screen ? ` (${formatMinutesAndSeconds(run.diagnostics.timings_ms.fast_screen / 1000)} pre-screen, ${formatMinutesAndSeconds((run.diagnostics.timings_ms.deep_evaluation || 0) / 1000)} deep)` : ""}
           </span>
         )}
       </div>}
       {run && ["completed", "partial"].includes(run.status) && <p className="r-statistics-footnote">{run.rows.filter(row => row.deep_status === "not_selected").length} candidates remain pre-screen only. Deep evaluation uses the configured Top-K budget. A “Reject” recommendation is a completed job-fit assessment; “Evaluation unavailable” means a processing problem.</p>}
-      {run?.diagnostics && <details className="r-scoring-note r-run-diagnostics"><summary>Screening details {run.pipeline_version === "v2" ? "· Improved hybrid" : "· Fast batch"}</summary><p>{run.diagnostics.cache_hits || 0} cached profiles · {run.rows.filter(row => row.reranked).length} candidates reranked</p>{run.diagnostics.warnings?.map((warning,i) => <p key={i}>{warning}</p>)}{Object.entries(run.diagnostics.timings_ms || {}).map(([stage,ms]) => <span className="r-pill" key={stage}>{stage.replaceAll("_", " ")}: {(ms / 1000).toFixed(1)}s</span>)}</details>}
+      {run?.diagnostics && <details className="r-scoring-note r-run-diagnostics"><summary>Screening details {run.pipeline_version === "v2" ? "· Improved hybrid" : "· Fast batch"}</summary><p>{run.diagnostics.cache_hits || 0} cached profiles · {run.rows.filter(row => row.reranked).length} candidates reranked</p>{run.diagnostics.warnings?.map((warning,i) => <p key={i}>{warning}</p>)}{Object.entries(run.diagnostics.timings_ms || {}).map(([stage,ms]) => <span className="r-pill" key={stage}>{stage.replaceAll("_", " ")}: {formatMinutesAndSeconds(ms / 1000)}</span>)}</details>}
       {run?.profile_hashes && ["partial", "failed", "cancelled"].includes(run.status) && <button className="r-retry-button" disabled={!!busy} onClick={async () => {setBusy("retry"); setError(""); try {onRun(await api.retryScreeningRun(run.id));} catch(e) {setError(message(e));} finally {setBusy("");}}}><RotateCcw size={15}/><ProcessIndicator active={busy === "retry"} startedAt={lastActivity === "retry" ? startedAt : null} label="Retrying screening"/>Retry unfinished screening</button>}
       <section className="r-panel r-cohort">
         <div className="r-table-toolbar">

@@ -382,17 +382,65 @@ function RecruiterWorkspaceContent({onLogout, onSwitchToAdmin, onReset, freshAft
       cache.invalidateQueries({ queryKey: ["screening-runs"] });
     };
 
+    const handleJobCreated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.job_id) {
+        setSelectedJob(detail.job_id);
+      }
+      setStep("jobs");
+      cache.invalidateQueries({ queryKey: ["recruiter-jobs"] });
+    };
+
+    const handleInterviewGenerated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.job_id) {
+        setSelectedJob(detail.job_id);
+      }
+      setStep("interview");
+      cache.invalidateQueries({ queryKey: ["recruiter-interviews"] });
+      cache.invalidateQueries({ queryKey: ["recruiter-jobs"] });
+    };
+
+    const handleCvParsed = () => {
+      cache.invalidateQueries({ queryKey: ["recruiter-candidates"] });
+      cache.invalidateQueries({ queryKey: ["cv-library"] });
+      cache.invalidateQueries({ queryKey: ["unparsed-cvs"] });
+      setStep("library");
+    };
+
+    const handleCompareCandidates = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.job_id) {
+        setSelectedJob(detail.job_id);
+      }
+      setStep("comparison");
+    };
+
     const handleNavigate = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.target === "job" && detail?.id) {
         setSelectedJob(detail.id);
       }
+      if (detail?.job_id) {
+        setSelectedJob(detail.job_id);
+      }
+      if (detail?.step && steps.some((s) => s.id === detail.step)) {
+        setStep(detail.step);
+      }
     };
 
     window.addEventListener("atos-screening-started", handleScreeningStarted);
+    window.addEventListener("atos-job-created", handleJobCreated);
+    window.addEventListener("atos-interview-generated", handleInterviewGenerated);
+    window.addEventListener("atos-cv-parsed", handleCvParsed);
+    window.addEventListener("atos-compare-candidates", handleCompareCandidates);
     window.addEventListener("atos-navigate", handleNavigate);
     return () => {
       window.removeEventListener("atos-screening-started", handleScreeningStarted);
+      window.removeEventListener("atos-job-created", handleJobCreated);
+      window.removeEventListener("atos-interview-generated", handleInterviewGenerated);
+      window.removeEventListener("atos-cv-parsed", handleCvParsed);
+      window.removeEventListener("atos-compare-candidates", handleCompareCandidates);
       window.removeEventListener("atos-navigate", handleNavigate);
     };
   }, [cache]);

@@ -20,8 +20,9 @@ function duration(ms: number | null | undefined) {
   if (ms == null) return "Not measured";
   if (ms < 1000) return `${Math.round(Math.max(0, ms))} ms`;
   const seconds = Math.max(0, ms / 1000);
-  if (seconds < 60) return `${number(seconds)} s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = (seconds % 60).toFixed(1);
+  if (seconds < 3600) return `${mins}m ${secs}s`;
   return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
 }
 function exportPage(rows: OperationTiming[]) {

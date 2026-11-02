@@ -13,6 +13,17 @@ export function formatScore(score: number): string {
   return score.toFixed(1);
 }
 
+/**
+ * Format elapsed or completed duration into minutes and seconds (e.g., "1m 15.2s", "0m 8.4s").
+ */
+export function formatMinutesAndSeconds(seconds: number | null | undefined): string {
+  if (seconds == null || isNaN(seconds)) return "";
+  const total = Math.max(0, seconds);
+  const mins = Math.floor(total / 60);
+  const secs = (total % 60).toFixed(1);
+  return `${mins}m ${secs}s`;
+}
+
 export function getRecommendationBadge(rec: string): { label: string; className: string } {
   switch (rec?.toLowerCase()) {
     case "strong_match":

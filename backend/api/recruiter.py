@@ -99,7 +99,7 @@ class LoginRequest(BaseModel):
 async def login(payload: LoginRequest, response: Response):
     from backend.api.auth import create_session_token
     token = create_session_token(payload.role)
-    response.set_cookie("atos_workspace", token, httponly=True, samesite="lax", max_age=43200)
+    response.set_cookie("atos_workspace", token, httponly=True, samesite="lax")
     return {"role": payload.role, "token": token}
 
 

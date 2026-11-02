@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Timer, Clock, XCircle, CheckCircle2, Square, Loader2, Zap, Sparkles } from "lucide-react";
 import { api, ActiveProgressState } from "@/lib/api";
+import { formatMinutesAndSeconds } from "@/lib/utils";
 
 export interface UseProcessTimerReturn {
   isRunning: boolean;
@@ -125,7 +126,7 @@ export function useProcessTimer(): UseProcessTimerReturn {
     getAbortSignal,
     abortController: abortControllerRef.current,
     formattedElapsed: formatSecs(elapsedSeconds),
-    formattedDuration: completedDuration !== null ? `${completedDuration.toFixed(1)}s` : null,
+    formattedDuration: completedDuration !== null ? formatMinutesAndSeconds(completedDuration) : null,
   };
 }
 
@@ -580,7 +581,7 @@ export function LiveProcessTimer({
         className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 shadow-sm ${className}`}
       >
         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-        <span>Completed in {completedDuration.toFixed(1)}s</span>
+        <span>Completed in {formatMinutesAndSeconds(completedDuration)}</span>
         {tokenUsage && tokenUsage.total_tokens > 0 && (
           <>
             <span className="text-emerald-700">•</span>
@@ -614,10 +615,10 @@ export function DurationBadge({
       {duration && duration > 0 && (
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-800/80 border border-slate-700/60 text-slate-300"
-          title={`${label}: ${duration.toFixed(1)}s`}
+          title={`${label}: ${formatMinutesAndSeconds(duration)}`}
         >
           <Clock className="w-3 h-3 text-cyan-400" />
-          <span>{duration.toFixed(1)}s</span>
+          <span>{formatMinutesAndSeconds(duration)}</span>
         </span>
       )}
 

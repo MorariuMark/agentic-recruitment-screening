@@ -4,6 +4,7 @@ import { ArrowRight, BriefcaseBusiness, Check, MapPin, Plus, Search, Trash2, X, 
 import { JobDescription, JobRequirement } from "@/types";
 import { api } from "@/lib/api";
 import { validateJobDraft, JobDraftIssue } from "@/lib/job-draft";
+import { formatMinutesAndSeconds } from "@/lib/utils";
 import { downloadJson, Empty, message } from "./common";
 import { ExtractedData } from "./parsed-profile";
 import { ProcessIndicator, useTimedActivity } from "./process-indicator";
@@ -203,7 +204,7 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
         <button type="button" className="r-button" aria-busy={busy === "url"} disabled={!!busy || !/^https?:\/\//.test(url)} onClick={() => extract(true)}><WandSparkles size={16}/><ProcessIndicator active={busy === "url"} startedAt={lastActivity === "url" ? startedAt : null} label="Extracting from URL"/> {busy === "url" ? "Extracting from URL…" : "Extract from URL"}</button>
         <label className="r-field">Or paste the full description<textarea rows={6} value={draft.raw_text || ""} onChange={e => update({raw_text: e.target.value})} placeholder="Paste the job description here…"/></label>
         <button type="button" className="r-button" aria-busy={busy === "parse"} disabled={!!busy || !(draft.raw_text || "").trim()} onClick={() => extract(false)}><WandSparkles size={16}/><ProcessIndicator active={busy === "parse"} startedAt={lastActivity === "parse" ? startedAt : null} label="Extracting job criteria"/> {busy === "parse" ? "Extracting criteria…" : "Extract criteria"}</button>
-        {extractionDuration != null && <span className="r-duration-badge success" style={{ marginLeft: 8 }}><Check size={12}/>Criteria extracted in {extractionDuration.toFixed(1)}s</span>}
+        {extractionDuration != null && <span className="r-duration-badge success" style={{ marginLeft: 8 }}><Check size={12}/>Criteria extracted in {formatMinutesAndSeconds(extractionDuration)}</span>}
       </details>
       <details className="r-disclosure"><summary>Role details & additional extracted content</summary>
         <div className="r-form-grid">
@@ -223,7 +224,7 @@ function JobEditor({job, onSave, onContinue, onCancel}: {job?: JobDescription; o
         </div>
         {extractionDuration != null && (
           <span className="r-duration-badge success" style={{ marginLeft: "auto", marginRight: 12 }}>
-            <Check size={12}/>Criteria extracted in {extractionDuration.toFixed(1)}s
+            <Check size={12}/>Criteria extracted in {formatMinutesAndSeconds(extractionDuration)}
           </span>
         )}
         <button type="button" className="r-button subtle" onClick={() => update({requirements: [...draft.requirements, {id: crypto.randomUUID(), title: "", description: "", category: "must_have", weight: 1}]})}><Plus size={16}/> Add criterion</button>

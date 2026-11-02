@@ -674,3 +674,42 @@
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
+.asap-action-badge.success {
+  color: #86efac;
+}
+
+.asap-action-badge.interview {
+  color: #fcd34d;
+}
+
+.asap-action-badge.info {
+  color: #67e8f9;
+}
+
+.asap-action-badge.purple {
+  color: #c084fc;
+}
+
+.asap-card-jump-btn {
+  width: 100%;
+  padding: 6px 10px;
+  background: rgba(30, 41, 59, 0.7);
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: #93c5fd;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.asap-card-jump-btn:hover {
+  background: rgba(37, 99, 235, 0.25);
+  color: #ffffff;
+}
+

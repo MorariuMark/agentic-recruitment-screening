@@ -9,6 +9,9 @@ import {
   User,
   Briefcase,
   Play,
+  Sparkles,
+  FileText,
+  Columns3,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import "./asap-chat-overlay.css";
@@ -48,10 +51,11 @@ function getRandomGreeting(): string {
 }
 
 const QUICK_PROMPTS = [
+  "Run screening on Java Developer (cohort 30, deep 5)",
   "What was our latest screening run?",
-  "What candidates were recently added?",
-  "What are the latest active jobs in the app?",
-  "Who is shortlisted for Lead AI Engineer?",
+  "Generate interview questions for top candidate",
+  "Parse unparsed CVs in library",
+  "Compare candidates on Lead AI Engineer",
 ];
 
 /** Simplified static ghost face SVG icon (no animations) for the chat header */
@@ -335,6 +339,24 @@ export function AsapChatOverlay({
     }
   };
 
+  const dispatchActionEvents = (action: any) => {
+    if (typeof window === "undefined" || !action || !action.success) return;
+    if (action.action_type === "run_screening") {
+      window.dispatchEvent(new CustomEvent("atos-screening-started", { detail: action }));
+      window.dispatchEvent(new CustomEvent("atos-refresh-pipeline", { detail: action }));
+    } else if (action.action_type === "extract_job_url") {
+      window.dispatchEvent(new CustomEvent("atos-job-created", { detail: action }));
+    } else if (action.action_type === "generate_interview") {
+      window.dispatchEvent(new CustomEvent("atos-interview-generated", { detail: action }));
+    } else if (action.action_type === "parse_cv") {
+      window.dispatchEvent(new CustomEvent("atos-cv-parsed", { detail: action }));
+    } else if (action.action_type === "compare_candidates") {
+      window.dispatchEvent(new CustomEvent("atos-compare-candidates", { detail: action }));
+    } else if (action.action_type === "navigate") {
+      window.dispatchEvent(new CustomEvent("atos-navigate", { detail: action }));
+    }
+  };
+
   // Send message with real-time ChatGPT-style streaming
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputValue).trim();
@@ -432,14 +454,7 @@ export function AsapChatOverlay({
             );
 
             // Notify app components of executed live actions
-            if (typeof window !== "undefined") {
-              if (action?.action_type === "run_screening" && action?.success) {
-                window.dispatchEvent(new CustomEvent("atos-screening-started", { detail: action }));
-                window.dispatchEvent(new CustomEvent("atos-refresh-pipeline", { detail: action }));
-              } else if (action?.action_type === "navigate" && action?.success) {
-                window.dispatchEvent(new CustomEvent("atos-navigate", { detail: action }));
-              }
-            }
+            dispatchActionEvents(action);
           },
           onChunk: (chunkText) => {
             setSessions((prev) =>
@@ -460,6 +475,7 @@ export function AsapChatOverlay({
           },
           onDone: (meta) => {
             setAgentStatus("active");
+            dispatchActionEvents(meta.action);
             setSessions((prev) =>
               prev.map((s) => {
                 if (s.id === activeSessionId) {
@@ -664,37 +680,216 @@ export function AsapChatOverlay({
           const isUser = m.role === "user";
           return (
             <div key={m.id} className={`asap-message-row ${isUser ? "user" : "assistant"}`}>
-              {/* Executed Action Live Card */}
-              {!isUser && m.action && m.action.action_type === "run_screening" && m.action.success && (
-                <div className="asap-action-card">
-                  <div className="asap-action-card-header">
-                    <span className="asap-action-badge">
-                      <span className="asap-action-live-indicator" />
-                      SCREENING RUN EXECUTED
-                    </span>
-                    <span className="asap-action-version">
-                      {m.action.pipeline_version?.toUpperCase() || "V2"} PIPELINE
-                    </span>
-                  </div>
-                  <div className="asap-action-card-grid">
-                    <div className="asap-action-item">
-                      <span className="asap-action-label">Job Requisition:</span>
-                      <span className="asap-action-val job">{m.action.job_title}</span>
+              {/* Executed Action Live Cards */}
+              {!isUser && m.action && m.action.success && (
+                <>
+                  {m.action.action_type === "run_screening" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge">
+                          <span className="asap-action-live-indicator" />
+                          SCREENING RUN EXECUTED
+                        </span>
+                        <span className="asap-action-version">
+                          {m.action.pipeline_version?.toUpperCase() || "V2"} PIPELINE
+                        </span>
+                      </div>
+                      <div className="asap-action-card-grid">
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Job Requisition:</span>
+                          <span className="asap-action-val job">{m.action.job_title}</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Cohort Size:</span>
+                          <span className="asap-action-val">{m.action.cohort_size} candidates</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Deep Screening:</span>
+                          <span className="asap-action-val">{m.action.deep_count} candidates</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Run ID:</span>
+                          <code className="asap-action-code">{m.action.run_id}</code>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        <Play size={11} /> View Screening Results
+                      </button>
                     </div>
-                    <div className="asap-action-item">
-                      <span className="asap-action-label">Cohort Size:</span>
-                      <span className="asap-action-val">{m.action.cohort_size} candidates</span>
+                  )}
+
+                  {m.action.action_type === "extract_job_url" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge success">
+                          <Briefcase size={11} />
+                          JOB CREATED & EXTRACTED
+                        </span>
+                        <span className="asap-action-version">
+                          {m.action.requirements_count} CRITERIA
+                        </span>
+                      </div>
+                      <div className="asap-action-card-grid">
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Position:</span>
+                          <span className="asap-action-val job">{m.action.job_title}</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Department:</span>
+                          <span className="asap-action-val">{m.action.department}</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Atomic Criteria:</span>
+                          <span className="asap-action-val">
+                            {m.action.must_haves_count} must-haves, {m.action.nice_haves_count} nice-to-haves
+                          </span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Requisition ID:</span>
+                          <code className="asap-action-code">{m.action.job_id}</code>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        <Briefcase size={11} /> Open in Job Descriptions
+                      </button>
                     </div>
-                    <div className="asap-action-item">
-                      <span className="asap-action-label">Deep Screening:</span>
-                      <span className="asap-action-val">{m.action.deep_count} candidates</span>
+                  )}
+
+                  {m.action.action_type === "generate_interview" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge interview">
+                          <Sparkles size={11} />
+                          INTERVIEW KIT GENERATED
+                        </span>
+                        <span className="asap-action-version">
+                          {m.action.duration_minutes} MIN
+                        </span>
+                      </div>
+                      <div className="asap-action-card-grid">
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Candidate:</span>
+                          <span className="asap-action-val job">{m.action.candidate_name}</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Requisition:</span>
+                          <span className="asap-action-val">{m.action.job_title}</span>
+                        </div>
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Targeted Questions:</span>
+                          <span className="asap-action-val">{m.action.questions_count} rubric questions</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        <Sparkles size={11} /> Open Interview Studio
+                      </button>
                     </div>
-                    <div className="asap-action-item">
-                      <span className="asap-action-label">Run ID:</span>
-                      <code className="asap-action-code">{m.action.run_id}</code>
+                  )}
+
+                  {m.action.action_type === "parse_cv" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge info">
+                          <FileText size={11} />
+                          {m.action.mode === "batch" ? "BATCH CV INGESTION ACTIVE" : "CV PARSED & INDEXED"}
+                        </span>
+                      </div>
+                      <div className="asap-action-card-grid">
+                        {m.action.mode === "batch" ? (
+                          <>
+                            <div className="asap-action-item">
+                              <span className="asap-action-label">Files Queued:</span>
+                              <span className="asap-action-val">{m.action.total_files} documents</span>
+                            </div>
+                            {m.action.batch_id && (
+                              <div className="asap-action-item">
+                                <span className="asap-action-label">Batch ID:</span>
+                                <code className="asap-action-code">{m.action.batch_id}</code>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="asap-action-item">
+                              <span className="asap-action-label">Candidate:</span>
+                              <span className="asap-action-val job">{m.action.candidate_name}</span>
+                            </div>
+                            <div className="asap-action-item">
+                              <span className="asap-action-label">Experience:</span>
+                              <span className="asap-action-val">{m.action.experience_years} years ({m.action.skills_count} skills)</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        <FileText size={11} /> Open CV Library
+                      </button>
                     </div>
-                  </div>
-                </div>
+                  )}
+
+                  {m.action.action_type === "compare_candidates" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge purple">
+                          <Columns3 size={11} />
+                          CANDIDATE MATRIX BENCHMARKED
+                        </span>
+                        <span className="asap-action-version">
+                          {m.action.candidate_count} PROFILES
+                        </span>
+                      </div>
+                      <div className="asap-action-card-grid">
+                        <div className="asap-action-item">
+                          <span className="asap-action-label">Job Requisition:</span>
+                          <span className="asap-action-val job">{m.action.job_title}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        <Columns3 size={11} /> Open Comparison Matrix
+                      </button>
+                    </div>
+                  )}
+
+                  {m.action.action_type === "navigate" && (
+                    <div className="asap-action-card">
+                      <div className="asap-action-card-header">
+                        <span className="asap-action-badge info">
+                          WORKSPACE NAVIGATION
+                        </span>
+                        <span className="asap-action-version">
+                          {m.action.step?.toUpperCase()}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="asap-card-jump-btn"
+                        onClick={() => dispatchActionEvents(m.action)}
+                      >
+                        Go to {m.action.step || "destination"}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
 
               <div className="asap-bubble">

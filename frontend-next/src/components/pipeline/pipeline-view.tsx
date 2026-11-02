@@ -7,7 +7,7 @@ import {
   CVUploadResponse,
 } from "@/types";
 import { api } from "@/lib/api";
-import { formatPercent, getRecommendationBadge, downloadJsonFile } from "@/lib/utils";
+import { formatPercent, getRecommendationBadge, downloadJsonFile, formatMinutesAndSeconds } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowUpDown,
@@ -288,7 +288,7 @@ export function PipelineView({
             percentage: 100,
             processed: data.total_files || 0,
             total: data.total_files || 0,
-            lastEvent: `Batch screening complete${duration ? ` in ${duration.toFixed(1)}s` : ""}!`,
+            lastEvent: `Batch screening complete${duration ? ` in ${formatMinutesAndSeconds(duration)}` : ""}!`,
           });
           fetchCandidates();
           if (onRefreshCandidates) onRefreshCandidates();
